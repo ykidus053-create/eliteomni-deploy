@@ -939,8 +939,6 @@ def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int) -> str:
         resp = llm.create_chat_completion(messages=msgs, **_lc_kw(max_new, skill, msg_len))
     return _clean(resp["choices"][0]["message"]["content"] or "")
 def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int):
-        yield tok
-    return
     if llm is None: yield "Model not loaded."; return
     kw = _lc_kw(max_new, skill, msg_len); kw["stream"] = True
     inside_think = False; think_buf = ""

@@ -152,7 +152,7 @@ def _claude_style_verify(response: str, user_msg: str) -> tuple:
     msg_lower = user_msg.lower()
 
     # ── 1. Character-level constraint check ──────────────────────────────
-    forbidden_letters = re.findall(r"not (?:contain|use|include) the letter ["']?([a-z])["']?", msg_lower)
+    forbidden_letters = re.findall(r"not (?:contain|use|include) the letter ['\"]?([a-z])['\"]?", msg_lower)
     for letter in forbidden_letters:
         words_with_letter = [w for w in response.split() if letter in w.lower().strip(".,!?;:\"'")]
         if words_with_letter:
@@ -168,7 +168,7 @@ def _claude_style_verify(response: str, user_msg: str) -> tuple:
                 issues.append(f"WORD COUNT FAIL: sentence {i+1} has {actual} words, expected {target}")
 
     # ── 3. Forbidden words check ─────────────────────────────────────────
-    forbidden_words = re.findall(r"(?:don't|do not|never) (?:use|say|include) (?:the )?word[s]? ["']?([a-z]+)["']?", msg_lower)
+    forbidden_words = re.findall(r"(?:don't|do not|never) (?:use|say|include) (?:the )?word[s]? ['\"]+([a-z]+)['\"]+", msg_lower)
     for word in forbidden_words:
         if word in response.lower():
             issues.append(f"FORBIDDEN WORD: '{word}' appears in response")

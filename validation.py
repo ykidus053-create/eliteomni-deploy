@@ -931,6 +931,7 @@ def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int) -> str:
         hard_skills = ("coder", "researcher")
         mdl = GROQ_MODEL
         groq_generate._reasoning_effort = "high" if skill in hard_skills else "medium"
+        result = groq_generate(msgs, max_tokens=max_new, model=mdl)
         if result:
             print(f"[Groq] used {mdl} for skill={skill}")
             return _clean(result)
@@ -939,8 +940,6 @@ def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int) -> str:
         resp = llm.create_chat_completion(messages=msgs, **_lc_kw(max_new, skill, msg_len))
     return _clean(resp["choices"][0]["message"]["content"] or "")
 def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int):
-        yield tok
-    return
     if llm is None: yield "Model not loaded."; return
     kw = _lc_kw(max_new, skill, msg_len); kw["stream"] = True
     inside_think = False; think_buf = ""

@@ -18,4 +18,6 @@ class AgenticSearch:
 
     def web_search_20260209(self, query):
         try:
-            print(f#
+            print(f'searching...')
+
+'''

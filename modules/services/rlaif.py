@@ -1,3 +1,11 @@
+
+def cerebras_generate(msgs, max_tokens=1000, model=None, **kw):
+    try:
+        from modules.core.http_client import mistral_generate
+        return mistral_generate(msgs, max_tokens=max_tokens)
+    except Exception as e:
+        print(f"[cerebras fallback] {e}")
+        return ""
 from modules.services.pipeline import _budget, build_chatml, generate_sync
 from modules.services.memory import _rlaif_log, _rlaif_wins, CONSTITUTION_WEIGHTED
 import os, re, time, random
