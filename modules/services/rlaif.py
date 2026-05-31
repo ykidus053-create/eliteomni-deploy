@@ -46,7 +46,7 @@ def _hhh_score(response: str, prompt: str) -> dict:
                 scores["honest"]   = int(digits[2])
     except Exception:
         pass
-    scores["total"] = sum(scores[k] for k in ("helpful","harmless","honest"))
+    scores["total"] = round((scores["helpful"]*0.4) + (scores["harmless"]*0.35) + (scores["honest"]*0.25), 3)
     return scores
 
 def _rlaif_record(principle: str, winner: str, loser: str, prompt: str, hhh: dict = None):
@@ -207,3 +207,88 @@ def critique(response: str, skill: str = "general") -> str:
         return _run_critique(response, skill)
     except Exception:
         return ""
+
+
+# ══════════════════════════════════════════════════════
+# QUALITY DRIFT TRACKING — Andrew Ng fix
+# ══════════════════════════════════════════════════════
+import sqlite3 as _qsql, statistics as _qstat, hashlib as _qhash
+_QUALITY_DB = __import__('os').path.expanduser("~/eliteomni_quality.db")
+
+def _init_quality_db():
+    con = _qsql.connect(_QUALITY_DB)
+    con.execute("""CREATE TABLE IF NOT EXISTS quality_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts REAL, skill TEXT, complexity TEXT,
+        hhh_score REAL, response_len INTEGER,
+        had_search INTEGER, had_calc INTEGER,
+        question_hash TEXT
+    )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS skill_drift (
+        skill TEXT PRIMARY KEY,
+        baseline REAL, current_avg REAL,
+        sample_count INTEGER, last_updated REAL
+    )""")
+    con.commit(); con.close()
+
+_init_quality_db()
+
+def log_response_quality(skill: str, complexity: str, response: str,
+                          question: str, hhh_score: float):
+    import time
+    try:
+        con = _qsql.connect(_QUALITY_DB)
+        qhash = _qhash.md5(question[:100].encode()).hexdigest()
+        con.execute(
+            "INSERT INTO quality_log (ts,skill,complexity,hhh_score,response_len,"
+            "had_search,had_calc,question_hash) VALUES (?,?,?,?,?,?,?,?)",
+            (time.time(), skill, complexity, hhh_score, len(response),
+             int("SEARCH(" in response or "[WEB" in response),
+             int("CALC(" in response or "PATH B" in response), qhash)
+        )
+        con.commit(); con.close()
+        _check_drift(skill, hhh_score)
+    except Exception as e:
+        print(f"[QualityLog] {e}")
+
+def _check_drift(skill: str, new_score: float):
+    import time, os
+    try:
+        con = _qsql.connect(_QUALITY_DB)
+        rows = con.execute(
+            "SELECT hhh_score FROM quality_log WHERE skill=? ORDER BY ts DESC LIMIT 50",
+            (skill,)
+        ).fetchall()
+        con.close()
+        if len(rows) < 10:
+            return
+        scores = [r[0] for r in rows]
+        recent_avg = _qstat.mean(scores[:10])
+        baseline   = _qstat.mean(scores[10:])
+        if baseline > 0 and (baseline - recent_avg) / baseline > 0.15:
+            print(f"[QualityDrift] WARNING {skill} dropped "
+                  f"{(baseline-recent_avg)/baseline*100:.0f}% "
+                  f"(baseline={baseline:.2f}, recent={recent_avg:.2f})")
+            with open(os.path.expanduser("~/eliteomni_drift.log"), "a") as f:
+                f.write(f"{time.time()},{skill},{baseline:.3f},{recent_avg:.3f}\n")
+    except Exception as e:
+        print(f"[DriftCheck] {e}")
+
+def get_quality_report() -> str:
+    import time
+    try:
+        con = _qsql.connect(_QUALITY_DB)
+        rows = con.execute(
+            "SELECT skill, AVG(hhh_score), COUNT(*), MAX(ts) "
+            "FROM quality_log GROUP BY skill ORDER BY AVG(hhh_score) DESC"
+        ).fetchall()
+        con.close()
+        if not rows:
+            return "No quality data yet."
+        lines = ["QUALITY REPORT:"]
+        for skill, avg, count, last in rows:
+            age_h = (time.time() - last) / 3600
+            lines.append(f"  {skill:<12} avg={avg:.2f} n={count} last={age_h:.0f}h ago")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"[QualityReport] {e}"

@@ -1,3 +1,10 @@
+import sys
+try:
+    import uvloop
+    uvloop.install()
+    print("[TTFT] uvloop event loop installed — async 2-4x faster")
+except ImportError:
+    pass
 from modules.services.pipeline import _budget, stream_tokens, build_system_prompt, build_chatml, generate_sync
 from modules.deep_think_math import deep_think_math
 from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
@@ -452,7 +459,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             _narrative_ctx  = narrative_get_context()
             _rel_ctx        = relationship_get_context()
             _prior_ctx      = experience_prior_check(msg, _skill_pre)
-            _depth_warn     = context_depth_warning(recent, system if "system" in dir() else "")
+            _depth_warn     = context_depth_warning("", system if "system" in dir() else "")
         except Exception as _hge:
             print(f"[HumanGap pre] {_hge}")
             _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = _neg_space = ""
@@ -522,8 +529,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
     rag_ctx = "\n[KNOWLEDGE BASE]\n" + "\n".join(f"- {r["text"][:200]}" for r in rag_hits) + "\n[END KNOWLEDGE BASE]" if rag_hits else ""
     _pgd_inject = None  # stubbed: pgd not loaded
     _pgd_using_new = bool(_pgd_inject) and _pgd_ab_active
-    _wm_ctx = world_model_get()
-    _fs_examples = fewshot_get(skill)
+    _wm_ctx = {}  # world_model stubbed — not implemented
+    _fs_examples = ""  # fewshot_get stubbed
     _fs_ctx = ""
     if _fs_examples:
         _fs_ctx = "\nBEST EXAMPLES FOR THIS SKILL:\n" + "\n---\n".join(f"Q: {e['prompt']}\nA: {e['response']}" for e in _fs_examples)
@@ -580,7 +587,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         # Claude: never send empty turns, truncate long history turns
         if c and len(c) > 2:
             hist_msgs.append({"role": r, "content": c[:800]})
-    max_t = _budget(msg, skill, complexity)
+    max_t = 16000  # no cap — model decides
     mode  = "extended_think" if effort == "high" else ("think" if effort == "medium" else "fast")
 
     # ── DECIDE: routing strategy ───────────────────────────────────────────────
@@ -833,33 +840,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
 
     # search / tools
     clean_msg, search_ctx = extract_search_context(msg)
-
-    # ── HUMAN-GAP SYSTEMS: pre-generation analysis ──────────────────────────
-    try:
-        _skill_pre = classify_skill(msg)
-        _comp_pre  = route_complexity(msg)
-        from modules.services.agents import detect_emotion_context, knowledge_boundary_check, goals_get_context, goals_update
-        _emotion_ctx    = detect_emotion_context(msg)
-        _kb_ctx         = knowledge_boundary_check(msg, _skill_pre)
-        _goals_ctx      = goals_get_context()
-        from modules.services.agents import (assess_stakes, stakes_system_addon,
-            negative_space_analysis, theory_of_mind_analysis,
-            extract_constraints, narrative_get_context,
-            relationship_get_context, experience_prior_check,
-            context_depth_warning)
-        _stakes         = assess_stakes(msg, _comp_pre)
-        _stakes_ctx     = stakes_system_addon(_stakes)
-        _neg_space      = negative_space_analysis(msg, _comp_pre)
-        _tom_ctx        = theory_of_mind_analysis(msg, _skill_pre)
-        _constraints    = extract_constraints(msg)
-        _narrative_ctx  = narrative_get_context()
-        _rel_ctx        = relationship_get_context()
-        _prior_ctx      = experience_prior_check(msg, _skill_pre)
-        _depth_warn     = context_depth_warning(recent, system if "system" in dir() else "")
-    except Exception as _hge:
-        print(f"[HumanGap pre] {_hge}")
-        _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = _neg_space = ""
-        _tom_ctx = _constraints = _narrative_ctx = _rel_ctx = _prior_ctx = _depth_warn = ""
+    # agent enrichment runs inside _build_stream_context_fast
 
     msg_lower = msg.lower()
     forced = []
@@ -881,6 +862,11 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     if forced:
         search_ctx += "\n[Pre-executed tools]\n" + "\n".join(forced)
 
+    # ── agent context defaults (enrichment runs in _build_stream_context_fast) ──
+    _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = _neg_space = ""
+    _tom_ctx = _constraints = _narrative_ctx = _rel_ctx = _prior_ctx = _depth_warn = ""
+    _stakes = "low"
+
     # rag + system prompt
     rag_hits = rag_get(msg, k=3)
     rag_ctx  = ("\n[KNOWLEDGE BASE]\n" +
@@ -888,8 +874,8 @@ def _build_stream_context(msg: str, hist: list) -> dict:
                 "\n[END KNOWLEDGE BASE]") if rag_hits else ""
     _pgd_inject = None  # stubbed: pgd not loaded
     _pgd_using_new = bool(_pgd_inject) and _pgd_ab_active
-    _wm_ctx = world_model_get()
-    _fs_examples = fewshot_get(skill)
+    _wm_ctx = {}  # world_model stubbed — not implemented
+    _fs_examples = ""  # fewshot_get stubbed
     _fs_ctx = ""
     if _fs_examples:
         _fs_ctx = "\nBEST EXAMPLES FOR THIS SKILL:\n" + "\n---\n".join(f"Q: {e['prompt']}\nA: {e['response']}" for e in _fs_examples)
@@ -928,7 +914,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         if c2 and len(c2) > 2:
             hist_msgs.append({"role": r2, "content": c2[:800]})
 
-    max_t = _budget(msg, skill, complexity)
+    max_t = 16000  # no cap — model decides
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     msgs  = build_chatml(system, hist_msgs, clean_msg)
@@ -1027,22 +1013,30 @@ def pipeline_stream(msg: str, history: list):
         except Exception:
             pass
 
-    # ── Build prompt ──────────────────────────────────────────────────────────
+    # ── Build prompt — PARALLEL I/O ─────────────────────────────────────────
+    from concurrent.futures import ThreadPoolExecutor
+    clean_msg, _ = extract_search_context(msg)
     history = clean_history(history or [])
     if _count_tokens(history) > 1500:
         history = compress_history(history)[0]
-    recent, ctx_sum = compress_history(_strip_thinking_from_history(history))
-    _mem_working  = mem_get(msg, k=3)
-    _mem_episodic = mem_get_episodic(msg)
-    rlhf_note     = get_rlhf_note(skill)
-    _mem_ctx      = build_memory_context(msg)
-    system        = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
+
+    with ThreadPoolExecutor(max_workers=4) as _ex:
+        _f_hist    = _ex.submit(lambda: compress_history(_strip_thinking_from_history(history)))
+        _f_mem     = _ex.submit(lambda: mem_get(msg, k=3))
+        _f_episodic= _ex.submit(lambda: mem_get_episodic(msg))
+        _f_rlhf    = _ex.submit(lambda: get_rlhf_note(skill))
+
+    recent, ctx_sum = _f_hist.result()
+    _mem_working    = _f_mem.result()
+    _mem_episodic   = _f_episodic.result()
+    rlhf_note       = _f_rlhf.result()
+    _mem_ctx        = build_memory_context(msg)
+    system          = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
     if _mem_ctx: system += _mem_ctx
-    system = trim_system_prompt(system, complexity)  # TTFT: cap tokens
-    hist_msgs     = trim_history_for_ttft(
+    system          = trim_system_prompt(system, complexity)
+    hist_msgs       = trim_history_for_ttft(
                          [{"role": h.get("role","user"), "content": str(h.get("content",""))[:800]} for h in (recent or [])[-8:]],
                          complexity)
-    clean_msg, _  = extract_search_context(msg)
 
     # ── Fast path for easy queries ────────────────────────────────────────────
     if complexity == "easy" and skill not in ("coder", "calculator", "researcher"):
@@ -1061,7 +1055,7 @@ def pipeline_stream(msg: str, history: list):
 
     # ── Full agentic path — stream from generate ──────────────────────────────
     prompt   = build_chatml(system, hist_msgs, clean_msg)
-    max_t    = cap_max_tokens(_budget(clean_msg, skill, complexity), complexity)  # TTFT: cap output
+    max_t    = 16000  # no cap — model decides when to stop
 
     yield {"_meta": True, "skill": skill, "mode": "agentic", "vetoed": False, "complexity": complexity}
 
@@ -2499,40 +2493,8 @@ async def stream_chat(req: Request):
         return StreamingResponse(_veto(), media_type="text/plain")
 
     clean_msg, search_ctx = extract_search_context(msg)
+    # agent enrichment runs inside _build_stream_context_fast
 
-    # ── HUMAN-GAP SYSTEMS: pre-generation analysis ──────────────────────────
-    try:
-        _skill_pre = classify_skill(msg)
-        _comp_pre  = route_complexity(msg)
-        from modules.services.agents import detect_emotion_context, knowledge_boundary_check, goals_get_context, goals_update
-        _emotion_ctx    = detect_emotion_context(msg)
-        _kb_ctx         = knowledge_boundary_check(msg, _skill_pre)
-        _goals_ctx      = goals_get_context()
-        from modules.services.agents import (assess_stakes, stakes_system_addon,
-            negative_space_analysis, theory_of_mind_analysis,
-            extract_constraints, narrative_get_context,
-            relationship_get_context, experience_prior_check,
-            context_depth_warning)
-        _stakes         = assess_stakes(msg, _comp_pre)
-        _stakes_ctx     = stakes_system_addon(_stakes)
-        _neg_space      = negative_space_analysis(msg, _comp_pre)
-        _tom_ctx        = theory_of_mind_analysis(msg, _skill_pre)
-        _constraints    = extract_constraints(msg)
-        _narrative_ctx  = narrative_get_context()
-        _rel_ctx        = relationship_get_context()
-        _prior_ctx      = experience_prior_check(msg, _skill_pre)
-        _depth_warn     = context_depth_warning(recent, system if "system" in dir() else "")
-    except Exception as _hge:
-        print(f"[HumanGap pre] {_hge}")
-        _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = _neg_space = ""
-        _tom_ctx = _constraints = _narrative_ctx = _rel_ctx = _prior_ctx = _depth_warn = ""
-
-    skill      = classify_skill(clean_msg)
-    complexity = route_complexity(clean_msg)
-
-    recent, ctx_sum = compress_history(hist)
-    memory   = mem_get(clean_msg)
-    episodic = mem_get_episodic(clean_msg)
     # ── Self-critique: flag if answer needs web grounding ──────────────────
     _critique_triggers = ["is it true", "fact check", "are you sure", "verify", "confirm", "really?", "prove"]
     if any(t in msg.lower() for t in _critique_triggers):
@@ -2542,7 +2504,10 @@ async def stream_chat(req: Request):
         import asyncio, queue as _q, threading as _t, re as _re_s
         loop = asyncio.get_event_loop()
 
-        ctx = await loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
+        import importlib as _il, sys as _sys
+        _app_mod = _sys.modules.get('__main__') or _sys.modules.get('app')
+        _fn = getattr(_app_mod, '_build_stream_context_fast', None) or _build_stream_context
+        ctx = await loop.run_in_executor(None, lambda: _fn(msg, hist))
 
         if ctx["cached"]:
             yield json.dumps({"skill": ctx["skill"], "mode": "cached"}) + "\n"
@@ -2609,6 +2574,46 @@ async def stream_chat(req: Request):
                 yield out
 
         final = "".join(chunks)
+
+        # ── Auto-continuation: resume if response was cut off ──────────────
+        _max_continuations = 3
+        _continuation = 0
+        while _continuation < _max_continuations and final:
+            _trunc = False
+            _stripped = final.rstrip()
+            # Only continue on hard unambiguous signals
+            if final.count('```') % 2 != 0:  # unclosed code block
+                _trunc = True
+            _tok_estimate = len(final.split())
+            if _tok_estimate >= ctx.get('max_t', 9999) * 0.97:  # hit token ceiling
+                _trunc = True
+            if not _trunc:
+                break
+            _continuation += 1
+            print(f"[Continuation] Response truncated, resuming ({_continuation}/{_max_continuations})...")
+            _cont_msgs = ctx["msgs"] + [
+                {"role": "assistant", "content": final},
+                {"role": "user", "content": "Continue exactly where you left off. Do not repeat anything."}
+            ]
+            _cont_chunks = []
+            def _cont_worker():
+                try:
+                    for tok in mistral_stream(_cont_msgs, max_tokens=4096, model=ctx.get("model")):
+                        loop.call_soon_threadsafe(tok_q.put_nowait, tok)
+                except Exception as e:
+                    print(f"[cont worker] {e}")
+                finally:
+                    loop.call_soon_threadsafe(tok_q.put_nowait, None)
+            _t.Thread(target=_cont_worker, daemon=True, name="cont_tok").start()
+            while True:
+                tok = await tok_q.get()
+                if tok is None:
+                    break
+                _cont_chunks.append(tok)
+                yield tok
+            final = final + "".join(_cont_chunks)
+        # ── End continuation ───────────────────────────────────────────────
+
         if final:
             _stream_post_process(msg, final, ctx["skill"],
                                  ctx["complexity"], ctx["effort"],
@@ -3921,3 +3926,190 @@ def pgd_get_active_prompt_injection() -> str:
             return _pgd_ab_variant
     evolved = _pgd_load_prompt()
     return evolved if evolved else ""
+
+
+# ── TTFT PATCH: parallel pre-processing ─────────────────────────────────────
+def _build_stream_context_fast(msg: str, hist: list) -> dict:
+    """Drop-in replacement for _build_stream_context with parallel enrichment."""
+    from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+    from modules.core.constants import get_infra_tier
+
+    # ── 1. Fast serial (no I/O) ──────────────────────────────────────────────
+    skill      = classify_skill(msg)
+    complexity = route_complexity(msg)
+    _tier      = get_infra_tier(complexity)
+    print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
+    effort = "high" if complexity == "hard" else ("low" if complexity == "easy" else "medium")
+
+    cached = cache_get(msg, skill)
+    if cached and complexity == "easy":
+        return {"cached": cached, "skill": skill, "complexity": complexity,
+                "mode": "cached", "effort": effort, "msgs": [], "max_t": 0}
+
+    clean_msg, search_ctx = extract_search_context(msg)
+
+    # ── 2. Parallel I/O tasks ────────────────────────────────────────────────
+    def _do_history():
+        h = hist
+        if _count_tokens(h) > 6000:
+            h = compress_history(h)[0]
+        return compress_history(_strip_thinking_from_history(h))
+
+    def _do_mem():
+        return mem_get(msg, k=3)
+
+    def _do_sem_mem():
+        return semantic_mem_get(msg, k=4)
+
+    def _do_sqlite_mem():
+        try:    return db_mem_get(msg, k=3)
+        except: return []
+
+    def _do_episodic():
+        return mem_get_episodic(msg)
+
+    def _do_rag():
+        return rag_get(msg, k=3)
+
+    def _do_rlhf():
+        return get_rlhf_note(skill)
+
+    with ThreadPoolExecutor(max_workers=7) as ex:
+        f_hist    = ex.submit(_do_history)
+        f_mem     = ex.submit(_do_mem)
+        f_sem     = ex.submit(_do_sem_mem)
+        f_sqlite  = ex.submit(_do_sqlite_mem)
+        f_epis    = ex.submit(_do_episodic)
+        f_rag     = ex.submit(_do_rag)
+        f_rlhf    = ex.submit(_do_rlhf)
+
+    recent, ctx_sum  = f_hist.result()
+    _mem_working     = f_mem.result()
+    sem_memory       = f_sem.result()
+    _mem_sqlite      = f_sqlite.result()
+    _mem_episodic    = f_epis.result()
+    rag_hits         = f_rag.result()
+    rlhf_note        = f_rlhf.result()
+
+    # Dedupe memory
+    _seen_m, memory = set(), []
+    for _src in [_mem_working, _mem_sqlite, sem_memory[:3], _mem_episodic[:2]]:
+        for _m in (_src or []):
+            _txt = _m if isinstance(_m, str) else str(_m)
+            _k = _txt[:80].lower()
+            if _k not in _seen_m:
+                _seen_m.add(_k); memory.append(_txt)
+    memory = memory[:8]
+
+    episodic = list(_mem_episodic or [])
+    if ctx_sum:
+        mem_save_episodic(ctx_sum)
+        episodic = [ctx_sum] + episodic
+
+    # ── 3. Human-gap analysis (best-effort) ──────────────────────────────────
+    _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = ""
+    _neg_space = _tom_ctx = _constraints = _narrative_ctx = ""
+    _rel_ctx = _prior_ctx = _depth_warn = ""
+    _stakes = "low"
+    try:
+        from modules.services.agents import (
+            detect_emotion_context, knowledge_boundary_check, goals_get_context,
+            assess_stakes, stakes_system_addon, negative_space_analysis,
+            theory_of_mind_analysis, extract_constraints, narrative_get_context,
+            relationship_get_context, experience_prior_check, context_depth_warning)
+        _emotion_ctx   = detect_emotion_context(msg)
+        _kb_ctx        = knowledge_boundary_check(msg, skill)
+        _goals_ctx     = goals_get_context()
+        _stakes        = assess_stakes(msg, complexity)
+        _stakes_ctx    = stakes_system_addon(_stakes)
+        _neg_space     = negative_space_analysis(msg, complexity)
+        _tom_ctx       = theory_of_mind_analysis(msg, skill)
+        _constraints   = extract_constraints(msg)
+        _narrative_ctx = narrative_get_context()
+        _rel_ctx       = relationship_get_context()
+        _prior_ctx     = experience_prior_check(msg, skill)
+        _depth_warn    = context_depth_warning("", "")
+    except Exception as _hge:
+        print(f"[HumanGap pre] {_hge}")
+
+    # ── 4. Force-tool patterns ────────────────────────────────────────────────
+    forced = []
+    _msg_lower_ft = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
+    for tool_name, triggers in FORCE_TOOL_PATTERNS.items():
+        if any(t in _msg_lower_ft for t in triggers):
+            if tool_name == "SEARCH" and not search_ctx and complexity != "easy":
+                r = tool_search(msg[:300])
+                if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
+            elif tool_name == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
+                import re as _rce
+                nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)
+                if nums:
+                    r = tool_calc(nums[0].strip())
+                    if r: forced.append(f"CALC result: {r}")
+            elif tool_name == "TIME":
+                forced.append(f"TIME: {tool_time()}")
+            break
+    if forced:
+        search_ctx += "\n[Pre-executed tools]\n" + "\n".join(forced)
+
+    # ── 5. RAG + system prompt build ─────────────────────────────────────────
+    rag_ctx = ("\n[KNOWLEDGE BASE]\n" +
+               "\n".join("- " + r.get("text","")[:200] for r in rag_hits) +
+               "\n[END KNOWLEDGE BASE]") if rag_hits else ""
+
+    _fs_ctx = ""
+    system = build_system_prompt(skill, memory, episodic, rlhf_note, ctx_sum or "", complexity)
+
+    for _addon in [_emotion_ctx, _kb_ctx, _goals_ctx, _stakes_ctx,
+                   _neg_space, _tom_ctx, _constraints,
+                   _narrative_ctx, _rel_ctx, _prior_ctx, _depth_warn]:
+        if _addon: system += "\n" + _addon
+
+    try:
+        from modules.services.agents import (PHYSICAL_SIMULATION_PROMPT,
+                                             CROSS_DOMAIN_ANALOGY_PROMPT,
+                                             COUNTERFACTUAL_PROMPT)
+        if skill in ("general","researcher") or complexity == "hard":
+            system += "\n" + PHYSICAL_SIMULATION_PROMPT
+        if complexity == "hard" or skill in ("coder","researcher"):
+            system += "\n" + CROSS_DOMAIN_ANALOGY_PROMPT
+        if complexity == "hard" or _stakes == "high":
+            system += "\n" + COUNTERFACTUAL_PROMPT
+    except Exception: pass
+
+    if rag_ctx: system += rag_ctx
+
+    if _needs_fresh_search(msg) and not search_ctx:
+        print("[KnowledgeCutoff] Stale topic detected — auto-triggering search")
+        try:
+            from search import tool_search_multi
+            search_ctx = tool_search_multi(msg, max_results=3)
+        except Exception as _se:
+            print(f"[KnowledgeCutoff] search failed: {_se}")
+
+    if search_ctx:
+        import datetime
+        system += (f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS, "
+                   f"IGNORE TRAINING DATA. Today is {datetime.date.today()}]"
+                   f"\n{search_ctx[:3000]}\n[/WEB]")
+
+    mcp_p = mcp_tool_list_prompt()
+    if mcp_p: system += f"\n\n{mcp_p}"
+
+    hist_msgs = []
+    for h in (recent or [])[-_dynamic_ctx_window() * 2:]:
+        r2 = h.get("role","user"); c2 = h.get("content","").strip()
+        if c2 and len(c2) > 2:
+            hist_msgs.append({"role": r2, "content": c2[:800]})
+
+    max_t = 16000  # no cap — model decides
+    mode  = ("extended_think" if effort == "high" else
+             ("think" if effort == "medium" else "fast"))
+    msgs  = build_chatml(system, hist_msgs, clean_msg)
+
+    return {
+        "cached": None, "skill": skill, "complexity": complexity,
+        "mode": mode, "effort": effort, "msgs": msgs,
+        "max_t": max_t, "system": system, "msg": msg, "model": _tier["models"][0],
+    }
+# ── END TTFT PATCH ────────────────────────────────────────────────────────────

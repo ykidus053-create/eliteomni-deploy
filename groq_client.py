@@ -226,7 +226,7 @@ def _syntactic_constraint_check(response: str, user_msg: str) -> list:
             violations.append(f"possible jargon leak: {jargon_markers[:3]}")
 
     # Forbidden letter constraints (syntactic — every character)
-    forbidden = re.findall(r"(?:no|without|not use|not contain) the letter ["\']?([a-z])["\']?", m)
+    forbidden = re.findall(r"(?:no|without|not use|not contain) the letter [a-z]", m)
     for letter in forbidden:
         words = [w.strip(".,!?;:\"\' ") for w in response.split()]
         bad = [w for w in words if letter in w.lower()]
@@ -242,7 +242,7 @@ def _hard_check(response: str, constraints: dict) -> list:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", response.strip()) if s.strip()]
 
     for letter in constraints["forbidden_letters"]:
-        bad = [w for w in response.split() if letter in w.lower().strip(".,!?;:\\"'")]
+        bad = [w for w in response.split() if letter in w.lower().strip(".,!?;:\"'")]
         if bad:
             violations.append(f"letter \'{letter}\' in: {bad[:3]}")
 
@@ -640,22 +640,6 @@ except Exception as e:
 
 
 
-    if max_tokens == 0: max_tokens = _dynamic_max_tokens(msgs)
-        return ""
-    import urllib.request, json as _json
-    payload = _json.dumps({
-        "model": mdl, "messages": msgs,
-        "max_tokens": min(max_tokens, 4000), "temperature": 0.6,
-    }).encode()
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            resp = _json.loads(r.read())
-        return (resp["choices"][0]["message"].get("content") or "").strip()
-    except Exception as e:
-        return ""
-
-    if max_tokens == 0: max_tokens = _dynamic_max_tokens(msgs)
-        return
     import urllib.request, json as _json
     payload = _json.dumps({
         "model": mdl, "messages": msgs,

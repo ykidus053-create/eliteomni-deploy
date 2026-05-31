@@ -383,26 +383,11 @@ def extract_search_context(msg: str) -> tuple:
         return msg, ""
 
     auto_triggers = [
-        # Time-sensitive
-        "who is", "when did", "latest", "current", "news", "today",
-        "recently", "price of", "where is", "search for", "look up",
-        "find me", "tell me about", "what's happening", "what happened",
-        "when was", "who won", "what happened to", "is there a",
-        "are there any", "right now", "this week", "this month",
-        "this year", "2024", "2025", "2026", "live", "real-time",
-        # People & events
-        "who made", "who created", "who founded", "ceo of", "president of",
-        "prime minister", "election", "war", "conflict", "crisis",
-        # Tech & products
-        "release", "launched", "announced", "new model", "new version",
-        "update", "upgrade", "gpt", "claude", "gemini", "llama",
-        "openai", "anthropic", "google", "apple", "microsoft", "meta",
-        "tesla", "spacex", "nvidia", "stock", "crypto", "bitcoin",
-        # General research
-        "how does", "what is the best", "compare", "vs", "versus",
-        "review", "recommend", "should i", "is it worth",
-        "weather", "temperature", "forecast", "score", "result", "humidity", "wind", "rain", "sunny", "cloudy",
-        "standings", "schedule", "match", "game", "tournament",
+        # Only truly time-sensitive triggers — reduces unnecessary search calls
+        "latest", "current", "news", "today", "right now", "live",
+        "price of", "stock", "crypto", "weather", "forecast",
+        "who won", "election", "who is the", "ceo of", "president of",
+        "2025", "2026", "real-time", "breaking",
     ]
     # Only skip search for pure math/code with no real-world context
     no_search = any(t in msg.lower() for t in [
@@ -483,6 +468,7 @@ if _faiss_ok and faiss_index is not None:
     pass
     pass
 def _embed(text: str):
+    import numpy as np
     if not _faiss_ok or np is None: return None
     m = _get_fe()
     if m is not None:
@@ -581,34 +567,59 @@ def _strip_thinking_from_history(history: list) -> list:
             clean.append({**h, "content": content})
     return clean
 
-def compress_history(history: list):
+def compress_history(history: list, complexity: str = "medium"):
     """
-    FIFO Context Engineering (Anthropic 4.6: prevents context rot).
-    Evicts oldest turns when token budget exceeded; preserves KEY_FACTS summary.
-    Falls back to simple window if budget fits.
+    Fei-Fei Li: Semantic compression preserving world-model, not just truncation.
+    Hassabis: Hard tasks keep more turns. Easy tasks compress aggressively.
+    Returns (compressed_history, summary_string).
     """
     if not history:
         return [], None
 
-    # FIFO budget check: sum token estimates of all turns
-    total_tokens = sum(_estimate_tokens(h.get("content","")) for h in history)
+    _budget_map = {"easy": 800, "medium": 2000, "hard": 6000}
+    _window_map  = {"easy": 4, "medium": 10, "hard": 20}
+    token_budget = _budget_map.get(complexity, 2000)
+    ctx_window   = _window_map.get(complexity, 10)
 
-    if total_tokens <= CTX_TOKEN_BUDGET and len(history) <= CTX_WINDOW * 2:
-        return history, None  # fits — no compression needed
+    total_tokens = sum(_estimate_tokens(h.get("content", "")) for h in history)
+    if total_tokens <= token_budget and len(history) <= ctx_window:
+        return history, None
 
-    # Evict oldest turns until within budget, preserving recent window
-    recent = history[-(CTX_WINDOW * 2):]
-    old    = history[:-(CTX_WINDOW * 2)]
+    recent = history[-(ctx_window):]
+    old    = history[:-(ctx_window)]
+    if not old:
+        return recent, None
 
-    # Extract KEY_FACTS from evicted turns (survive FIFO eviction)
-    key_facts = []
+    decisions, entities, numbers = [], [], []
+    for h in old:
+        c = h.get("content", "")
+        nums = re.findall(r"\d+(?:\.\d+)?\s*(?:%|ms|GB|MB|px|tokens?|steps?)?", c)
+        numbers.extend(nums[:3])
+        ents = re.findall(r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)*", c)
+        entities.extend(ents[:4])
+        if any(w in c.lower() for w in ["decided", "chosen", "will use", "going with", "confirmed"]):
+            decisions.append(c[:120].replace("\n", " "))
+
+    parts = []
+    if decisions:
+        parts.append("Decisions: " + " | ".join(decisions[:3]))
+    if entities:
+        dedup_ents = list(dict.fromkeys(entities))[:8]
+        parts.append("Entities: " + ", ".join(dedup_ents))
+    if numbers:
+        dedup_nums = list(dict.fromkeys(numbers))[:6]
+        parts.append("Key values: " + ", ".join(dedup_nums))
+
+    qa_facts = []
     for i in range(0, len(old) - 1, 2):
         if i + 1 < len(old):
-            q = old[i].get("content", "")[:50].replace("\n", " ")
-            a = old[i + 1].get("content", "")[:60].replace("\n", " ")
-            key_facts.append(f"Q:{q}→A:{a}")
+            q = re.sub(r"<think>.*?</think>", "", old[i].get("content",""), flags=re.DOTALL)[:80].replace("\n"," ")
+            a = re.sub(r"<think>.*?</think>", "", old[i+1].get("content",""), flags=re.DOTALL)[:120].replace("\n"," ")
+            qa_facts.append(f"Q:{q.strip()}->A:{a.strip()}")
+    if qa_facts:
+        parts.append("History: " + " || ".join(qa_facts[:4]))
 
-    summary = "Prior context [FIFO compressed]: " + " | ".join(key_facts[:5]) if key_facts else None
+    summary = "[Compressed context] " + " | ".join(parts) if parts else None
     return recent, summary
 
 def record_feedback(skill: str, msg: str, response: str, rating: int):

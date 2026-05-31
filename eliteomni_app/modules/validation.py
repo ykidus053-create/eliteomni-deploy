@@ -326,12 +326,24 @@ def verification_pipeline(text: str, msg: str, skill: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # SYSTEM PROMPT BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
+# Output discipline injected into every prompt
+"""
+CRITICAL OUTPUT RULES — ALWAYS ENFORCED:
+1. NEVER output section headers like: FORMAL PROBLEM STATEMENT, ALGORITHM SELECTION, 
+   CORRECTNESS PROOF, LOOP INVARIANT, TRACE TABLE, SELF-AUDIT, EDGE CASE MATRIX,
+   IMPLEMENTATION, WORKFLOW, PLAN, DRAFT, VERIFY, APPROACH, CONSTRAINTS
+2. NEVER show your internal reasoning, planning, or methodology
+3. For code requests: output code + max 2 sentences. Nothing else.
+4. For questions: output the direct answer. No preamble.
+5. Think like a genius. Write like a pro. Show only results.
+"""
+
 WORKFLOWS = {
-    "researcher": "1.DECOMPOSE 2.SYNTHESIZE with ## headers 3.Mark [VERIFIED]/[UNCERTAIN] 4.**Summary**",
-    "coder":      "1.UNDERSTAND 2.PLAN pseudocode 3.IMPLEMENT complete typed code 4.VERIFY 5.usage example",
-    "calculator": "1.PARSE 2.PATH-A rough estimate 3.PATH-B precise calc 4.PATH-C verify 5.**bold answer**",
-    "safety":     "1.CLASSIFY harm vs unusual 2.STEELMAN 3.CONSTITUTION CHECK 4.DECIDE",
-    "general":    "1.UNDERSTAND 2.ANSWER completely 3.VERIFY quality",
+    "researcher": "Think: decompose → synthesize → verify sources. Output: direct answer with headers if long.",
+    "coder":      "Think: understand → plan → implement → verify. Output: minimal explanation + complete working code only.",
+    "calculator": "Think: estimate → calculate → verify. Output: calculation steps + bold final answer.",
+    "safety":     "Think: classify → steelman → constitution check → decide. Output: direct decision.",
+    "general":    "Think: understand → verify → answer. Output: direct complete answer.",
 }
 
 UNCERTAINTY_INSTRUCTION = '''
@@ -369,6 +381,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         parts.append(LANGUAGE_PROMPT.strip())
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception: pass
+    parts.append(OUTPUT_DISCIPLINE.strip())
     parts.append(RESPONSE_STYLE_PROMPT.strip())
 
     if complexity in ("medium", "hard"):

@@ -1440,8 +1440,15 @@ def route_complexity(msg: str) -> str:
     _hard = ["research","explain in detail","compare","analyze","history of",
              "comprehensive","implement","algorithm","step by step","essay",
              "write a report","in depth","deep dive","thoroughly"]
-    # Short simple questions → easy (fast path, no tree search, no CAI)
-    if len(msg) < 120 and any(t in m for t in _easy): return "easy"
+    # Karpathy: keyword must appear WITHOUT complex qualifiers to be easy
+    _complex_qualifiers = ["impact", "effect", "analysis", "difference", "compare",
+                           "explain", "describe", "relationship", "between", "implications",
+                           "strategy", "approach", "design", "architecture", "optimize"]
+    _is_truly_easy = (len(msg) < 120
+                      and any(t in m for t in _easy)
+                      and not any(q in m for q in _complex_qualifiers)
+                      and len(m.split()) < 12)
+    if _is_truly_easy: return "easy"
     if len(msg) >= ADAPTIVE_THINK_THRESHOLD: return "hard"
     if any(t in m for t in _hard) or len(msg) > 200: return "hard"
     return "medium"

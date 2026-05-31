@@ -331,7 +331,7 @@ SKILLS = {
         "meta": ["code","python","javascript","typescript","function","implement",
                  "debug","algorithm","program","script","html","css","react","api",
                  "bug","error","write a","build","create a"],
-        "prompt": "Code Agent: type-hinted, documented, production-ready code. Docstring + usage example. Never truncate.",
+        "prompt": "You are an expert software engineer. Think through the problem completely before responding. Output ONLY: one sentence explanation (optional) + complete working code. Never show your reasoning, planning steps, formal proofs, or methodology. No section headers. No self-audit. No trace tables. Just clean code.",
     },
     "calculator": {
         "meta": ["calculate","compute","sqrt","equation","formula","percent","%",

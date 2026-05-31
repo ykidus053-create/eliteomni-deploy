@@ -1,4 +1,6 @@
 import urllib.request, urllib.parse
+import re as _re2
+import json as _json
 import os, re, time, math, json, ast, subprocess, sys, tempfile, difflib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 

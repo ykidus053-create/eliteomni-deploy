@@ -32,14 +32,14 @@ def _hhh_score(response: str, prompt: str) -> dict:
     for dim, rubric in rubrics.items():
         try:
             msg = f"{rubric}\nUser: {prompt[:200]}\nAI: {response[:400]}\nReply with a single digit 1-5 only."
-            result = groq_generate([{"role":"user","content":msg}], max_tokens=5, model="groq/compound")
+            result = groq_generate([{"role":"user","content":msg}], max_tokens=5, model="mistral-small-latest")
             if result:
                 digit = re.search(r"[1-5]", result)
                 if digit:
                     scores[dim] = int(digit.group())
         except Exception:
             pass
-    scores["total"] = sum(scores[k] for k in ("helpful","harmless","honest"))
+    scores["total"] = round((scores["helpful"]*0.4) + (scores["harmless"]*0.35) + (scores["honest"]*0.25), 3)
     return scores
 
 def _rlaif_record(principle: str, winner: str, loser: str, prompt: str, hhh: dict = None):
@@ -62,7 +62,7 @@ def cai_critique_revise(response: str, original_msg: str, skill: str, complexity
     Constitutional AI critique using a SEPARATE stronger critic model.
     Only runs on medium/hard complexity to reduce latency on simple queries.
     """
-    if complexity == "easy" or skill == "calculator": return response
+    if complexity == "easy" and skill != "coder": return response
     if len(response) < 100: return response  # too short to critique meaningfully
     if not GROQ_API_KEY: return response  # no API key, skip
     if len(response) < 80: return response

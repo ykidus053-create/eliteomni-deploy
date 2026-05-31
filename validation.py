@@ -314,8 +314,8 @@ def apply_style_softeners(text: str) -> str:
 
 def formal_verify(text: str, skill: str, original_msg: str) -> tuple:
     violations = []
-    calc_re = re.compile(r'CALC\\(([^)]+)\\)')
-    num_re  = re.compile(r'[-+]?\\d[\\d,]*\\.?\\d*')
+    calc_re = re.compile(r'CALC\(([^)]+)\)')
+    num_re  = re.compile(r'[-+]?\d[\d,]*\.?\d*')
     for m in calc_re.finditer(text):
         result = tool_calc(m.group(1))
         if result.startswith("Error"): continue
@@ -327,12 +327,12 @@ def formal_verify(text: str, skill: str, original_msg: str) -> tuple:
                 if exp != 0 and abs(act-exp)/abs(exp) > 0.01:
                     violations.append(f"Math: CALC({m.group(1)})={result} but text shows {nums[0]}")
             except ValueError: pass
-    code_re = re.compile(r'```python\\n(.*?)```', re.DOTALL)
+    code_re = re.compile(r'```python\n(.*?)```', re.DOTALL)
     for block in code_re.finditer(text):
         try: compile(block.group(1), "<string>", "exec")
         except SyntaxError as e: violations.append(f"Code: SyntaxError line {e.lineno}: {e.msg}")
-    overconf = re.compile(r'\\b(exactly|always|never|100%|guaranteed|definitely|certainly|absolutely)\\b', re.IGNORECASE)
-    hedge    = re.compile(r'\\b(approximately|about|roughly|generally|may|might|could|likely|probably)\\b', re.IGNORECASE)
+    overconf = re.compile(r'\b(exactly|always|never|100%|guaranteed|definitely|certainly|absolutely)\b', re.IGNORECASE)
+    hedge    = re.compile(r'\b(approximately|about|roughly|generally|may|might|could|likely|probably)\b', re.IGNORECASE)
     oc = len(overconf.findall(text)); hd = len(hedge.findall(text))
     if oc > 0 and oc / max(oc+hd, 1) > 0.6:
         violations.append(f"Overconfidence: {oc} absolute claims without hedging")
@@ -367,9 +367,13 @@ def verification_pipeline(text: str, msg: str, skill: str) -> str:
     # Post-check: static analysis on code blocks
     text = analyze_response_code_blocks(text)
 
-    is_valid, violations = formal_verify(text, skill, msg)
+    _fv = formal_verify(text, skill, msg)
+    is_valid, violations = _fv[0], _fv[1]
+    text = _fv[2] if len(_fv) > 2 else text  # apply auto-corrections
     # Second-pass self-audit (Claude-style re-verification)
-    is_valid2, violations2 = formal_verify(text, skill, msg)
+    _fv2 = formal_verify(text, skill, msg)
+    is_valid2, violations2 = _fv2[0], _fv2[1]
+    text = _fv2[2] if len(_fv2) > 2 else text
     if not is_valid2 and violations2:
         text += "\n\n> ⚠️ *Note: I may have missed something subtle — treat this as a working draft and verify critical details.*"
 
@@ -881,6 +885,7 @@ def _budget(msg: str, skill: str, complexity: str) -> int:
     if GROQ_API_KEY:
         if skill == "coder": return 4000 if complexity == "hard" else 3000
         if skill == "researcher": return 3000 if complexity == "hard" else 2500
+        if skill == "calculator": return 1200  # Ng: was 0.3x=76 tokens, truncated answers
         if complexity == "hard": return 4000
         if complexity == "medium": return 2500
         if complexity == "easy": return 1500
@@ -925,12 +930,11 @@ def build_chatml(system: str, history: list, user_msg: str) -> list:
 
 def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int) -> str:
     if GROQ_API_KEY:
-        groq_generate._skill = skill
-        groq_stream._skill = skill
+        # skill passed via parameter — removed unsafe function attribute mutation
         # compound only for hard non-streaming reasoning; 70b for everything else
         hard_skills = ("coder", "researcher")
         mdl = GROQ_MODEL
-        groq_generate._reasoning_effort = "high" if skill in hard_skills else "medium"
+        # reasoning effort handled inside groq_generate per-call — not via shared state
         result = groq_generate(msgs, max_tokens=max_new, model=mdl)
         if result:
             print(f"[Groq] used {mdl} for skill={skill}")

@@ -621,3 +621,32 @@ Your original response:
 
     return original_response + f"\n\n> ❌ **{test_results['failed']} test(s) failed:** {error_summary[:300]}"
 
+
+
+def auto_run_and_fix(code: str, language: str = "python") -> str:
+    """Run any code, auto-install missing packages, auto-fix errors."""
+    try:
+        from modules.services.code_sandbox import run_code_auto_install
+        from modules.services.code_validator import validate_and_fix_code
+
+        result = run_code_auto_install(code)
+
+        if result.get("auto_installed"):
+            print("  [INSTALLED] " + str(result["auto_installed"]))
+
+        if result["success"]:
+            return "[RAN OK]\n" + (result["stdout"] or "(no output)")
+
+        fix = validate_and_fix_code(code, result["stderr"])
+        if fix.get("fixed_success"):
+            return (
+                "[AUTO-FIXED] Issues resolved: "
+                + str(fix.get("issues_found", "")) + "\n"
+                + "Output:\n" + str(fix.get("fixed_output", "")) + "\n"
+                + "Fixed code:\n```python\n"
+                + str(fix.get("fixed", "")) + "\n```"
+            )
+
+        return "[FAILED]\n" + result["stderr"][:800]
+    except Exception as exc:
+        return "[EXECUTION ERROR] " + str(exc)

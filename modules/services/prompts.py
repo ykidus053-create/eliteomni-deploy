@@ -839,8 +839,8 @@ Never skip this for hard or calculator queries.
 try:
     from modules.services.agents import PHYSICAL_SIMULATION_PROMPT, CROSS_DOMAIN_ANALOGY_PROMPT
 except ImportError:
-    PHYSICAL_SIMULATION_PROMPT = ""
-    CROSS_DOMAIN_ANALOGY_PROMPT = ""
+    PHYSICAL_SIMULATION_PROMPT = "Think internally: mentally simulate the physical or logical process step by step. Do not output your simulation. Output only the final answer or code."
+    CROSS_DOMAIN_ANALOGY_PROMPT = "Think internally: consider analogies from other domains to strengthen your solution. Do not mention analogies in output unless directly asked."
 # ── LOGIC EXECUTION AUDIT ─────────────────────────────────────────────────────
 LOGIC_AUDIT_PROMPT = """<logic_audit>
 After writing any code, perform this MANDATORY logic audit:

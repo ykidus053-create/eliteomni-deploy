@@ -379,8 +379,15 @@ def route_complexity(msg: str) -> str:
              "design a","optimize","recompute","execution","trade-off",
              "questions","q1","q2","q3","1.","2.","3.","4.","5.",
              "distributed","multiworker","multi-worker","parallel tasks"]
-    # Short simple questions → easy (fast path, no tree search, no CAI)
-    if len(msg) < 120 and any(t in m for t in _easy): return "easy"
+    # Karpathy: keyword must appear WITHOUT complex qualifiers to be easy
+    _complex_qualifiers = ["impact", "effect", "analysis", "difference", "compare",
+                           "explain", "describe", "relationship", "between", "implications",
+                           "strategy", "approach", "design", "architecture", "optimize"]
+    _is_truly_easy = (len(msg) < 120
+                      and any(t in m for t in _easy)
+                      and not any(q in m for q in _complex_qualifiers)
+                      and len(m.split()) < 12)
+    if _is_truly_easy: return "easy"
     if len(msg) >= ADAPTIVE_THINK_THRESHOLD: return "hard"
     if any(t in m for t in _hard) or len(msg) > 200: return "hard"
     return "medium"
@@ -493,7 +500,7 @@ def rag_retrieve(query: str, k: int = 3) -> str:
         rows = con.execute(
             """SELECT user_msg, assistant_response FROM samples 
                WHERE rating=1 AND length(assistant_response) > 200
-               ORDER BY RANDOM() LIMIT ?'""", (k,)
+               ORDER BY RANDOM() LIMIT ?""", (k,)
         ).fetchall()
         con.close()
         if not rows: return ''
@@ -574,17 +581,39 @@ def surprise_get_budget_boost(skill: str, complexity: str) -> int:
 
 # ── HEBBIAN HIT COUNTS ──────────────────────────────────────────────────────
 import sqlite3 as _sq2, time as _t2
-def _ensure_hit_count_col():
+
+def compress_history(history: list, max_tokens: int = 3000) -> list:
+    """
+    Summarize middle turns when history exceeds token budget.
+    Keeps system prompt + last 4 turns intact; summarizes the rest.
+    """
+    import tiktoken
     try:
-        con = _sq2.connect(_DB_PATH); con.execute("ALTER TABLE memory ADD COLUMN hit_count INTEGER DEFAULT 0"); con.commit(); con.close()
-    except Exception: pass
-_ensure_hit_count_col()
-def mem_increment_hit(text):
-    try:
-        con = _sq2.connect(_DB_PATH); con.execute("UPDATE memory SET hit_count=hit_count+1 WHERE text=?", (text[:2000],)); con.commit(); con.close()
-    except Exception: pass
-def mem_prune_unused():
-    try:
-        con = _sq2.connect(_DB_PATH); con.execute("DELETE FROM memory WHERE hit_count=0 AND ts < ?", (_t2.time()-604800,)); con.commit(); con.close()
-        print("[Hebbian] pruned unused memories older than 7 days")
-    except Exception: pass
+        enc = tiktoken.get_encoding("cl100k_base")
+        count = lambda m: len(enc.encode(m.get("content", "")))
+    except Exception:
+        count = lambda m: len((m.get("content", "") or "").split()) * 2
+
+    total = sum(count(m) for m in history)
+    if total <= max_tokens:
+        return history
+
+    system = [m for m in history if m.get("role") == "system"]
+    tail   = history[-4:]
+    middle = [m for m in history[len(system):-4] if m not in tail]
+
+    if not middle:
+        return history
+
+    # Summarize middle turns into a single assistant message
+    summary_text = "Summary of earlier context: " + " | ".join(
+        f"[{m['role']}]: {(m.get('content') or '')[:120].strip()}"
+        for m in middle
+    )
+    summary_msg = {"role": "assistant", "content": summary_text}
+    compressed = system + [summary_msg] + tail
+
+    # Verify we actually saved tokens
+    new_total = sum(count(m) for m in compressed)
+    return compressed if new_total < total else history
+

@@ -42,11 +42,18 @@ MAX_TOKEN_CAPS = {
     "hard":   2000,
 }
 
-def cap_max_tokens(requested: int, complexity: str) -> int:
-    cap = MAX_TOKEN_CAPS.get(complexity, 800)
-    result = min(requested, cap)
+def cap_max_tokens(requested: int, complexity: str, msg: str = "") -> int:
+    # Never cap hard/long-form requests — only enforce model ceiling
+    MODEL_MAX = 16000
+    long_triggers = ["implement","write","create","proof","tests","comprehensive",
+                     "robust","explain","algorithm","function","class","detailed"]
+    is_long = any(t in msg.lower() for t in long_triggers) if msg else False
+    if complexity == "hard" or is_long:
+        return min(requested, MODEL_MAX)
+    soft = {"easy": 2048, "medium": 4096}.get(complexity, 4096)
+    result = min(requested, soft)
     if result < requested:
-        print(f"[TTFT] max_tokens capped {requested} -> {result} for {complexity}")
+        print(f"[TTFT] max_tokens soft-capped {requested} -> {result} for {complexity}")
     return result
 
 

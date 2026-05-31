@@ -303,16 +303,42 @@ def _validate_schedule_disabled(response: str, msg: str) -> tuple:
 
 def verification_pipeline(text: str, msg: str, skill: str) -> str:
     """
-    Post-generation verification:
+    Post-generation verification with self-correction loop:
     1. Clean excessive newlines
     2. Formal verify math + code
-    3. Lint all code blocks (coder skill)
+    3. Self-correct if violations found
+    4. Lint all code blocks (coder skill)
     """
     text = re.sub(r'\n{4,}', '\n\n\n', text)
     result = formal_verify(text, skill, msg)
     is_valid, violations = result[0], result[1]
-    text = result[2] if len(result) > 2 else text  # use auto-fixed text
-    if not is_valid:
+    text = result[2] if len(result) > 2 else text
+
+    # ── SELF-CORRECTION LOOP ─────────────────────────────────────────────────
+    if not is_valid and violations:
+        try:
+            from modules.core.http_client import mistral_generate
+            correction_prompt = (
+                f"Your previous response had these issues that must be fixed:\n"
+                + "\n".join(f"- {v}" for v in violations[:3])
+                + f"\n\nOriginal question: {msg[:300]}"
+                + f"\n\nFix ONLY these specific issues. Rewrite the full response:\n{text[:2000]}"
+            )
+            corrected = mistral_generate(
+                [{"role": "user", "content": correction_prompt}],
+                max_tokens=3000
+            )
+            if corrected and len(corrected) > 100:
+                print(f"[SelfCorrect] corrected {len(violations)} violation(s) for skill={skill}")
+                text = corrected
+                # Re-verify after correction
+                result2 = formal_verify(text, skill, msg)
+                is_valid, violations = result2[0], result2[1]
+                text = result2[2] if len(result2) > 2 else text
+        except Exception as e:
+            print(f"[SelfCorrect] failed (non-fatal): {e}")
+
+    if not is_valid and violations:
         text += "\n\n> ⚠️ " + " · ".join(violations[:2])
     if skill == "coder":
         from modules.services.tools import _extract_code_blocks, tool_lint, tool_exec
@@ -427,6 +453,13 @@ When uncertain, explicitly say so with a confidence level (e.g. "I'm ~80% confid
 Never fabricate facts. If you don't know something, say "I don't have reliable information on this."
 For complex claims, briefly note what evidence supports your answer.
 '''
+
+def _get_learned_patch():
+    try:
+        from modules.services.active_learning import run_learning_cycle
+        return run_learning_cycle()
+    except Exception:
+        return ''
 
 def build_system_prompt(skill: str, memory: list, episodic: list,
                         rlhf_note: str, ctx_summary: str = "",
@@ -584,11 +617,13 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     if complexity in ("medium", "hard"):
         parts.append(ANTI_HALLUCINATION_PROMPT.strip())
 
-    parts.append(REASONING_DISCIPLINE_PROMPT.strip())
-    parts.append(COUNTERFACTUAL_AND_RISK_PROMPT.strip())
-    parts.append(BIAS_CORRECTION_PROMPT.strip())
-    parts.append(IMPLICIT_INTENT_PROMPT.strip())
-    parts.append(SELF_IMPROVEMENT_PROMPT.strip())
+    # TTFT: only add heavy reasoning prompts for medium/hard
+    if complexity != "easy":
+        parts.append(REASONING_DISCIPLINE_PROMPT.strip())
+        parts.append(COUNTERFACTUAL_AND_RISK_PROMPT.strip())
+        parts.append(BIAS_CORRECTION_PROMPT.strip())
+        parts.append(IMPLICIT_INTENT_PROMPT.strip())
+        parts.append(SELF_IMPROVEMENT_PROMPT.strip())
     if complexity in ("medium", "hard"):
         parts.append(CLAUDE_REASONING_GAPS_PROMPT.strip())
     if complexity == "hard":
@@ -609,11 +644,13 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     if episodic:
         parts.append("EPISODIC:\n" + "\n".join(f"- {e[:100]}" for e in episodic[:3]))
     if ctx_summary:
-        parts.append(f"PRIOR CONTEXT SUMMARY: {ctx_summary[:300]}")
+            _lp = _get_learned_patch()
+    if _lp: parts.append(_lp)
+    parts.append(f"PRIOR CONTEXT SUMMARY: {ctx_summary[:300]}")
 
     joined = "\n".join(parts)
-    # Hard cap — but use prompt cache key so Groq can cache the stable prefix
-    _cap = {"easy": 2000, "medium": 8000, "hard": 24000}.get(complexity, 8000)
+    # TTFT-optimized caps — smaller = faster prefill = faster first token
+    _cap = {"easy": 800, "medium": 3000, "hard": 8000}.get(complexity, 3000)
     if len(joined) > _cap:
         joined = joined[:_cap]
     return joined
@@ -627,7 +664,7 @@ def _budget(msg: str, skill: str, complexity: str) -> int:
     Mistral Large supports up to 32k output. We use up to 16k to stay safe.
     """
     # Base budget by complexity
-    base = {"easy": 512, "medium": 2048, "hard": 8192}.get(complexity, 2048)
+    base = {"easy": 256, "medium": 1024, "hard": 4096}.get(complexity, 1024)
 
     # Skill multipliers
     skill_mult = {
@@ -671,14 +708,20 @@ _STOPS = ["<|im_end|>", "<|im_start|>", "<|endoftext|>",
 # ══════════════════════════════════════════════════════════════════════════════
 # BUILD CHATML + GENERATE
 # ══════════════════════════════════════════════════════════════════════════════
-def build_chatml(system: str, history: list, user_msg: str) -> list:
-    # Static system prefix first — enables Groq prompt cache hits
+def build_chatml(system: str, history: list, user_msg: str,
+                  complexity: str = "medium") -> list:
+    """Dynamic context window: hard tasks see more history, easy tasks see less.
+    Complexity-aware caps prevent context rot without starving reasoning chains.
+    """
     msgs = [{"role": "system", "content": system}]
-    for h in (history or [])[-_dynamic_ctx_window() * 2:]:
+    # Hassabis: multi-step reasoning needs full context
+    _hist_turns = {"easy": 4, "medium": 8, "hard": 14}.get(complexity, 8)
+    _char_cap   = {"easy": 300, "medium": 800, "hard": 2000}.get(complexity, 800)
+    for h in (history or [])[-_hist_turns:]:
         r = h.get("role", "user")
-        c = h.get("content", "")
+        c = h.get("content", "")[:_char_cap]
         if c.strip():
-            msgs.append({"role": r, "content": c[:4000]})
+            msgs.append({"role": r, "content": c})
     msgs.append({"role": "user", "content": user_msg[:6000]})
     return msgs
 
@@ -725,7 +768,12 @@ def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int, provider: 
     mdl = model or "mistral-large-latest"
     result = "".join(mistral_stream(msgs, max_tokens=max_new, model=mdl))
     if result:
-        return _clean(result)
+        # Hassabis: flag uncertain claims before serving
+    try:
+        from modules.services.uncertainty import append_uncertainty_disclaimer
+        result = append_uncertainty_disclaimer(result, msgs[-1].get('content','') if msgs else '')
+    except Exception: pass
+    return _clean(result)
     if llm is None:
         return "Model not loaded."
     with _gen_lock:
@@ -763,3 +811,60 @@ For every recommendation follow this internal chain (keep in <think> tags):
 Only output WHAT and relevant WHAT_IF warnings. Hide WHY and VERIFY in <think>.
 </causal_reasoning>
 """
+
+# ══════════════════════════════════════════════════════
+# 100X REASONING UPGRADES — Hassabis + Ng + Li + Karpathy
+# ══════════════════════════════════════════════════════
+
+def enhanced_generate(msg: str, skill: str, complexity: str,
+                       history: list, system: str) -> str:
+    """
+    Drop-in replacement for generate_sync that adds:
+    1. Step-level process supervision (Hassabis)
+    2. Quality drift logging (Ng)
+    3. Iterative code fixing (Karpathy)
+    4. Hierarchical summarization for long inputs (Li)
+    """
+    from modules.services.memory import tool_calc
+
+    # Route to specialized handlers
+    if skill == "coder" and complexity in ("medium", "hard"):
+        # Karpathy: use iterative fix loop
+        msgs = build_chatml(system, history, msg)
+        first_attempt = generate_sync(msgs, _budget(msg, skill, complexity), skill, len(msg))
+        import re
+        blocks = re.findall(r'```python\n(.*?)```', first_attempt, re.DOTALL)
+        if blocks:
+            try:
+                from modules.services.tools import iterative_code_fix
+                fix_result = iterative_code_fix(blocks[0], msg, max_rounds=2)
+                if fix_result["passed"] and fix_result["rounds"] > 1:
+                    fixed_response = first_attempt.replace(
+                        blocks[0], fix_result["code"]
+                    )
+                    print(f"[IterativeFix] code fixed in {fix_result['rounds']} rounds")
+                    return fixed_response + f"\n\n> ✅ Execution verified ({fix_result['rounds']} rounds)"
+            except Exception as e:
+                print(f"[IterativeFix] non-fatal: {e}")
+        return first_attempt
+
+    if len(msg) > 2000 and skill == "researcher":
+        # Li: hierarchical summarization for long research queries
+        try:
+            from modules.services.pipeline import hierarchical_summarize
+            condensed = hierarchical_summarize(msg, target_length=800, domain="research")
+            msg = condensed + "\n\n[Original query condensed above]"
+        except Exception:
+            pass
+
+    msgs = build_chatml(system, history, msg)
+    response = generate_sync(msgs, _budget(msg, skill, complexity), skill, len(msg))
+
+    # Ng: log quality for drift detection
+    try:
+        from modules.services.rlaif import log_response_quality
+        log_response_quality(skill, complexity, response, msg, min(9.0, 4.0 + len(response)/500))
+    except Exception:
+        pass
+
+    return response
