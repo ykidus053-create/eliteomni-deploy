@@ -30,13 +30,13 @@ _searxng_lock      = Lock()
 def _probe_searxng(timeout: float = 15.0) -> bool:
     """Return True if SearXNG answers a health-check ping."""
     try:
-        import subprocess as _sp
-        r = _sp.run(
-            ["curl", "-s", "-m", "10", "-o", "/dev/null", "-w", "%{http_code}",
-             f"{SEARXNG_URL}/search?q=test&format=json&engines=duckduckgo"],
-            capture_output=True, text=True, timeout=12
+        import urllib.request as _ur
+        req = _ur.Request(
+            f"{SEARXNG_URL}/search?q=test&format=json&engines=duckduckgo",
+            headers={"User-Agent": "EliteOmni-healthcheck/1.0"}
         )
-        return r.stdout.strip() == "200"
+        with _ur.urlopen(req, timeout=timeout) as r:
+            return r.status == 200
     except Exception:
         return False
 
@@ -62,27 +62,7 @@ def _ensure_searxng() -> bool:
         _searxng_fail_count += 1
         print(f"[SearXNG] probe failed (streak={_searxng_fail_count}), attempting restart…")
 
-        # Try to restart via Docker (works in WSL + Docker Desktop)
-        for cmd in (
-            ["docker", "restart", "searxng"],
-            ["docker", "compose", "restart", "searxng"],
-            ["docker-compose", "restart", "searxng"],
-        ):
-            try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=20
-                )
-                if result.returncode == 0:
-                    print(f"[SearXNG] restart issued via: {' '.join(cmd)}")
-                    time.sleep(4)   # give it a moment to come up
-                    if _probe_searxng(timeout=6):
-                        _searxng_healthy   = True
-                        _searxng_last_ok   = time.time()
-                        _searxng_fail_count = 0
-                        print("[SearXNG] back online after restart ✓")
-                        return True
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                continue
+        # Docker restart not available in cloud deployment — skip
 
         print("[SearXNG] could not restart — will answer from knowledge cache")
         return False
