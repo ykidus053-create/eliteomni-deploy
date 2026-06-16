@@ -200,7 +200,6 @@ def tool_search(query: str, _raw: bool = False) -> str:
 
         cited = _cite_results(results[:6])
 
-        # ── Deep-dive: fetch full content from top 2 URLs ────────────────────
         from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
         _top_urls = [r.get("url","") for r in results[:3] if r.get("url","")][:2]
         _fetched_content = []
@@ -216,24 +215,24 @@ def tool_search(query: str, _raw: bool = False) -> str:
                     _res = _fut.result()
                     if _res and len(_res) > 200:
                         _url = _futs[_fut]
-                        _fetched_content.append(f"[Full content from {_url[:60]}]:
-{_res}")
-                        print(f"[search] deep-fetched {len(_res)} chars from {_url[:60]}")
-
+                        _fetched_content.append("[Full content from " + _url[:60] + "]:\n" + _res)
         if _fetched_content:
-            full_ctx = (cited + "
-
-" if cited else "") + "
-
-".join(_fetched_content)
-            if _rcache: _rcache.setex(_ckey, 300, full_ctx)
-            return full_ctx
+            combined = "\n\n".join(_fetched_content)
+            if _rcache: _rcache.setex(_ckey, 300, combined)
+            return combined
 
         if cited:
             if _rcache: _rcache.setex(_ckey, 300, cited)
             return cited
-        return None
 
+        for item in results[:2]:
+            url = item.get('url', '')
+            if url:
+                fetched = tool_web_fetch(url, max_chars=600)
+                if fetched and len(fetched) > 100:
+                    print('[search] WebFetch fallback: ' + url[:60])
+                    return fetched
+        return None
     except requests.exceptions.ConnectionError:
         global _searxng_healthy
         _searxng_healthy = False
