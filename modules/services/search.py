@@ -123,11 +123,11 @@ def _cite_results(results: list) -> str:
         date    = item.get("publishedDate", "") or item.get("age", "")
         if snippet:
             prefix = f"[{date}] " if date else ""
-            entry  = f"{prefix}{title}: {snippet[:400]}" if title else f"{prefix}{snippet[:400]}"
+            entry  = f"{prefix}{title}: {snippet[:800]}" if title else f"{prefix}{snippet[:800]}"
             chunks.append(entry)
     return "\n\n".join(chunks)
 
-def tool_web_fetch(url: str, max_chars: int = 400) -> str:
+def tool_web_fetch(url: str, max_chars: int = 4000) -> str:
     """
     WebFetch (web_fetch_20260209): fetch a full page when snippets are
     insufficient. Split from WebSearch per Claude Code architecture for
@@ -199,18 +199,39 @@ def tool_search(query: str, _raw: bool = False) -> str:
                 pass
 
         cited = _cite_results(results[:6])
+
+        # ── Deep-dive: fetch full content from top 2 URLs ────────────────────
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+        _top_urls = [r.get("url","") for r in results[:3] if r.get("url","")][:2]
+        _fetched_content = []
+        if _top_urls:
+            def _fetch_one(u):
+                try:
+                    return tool_web_fetch(u, max_chars=3000)
+                except Exception:
+                    return None
+            with ThreadPoolExecutor(max_workers=2) as _ex:
+                _futs = {_ex.submit(_fetch_one, u): u for u in _top_urls}
+                for _fut in _as_completed(_futs, timeout=8):
+                    _res = _fut.result()
+                    if _res and len(_res) > 200:
+                        _url = _futs[_fut]
+                        _fetched_content.append(f"[Full content from {_url[:60]}]:
+{_res}")
+                        print(f"[search] deep-fetched {len(_res)} chars from {_url[:60]}")
+
+        if _fetched_content:
+            full_ctx = (cited + "
+
+" if cited else "") + "
+
+".join(_fetched_content)
+            if _rcache: _rcache.setex(_ckey, 300, full_ctx)
+            return full_ctx
+
         if cited:
             if _rcache: _rcache.setex(_ckey, 300, cited)
             return cited
-
-        # WebFetch fallback: fetch top URL if snippets empty
-        for item in results[:2]:
-            url = item.get('url', '')
-            if url:
-                fetched = tool_web_fetch(url, max_chars=600)
-                if fetched and len(fetched) > 100:
-                    print(f'[search] WebFetch fallback: {url[:60]}')
-                    return fetched
         return None
 
     except requests.exceptions.ConnectionError:
