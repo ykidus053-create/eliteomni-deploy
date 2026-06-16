@@ -606,3 +606,27 @@ def meta_maybe_rewrite_prompt(skill: str, score: int):
 def detect_emotion_context(msg: str) -> dict:
     """Stub — returns neutral emotion context."""
     return {"emotion": "neutral", "intensity": 0.0, "requires_empathy": False}
+
+
+def knowledge_boundary_check(msg: str, skill: str) -> dict:
+    """
+    Determines whether the model needs to search externally or can answer
+    from its training knowledge. Returns a dict with keys:
+      - needs_search: bool
+      - reason: str
+      - confidence: float (0-1)
+    """
+    _SEARCH_TRIGGERS = [
+        "today", "latest", "current", "now", "recent", "this week",
+        "this month", "this year", "2025", "2026", "news", "price",
+        "stock", "weather", "live", "real-time", "who is", "what is",
+        "breaking", "just", "update", "release", "launched"
+    ]
+    msg_lower = msg.lower()
+    hits = [t for t in _SEARCH_TRIGGERS if t in msg_lower]
+    needs_search = len(hits) > 0 or skill in ("researcher", "analyst")
+    return {
+        "needs_search": needs_search,
+        "reason": f"triggers={hits}" if hits else "no search triggers detected",
+        "confidence": min(0.5 + len(hits) * 0.1, 1.0)
+    }

@@ -1,3 +1,5 @@
+import os
+os.environ.setdefault("HF_TOKEN", os.environ.get("HF_TOKEN", ""))
 
 # Claude-style memory honesty
 MEMORY_HONESTY = """

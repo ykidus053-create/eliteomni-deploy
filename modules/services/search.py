@@ -604,6 +604,7 @@ def mem_save(text: str, user_id: str = "default"):
             if vv is not None: faiss_index.add(vv)
 
 def mem_get(query: str, k: int=3) -> list:
+    if k <= 0: return []
     if len(query)<12 or not _faiss_ok or not mem_store: return []
     if faiss_index is None or faiss_index.ntotal==0: return []
     q = _embed(query)
