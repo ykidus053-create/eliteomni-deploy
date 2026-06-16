@@ -332,10 +332,32 @@ def editor_implement(plan: str, msg: str, system: str,
         lint_result = tool_lint(extracted)
 
         if lint_result == "OK":
+            # Production-grade validation — check for stubs/placeholders
+            _PROD_VIOLATIONS = [
+                ("pass  #", "stub function"),
+                ("raise NotImplementedError", "unimplemented function"),
+                ("your_api_key", "hardcoded placeholder credential"),
+                ("your_db_url", "hardcoded placeholder DB"),
+                ("# TODO", "unfinished TODO"),
+                ("# FIXME", "unfinished FIXME"),
+                ("fake_", "fake/mock function"),
+                ("mock_", "mock function"),
+                ("stub_", "stub function"),
+                ("in production you would", "non-production disclaimer"),
+                ("for demonstration", "demo-only code"),
+            ]
+            _violations = [desc for sig, desc in _PROD_VIOLATIONS if sig.lower() in extracted.lower()]
+            if _violations and attempt < 2:
+                last_lint = f"Production violations: {', '.join(_violations)}"
+                print(f"[Editor] production violations on attempt {attempt+1}: {_violations}")
+                continue
             # Execute to verify
             exec_out = tool_exec(extracted)
-            status = "✅" if "[EXEC ERROR]" not in exec_out and "[LINT" not in exec_out else "⚠️"
+            _prod_status = "⚠️ (stubs detected)" if _violations else "✅"
+            status = _prod_status if "[EXEC ERROR]" not in exec_out else "⚠️"
             suffix = f"\n\n{status} **Verified** (attempt {attempt+1}) · Lint: OK"
+            if _violations:
+                suffix += f"\n> ⚠️ **Production warnings:** {', '.join(_violations)}"
             if exec_out and exec_out != "(no output)":
                 suffix += f"\n```\n{exec_out[:300]}\n```"
             return code + suffix

@@ -1122,7 +1122,21 @@ def pipeline_stream(msg: str, history: list):
     # ── Anti-pseudocode injection for coder skill ─────────────────────
     _final_msg = clean_msg
     if skill == "coder":
-        _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. ZERO TODO. Every function fully implemented with real logic. Ships to prod as-is."
+        _final_msg = (
+            clean_msg +
+            "\n\n## PRODUCTION REQUIREMENTS (NON-NEGOTIABLE):\n"
+            "1. REAL connections only — use actual env vars (os.environ.get), real DB URLs, real API endpoints\n"
+            "2. COMPLETE implementation — every function has a full body, no pass, no ..., no TODO\n"
+            "3. REAL error handling — specific exceptions (ValueError, ConnectionError), not bare except\n"
+            "4. REAL config — load from environment variables or config files, never hardcode secrets\n"
+            "5. DEPLOYABLE — code runs as-is with zero modifications on a production server\n"
+            "6. NO SIMULATIONS — no fake_*, mock_*, stub_*, no 'in production you would...'\n"
+            "7. COMPLETE FILE — output a complete .py file, not a fragment or snippet\n"
+            "8. REAL IMPORTS — only import packages that exist on PyPI\n"
+            "\nIf you cannot implement something real (e.g. you don't know the user's DB schema), "
+            "ASK for the missing info instead of writing a stub. "
+            "A real incomplete request is better than a fake complete one."
+        )
     prompt   = build_chatml(system, hist_msgs, _final_msg)
     max_t    = 16000  # no cap — model decides when to stop
 
