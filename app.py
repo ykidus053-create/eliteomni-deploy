@@ -644,7 +644,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
         fast_msgs[0]["content"] = fast_msgs[0]["content"][:500]  # cap system prompt at 500 chars
         # 2. Stream chunks directly instead of joining (lower perceived latency)
         chunks = []
-        for chunk in mistral_stream(fast_msgs, max_tokens=400, model=_tier["models"][0]):  # 3. max_tokens=400
+        from modules.services.tool_schemas import NATIVE_TOOLS
+        for chunk in mistral_stream(fast_msgs, max_tokens=400, model=_tier["models"][0], tools=NATIVE_TOOLS):  # 3. max_tokens=400
             chunks.append(chunk)
         fast_response = "".join(chunks)
         if fast_response:

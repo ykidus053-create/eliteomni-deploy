@@ -59,7 +59,7 @@ def _audit(event: str, data: dict):
         pass
 
 # ── MESSAGE TRIMMER ───────────────────────────────────────────────────────────
-def _trim_msgs(msgs: list, max_chars: int = 6000) -> list:
+def _trim_msgs(msgs: list, max_chars: int = 40000) -> list:
     system      = [m for m in msgs if m.get("role") == "system"]
     others      = [m for m in msgs if m.get("role") != "system"]
     sys_trimmed = [{**m, "content": m.get("content","")[:4000]} for m in system]
@@ -135,7 +135,7 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         yield "[MISTRAL_API_KEY not set]"; return
 
     mdl      = get_model_for_skill(skill, model)
-    trimmed  = _trim_msgs(msgs, max_chars=6000)
+    trimmed  = _trim_msgs(msgs, max_chars=40000)
 
     # Route to correct endpoint based on model name
     if mdl.startswith("mistral-") or mdl.startswith("codestral-") or mdl.startswith("devstral-") or mdl.startswith("magistral-"):
@@ -147,13 +147,20 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         _url = MISTRAL_URL  # fireworks
         _key = MISTRAL_API_KEY
 
+    _is_reasoning = skill and skill.lower() in CODING_SKILLS
     payload = {
         "model":      mdl,
         "messages":   trimmed,
         "max_tokens": min(max_tokens, 16000),
-        "temperature": 0.1 if (skill and skill.lower() in CODING_SKILLS) else 0.3,
+        "temperature": 0.1 if _is_reasoning else 0.3,
         "stream":     True,
     }
+    # Enable reasoning mode for coder/hard tasks — Medium 3.5 supports configurable thinking
+    if _is_reasoning:
+        try:
+            payload["thinking"] = {"type": "enabled", "budget_tokens": 4000}
+        except Exception:
+            pass
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
