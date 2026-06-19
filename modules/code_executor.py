@@ -65,7 +65,7 @@ def run_code_safe(code: str, timeout: int = 10) -> Tuple[bool, str, str]:
         result = subprocess.run(
             [sys.executable, tmp_path],
             capture_output=True, text=True, timeout=timeout,
-            env={**os.environ, "PYTHONPATH": "/home/kidus/eliteomni_app"}
+            env={**os.environ, "PYTHONPATH": os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}
         )
         passed = result.returncode == 0 and "FAIL:" not in result.stdout
         return passed, result.stdout[:500], result.stderr[:500]

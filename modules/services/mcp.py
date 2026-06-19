@@ -20,7 +20,7 @@ _MCP_SERVER_CMDS = {
     "sequential-think":  ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
     "sqlite":           ["npx", "-y", "@modelcontextprotocol/server-sqlite", "--db-path", "/home/kidus/eliteomni_app/eliteomni.db"],
     "puppeteer":        ["npx", "-y", "@modelcontextprotocol/server-puppeteer"],
-    "git":              ["/home/kidus/.local/bin/uvx", "mcp-server-git", "--repository", "/home/kidus/eliteomni_app"],
+    "git":              ["/home/kidus/.local/bin/uvx", "mcp-server-git", "--repository", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))],
 }
 
 # ── Per-server subprocess state ───────────────────────────────────────────────
