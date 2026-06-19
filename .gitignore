@@ -23,3 +23,5 @@ eliteomni_chroma/
 .env
 eliteomni_app/.env
 eliteomni_app/.env
+.venv/
+venv/
