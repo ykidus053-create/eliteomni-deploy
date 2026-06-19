@@ -4,13 +4,10 @@ requests
 aiohttp
 aiofiles
 numpy
-faiss-cpu
 beautifulsoup4
-chromadb
 APScheduler
 backoff
 bcrypt
-boto3
 pydantic
 python-dotenv
 groq
@@ -18,3 +15,10 @@ mistralai
 openai
 anthropic
 tiktoken
+aiosignal
+anyio
+certifi
+charset-normalizer
+click
+httpx
+starlette
