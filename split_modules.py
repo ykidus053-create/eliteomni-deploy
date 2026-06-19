@@ -1,8 +1,7 @@
-import os
+import os, py_compile, tempfile
 
 BASE = "/home/kidus/eliteomni_app"
 SRC  = os.path.join(BASE, "app.py")
-
 with open(SRC) as f:
     lines = f.readlines()
 
@@ -26,11 +25,29 @@ os.makedirs(os.path.join(BASE, "modules"), exist_ok=True)
 
 for fname, (start, end) in sections.items():
     path = os.path.join(BASE, "modules", fname)
-    with open(path, "w") as f:
-        f.write(f"# AUTO-SPLIT FROM app.py lines {start}-{end}\n")
-        f.write(HEADER)
-        f.write("".join(lines[start:end]))
-    print(f"✓ modules/{fname}: {end-start} lines")
 
-print(f"\nDone. {len(sections)} modules created in /home/kidus/eliteomni_app/modules/")
-print("Next step: update app.py to import from modules/")
+    # Check if existing file compiles cleanly — if so, skip it
+    if os.path.exists(path):
+        try:
+            py_compile.compile(path, doraise=True)
+            print(f"✓ modules/{fname}: {end-start} lines (kept existing clean version)")
+            continue
+        except Exception:
+            pass  # existing file is broken, regenerate
+
+    content = f"# AUTO-SPLIT FROM app.py lines {start}-{end}\n" + HEADER + "".join(lines[start:end])
+
+    # Validate before writing
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tf:
+            tf.write(content)
+            tname = tf.name
+        py_compile.compile(tname, doraise=True)
+        os.unlink(tname)
+        with open(path, "w") as f:
+            f.write(content)
+        print(f"✓ modules/{fname}: {end-start} lines")
+    except Exception as e:
+        print(f"⚠️  modules/{fname}: skipped (syntax error in source range {start}-{end}: {e})")
+
+print(f"\nDone. {len(sections)} modules processed in /home/kidus/eliteomni_app/modules/")

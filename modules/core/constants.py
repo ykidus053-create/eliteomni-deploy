@@ -4,7 +4,12 @@ from threading import Lock
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-import urllib.request, urllib.parse
+import urllib.request
+try:
+    from debug_patch import _real_urlopen
+except ImportError:
+    import urllib.request
+    _real_urlopen = urllib.request.urlopen
 
 # FIXED: Updated default path to include the 'eliteomni' subfolder to match user's actual path
 GGUF_MODEL_PATH = os.environ.get(
@@ -14,7 +19,7 @@ GGUF_MODEL_PATH = os.environ.get(
 
 # SearXNG base URL — matches the docker-compose setup below
 # Override with env var SEARXNG_URL if needed
-SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8889")
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888")
 
 # ── SEARXNG HEALTH TRACKING ───────────────────────────────────────────────────
 _searxng_healthy   = False   # flips to True once a probe succeeds
@@ -22,20 +27,16 @@ _searxng_last_ok   = 0.0    # epoch of last successful probe
 _searxng_fail_count = 0     # consecutive failures
 _searxng_lock      = Lock()
 
-def _probe_searxng(timeout: float = 4.0) -> bool:
+def _probe_searxng(timeout: float = 15.0) -> bool:
     """Return True if SearXNG answers a health-check ping."""
     try:
-        r = urllib.request.urlopen(
-            f"{SEARXNG_URL}/healthz", timeout=timeout
+        import subprocess as _sp
+        r = _sp.run(
+            ["curl", "-s", "-m", "10", "-o", "/dev/null", "-w", "%{http_code}",
+             f"{SEARXNG_URL}/search?q=test&format=json&engines=duckduckgo"],
+            capture_output=True, text=True, timeout=12
         )
-        return r.status == 200
-    except Exception:
-        pass
-    # Fallback: try the search endpoint with a trivial query
-    try:
-        url = f"{SEARXNG_URL}/search?q=test&format=json"
-        r = urllib.request.urlopen(url, timeout=timeout)
-        return r.status == 200
+        return r.stdout.strip() == "200"
     except Exception:
         return False
 
@@ -147,13 +148,20 @@ CLAUDE_STYLE_DEFAULTS = {
 #   TIER 3 (SuperPod equivalent)     → hard/research, max capability
 # PUE target: 1.1 (Google TPU DC standard) — minimize redundant calls
 INFRA_TIERS = {
-    "tier1": {"models": ["mistral-small-latest"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
-    "tier2": {"models": ["mistral-large-latest"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
-    "tier3": {"models": ["mistral-large-latest"], "complexity": ["hard", "research"], "max_tokens": 8192, "label": "frontier"},
+    "tier1": {"models": ["mistral-medium-3.5"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
+    "tier2": {"models": ["mistral-medium-3.5"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
+    "tier3": {"models": ["mistral-medium-3.5"], "complexity": ["hard", "research"], "max_tokens": 8192, "label": "frontier"},
 }
 
-def get_infra_tier(complexity: str) -> dict:
-    """Return the optimal model tier for a given complexity — mirrors Claude's chip dispatch."""
+CODING_SKILLS = {"coder", "code", "coding", "swe", "calculator", "debug", "refactor", "engineer"}
+
+def get_infra_tier(complexity: str, skill: str = "") -> dict:
+    """Return the optimal model tier for a given complexity.
+    Coding skills → devstral-latest. Everything else → mistral-medium-3.5.
+    """
+    is_code = skill and skill.lower() in CODING_SKILLS
+    if is_code:
+        return {"models": ["mistral-medium-3.5"], "complexity": [complexity], "max_tokens": 8192, "label": "code-inference"}
     if complexity == "easy":   return INFRA_TIERS["tier1"]
     if complexity == "hard":   return INFRA_TIERS["tier3"]
     return INFRA_TIERS["tier2"]

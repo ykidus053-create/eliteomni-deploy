@@ -188,7 +188,7 @@ def deep_think_math(problem: str, generate_fn, complexity: str = "hard") -> str:
         return None
 
     # Stage 3: Iterative refinement
-    refined = iterative_refine(problem, best, generate_fn, max_iters=2)
+    refined = iterative_refine(problem, best, generate_fn, max_iters=5)
 
     # Stage 4: Code verification
     verification = verify_with_code(problem, refined, generate_fn)

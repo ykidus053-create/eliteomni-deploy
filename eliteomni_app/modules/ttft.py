@@ -43,11 +43,7 @@ MAX_TOKEN_CAPS = {
 }
 
 def cap_max_tokens(requested: int, complexity: str) -> int:
-    cap = MAX_TOKEN_CAPS.get(complexity, 800)
-    result = min(requested, cap)
-    if result < requested:
-        print(f"[TTFT] max_tokens capped {requested} -> {result} for {complexity}")
-    return result
+    return requested  # No more capping!
 
 
 # ── 3. PARALLEL SEARCH + PROMPT BUILD ────────────────────────────

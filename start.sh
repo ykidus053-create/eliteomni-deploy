@@ -1,4 +1,5 @@
 #!/bin/bash
+ip link set dev eth0 mtu 1280 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  EliteOmni v17 — Local Server Launcher

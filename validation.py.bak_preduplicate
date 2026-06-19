@@ -885,7 +885,7 @@ def _budget(msg: str, skill: str, complexity: str) -> int:
     if GROQ_API_KEY:
         if skill == "coder": return 4000 if complexity == "hard" else 3000
         if skill == "researcher": return 3000 if complexity == "hard" else 2500
-        if skill == "calculator": return 1200  # Ng: was 0.3x=76 tokens, truncated answers
+        if skill == "calculator": return max(1200, int(len(msg) * 1.5))  # dynamic: scales with question length
         if complexity == "hard": return 4000
         if complexity == "medium": return 2500
         if complexity == "easy": return 1500

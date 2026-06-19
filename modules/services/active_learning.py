@@ -184,7 +184,7 @@ def run_learning_cycle(db_path: str = None) -> str:
 
     if failure_analysis["patterns"]:
         print(f"[ActiveLearn] Top failure: {failure_analysis['top_failure_type']} "
-              f"({failure_analysis['failure_rate'']:.0%} failure rate)")
+              f"({failure_analysis['failure_rate']:.0%} failure rate)")
     if insights:
         print(f"[ActiveLearn] {len(insights)} improvements extracted from demos")
 

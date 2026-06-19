@@ -168,7 +168,7 @@ def tool_search(query: str, _raw: bool = False) -> str:
         _cached = _rcache.get(_ckey)
         if _cached: return _cached
     try:
-        params  = {"q": query, "format": "json", "categories": "general", "language": "en"}
+        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "duckduckgo,brave"}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
         r.raise_for_status()
@@ -186,7 +186,7 @@ def tool_search(query: str, _raw: bool = False) -> str:
         if quality < 0.3 and not query.endswith('2026'):
             try:
                 r2 = requests.get(f'{SEARXNG_URL}/search',
-                    params={'q': query + ' 2026', 'format': 'json', 'categories': 'general', 'language': 'en'},
+                    params={'q': query + ' 2026', 'format': 'json', 'categories': 'general', 'language': 'en', 'engines': 'duckduckgo,brave'},
                     headers={'User-Agent': 'Mozilla/5.0 (compatible; EliteOmni/17)'}, timeout=20)
                 raw2 = r2.json().get('results', [])
                 if raw2:
@@ -419,7 +419,13 @@ def rag_get(query: str, k: int = 3) -> list:
     if q is None: return []
     import faiss as _faiss
     D, I = _rag_index.search(q, min(k, _rag_index.ntotal))
-    return [_rag_store[i] for i, d in zip(I[0], D[0]) if 0 <= i < len(_rag_store) and d > 0.3]
+    raw_hits = [(_rag_store[i], float(d)) for i, d in zip(I[0], D[0]) if 0 <= i < len(_rag_store) and d > 0.3]
+    try:
+        from modules.services.memory_weight import score_memory_importance
+        raw_hits.sort(key=lambda x: x[1] * 0.6 + score_memory_importance(x[0].get('text','')) * 0.4, reverse=True)
+    except Exception:
+        pass
+    return [h[0] for h in raw_hits]
 
 def extract_search_context(msg: str) -> tuple:
     """
@@ -509,11 +515,14 @@ def extract_search_context(msg: str) -> tuple:
     result = tool_search_multi(msg)
 
     if result:
-        # Hard token budget: cap search context to 800 chars (~200 tokens)
-        result_capped = result[:800] if len(result) > 800 else result
+        import datetime as _dt
+        _today = str(_dt.date.today())
+        result_capped = result[:4000]
         context = (
-            f"\n[WEB SEARCH RESULTS]\n{result_capped}\n[END SEARCH RESULTS]\n"
-            "Use the above results to answer. Cite sources as [1][2] where shown."
+            "MANDATORY: LIVE search results fetched " + _today + ". "
+            "You MUST use these. FORBIDDEN from saying no internet access.\n"
+            "[LIVE RESULTS]\n" + result_capped + "\n[END RESULTS]\n"
+            "Answer using ONLY the above results."
         )
         return clean_msg, context
 
@@ -522,7 +531,7 @@ def extract_search_context(msg: str) -> tuple:
         for q in explicit_queries[:2]:
             result = tool_search(q.strip())
             if result:
-                context = f"\n[WEB SEARCH RESULTS]\n{result[:800]}\n[END SEARCH RESULTS]\n"
+                context = "[LIVE RESULTS]\n" + result[:4000] + "\n[END RESULTS]\nAnswer using ONLY these."
                 return clean_msg, context
 
     # SearXNG up but no results — tell model to use knowledge
@@ -567,9 +576,15 @@ def _embed(text: str):
             return vec
         except Exception: pass
     vec = np.zeros(384, dtype=np.float32)
-    t = text.lower()[:300]
-    for i in range(len(t)-1):
-        vec[(ord(t[i])*31+ord(t[i+1]))%384] += 1.0
+    import hashlib
+    words = re.findall(r'[a-z]{3,}', text.lower()[:500])
+    seen = {}
+    for w in words:
+        seen[w] = seen.get(w, 0) + 1
+    total = max(sum(seen.values()), 1)
+    for w, cnt in seen.items():
+        h = int(hashlib.md5(w.encode()).hexdigest(), 16)
+        vec[h % 384] += cnt / total
     norm = np.linalg.norm(vec)
     if norm > 0: vec /= norm
     return vec.reshape(1,-1)
@@ -712,10 +727,15 @@ def compress_history(history: list, complexity: str = "medium"):
 def record_feedback(skill: str, msg: str, response: str, rating: int):
     _feedback[skill]["good" if rating==1 else "bad"] += 1
     # Save highly rated as SFT demonstrations
-    if rating == 1 and msg and response and len(response) > 50:
-        _sft_store.append({"skill": skill, "msg": msg[:200], "response": response[:500]})
-        if len(_sft_store) > 200:
-            _sft_store.pop(0)
+    if rating == 1 and msg and response and len(response) > 80:
+        # Ng: quality filter — never train on sycophantic or truncated responses
+        _bad_starts = ("Certainly","Absolutely","Great question","Sure!","Of course")
+        _bad_signals = ("...[truncated]", "I cannot", "As an AI", "[TIMEOUT")
+        if not any(response.startswith(b) for b in _bad_starts) and \
+           not any(b in response for b in _bad_signals):
+            _sft_store.append({"skill": skill, "msg": msg[:200], "response": response[:500]})
+            if len(_sft_store) > 200:
+                _sft_store.pop(0)
     _save_feedback()  # persist to disk immediately
     # Update fine-tune DB rating so thumbs-up responses get higher weight in training
     try:

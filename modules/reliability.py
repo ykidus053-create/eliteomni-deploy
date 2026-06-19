@@ -12,27 +12,27 @@ from typing import Optional
 
 # ── FIX 5: REAL MODEL ROUTING ─────────────────────────────────────────────────
 _ROUTING_TABLE = {
-    ("general",    "easy"):   "mistral-small-latest",
-    ("general",    "medium"): "mistral-small-latest",
-    ("general",    "hard"):   "mistral-large-latest",
-    ("researcher", "easy"):   "mistral-small-latest",
-    ("researcher", "medium"): "mistral-large-latest",
-    ("researcher", "hard"):   "mistral-large-latest",
-    ("coder",      "easy"):   "mistral-small-latest",
-    ("coder",      "medium"): "codestral-latest",
-    ("coder",      "hard"):   "codestral-latest",
-    ("calculator", "easy"):   "mistral-small-latest",
-    ("calculator", "medium"): "mistral-small-latest",
-    ("calculator", "hard"):   "mistral-large-latest",
-    ("safety",     "easy"):   "mistral-small-latest",
-    ("safety",     "medium"): "mistral-small-latest",
-    ("safety",     "hard"):   "mistral-small-latest",
+    ("general",    "easy"):   "mistral-medium-3.5",
+    ("general",    "medium"): "mistral-medium-3.5",
+    ("general",    "hard"):   "mistral-medium-3.5",
+    ("researcher", "easy"):   "mistral-medium-3.5",
+    ("researcher", "medium"): "mistral-medium-3.5",
+    ("researcher", "hard"):   "mistral-medium-3.5",
+    ("coder",      "easy"):   "mistral-medium-3.5",
+    ("coder",      "medium"): "mistral-medium-3.5",
+    ("coder",      "hard"):   "mistral-medium-3.5",
+    ("calculator", "easy"):   "mistral-medium-3.5",
+    ("calculator", "medium"): "mistral-medium-3.5",
+    ("calculator", "hard"):   "mistral-medium-3.5",
+    ("safety",     "easy"):   "mistral-medium-3.5",
+    ("safety",     "medium"): "mistral-medium-3.5",
+    ("safety",     "hard"):   "mistral-medium-3.5",
 }
 
 def route_model_v3(skill: str, complexity: str) -> tuple:
     model = _ROUTING_TABLE.get(
         (skill, complexity),
-        "mistral-small-latest" if complexity == "easy" else "mistral-large-latest"
+        "mistral-medium-3.5" if complexity == "easy" else "mistral-medium-3.5"
     )
     print(f"[route_model_v3] skill={skill} complexity={complexity} -> {model}")
     return ("mistral", model)

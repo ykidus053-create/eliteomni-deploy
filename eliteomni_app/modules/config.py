@@ -14,7 +14,7 @@ GGUF_MODEL_PATH = os.environ.get(
 
 # SearXNG base URL — matches the docker-compose setup below
 # Override with env var SEARXNG_URL if needed
-SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8889")
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888")
 
 # ── SEARXNG HEALTH TRACKING ───────────────────────────────────────────────────
 _searxng_healthy   = False   # flips to True once a probe succeeds

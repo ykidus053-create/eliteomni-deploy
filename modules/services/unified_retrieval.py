@@ -25,7 +25,15 @@ def unified_retrieve(query: str, k: int = 5) -> list:
     # Deduplicate
     seen, deduped = set(), []
     for r in results:
-        key = r["text"][:80]
+        text = r.get("text", "")
+        key = re.sub(r'\s+', ' ', text.lower().strip())[:120]
         if key not in seen:
-            seen.add(key); deduped.append(r)
+            seen.add(key)
+            try:
+                from modules.services.memory_weight import score_memory_importance
+                r["score"] = r.get("score", 0.5) * 0.6 + score_memory_importance(text) * 0.4
+            except Exception:
+                pass
+            deduped.append(r)
+    deduped.sort(key=lambda x: x.get("score", 0), reverse=True)
     return deduped[:k]

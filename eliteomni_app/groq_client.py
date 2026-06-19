@@ -65,8 +65,11 @@ def _inject_images(msgs: list) -> list:
 _AUDIT_LOG_PATH = os.path.expanduser("~/eliteomni_audit.jsonl")
 def _audit(event: str, data: dict):
     try:
-        import json as _aj, datetime as _dt
+        import json as _aj, datetime as _dt, os as _os
         record = {"ts": _dt.datetime.utcnow().isoformat(), "event": event, **data}
+        # Rotate log if >50MB to prevent disk exhaustion
+        if _os.path.exists(_AUDIT_LOG_PATH) and _os.path.getsize(_AUDIT_LOG_PATH) > 50 * 1024 * 1024:
+            _os.rename(_AUDIT_LOG_PATH, _AUDIT_LOG_PATH + ".1")
         with open(_AUDIT_LOG_PATH, "a") as _af:
             _af.write(_aj.dumps(record) + "\n")
     except Exception:
@@ -445,7 +448,7 @@ def groq_generate(msgs: list, max_tokens: int = 0, model: str = None) -> str:
     data = _json.dumps(payload).encode()
     req  = urllib.request.Request(
         GROQ_URL, data=data,
-        headers={"Authorization": f"Bearer {_get_next_key()}", "Content-Type": "application/json", "User-Agent": "EliteOmni/1.0", "Accept": "application/json", "Content-Length": str(len(data))}
+        headers={"Authorization": f"Bearer {_get_next_key()}", "Content-Type": "application/json", "User-Agent": "EliteOmni/1.0", "Accept": "application/json", "Content-Length": str(len(payload))}
     )
     try:
         _t0 = time.time()
@@ -558,7 +561,7 @@ def groq_stream(msgs: list, max_tokens: int = 0, model: str = None):
     data = _json.dumps(payload).encode()
     req  = urllib.request.Request(
         GROQ_URL, data=data,
-        headers={"Authorization": f"Bearer {_get_next_key()}", "Content-Type": "application/json", "User-Agent": "EliteOmni/1.0", "Accept": "application/json", "Content-Length": str(len(data))}
+        headers={"Authorization": f"Bearer {_get_next_key()}", "Content-Type": "application/json", "User-Agent": "EliteOmni/1.0", "Accept": "application/json", "Content-Length": str(len(payload))}
     )
 
 
@@ -613,11 +616,11 @@ def vision_describe(image_b64: str, prompt: str = "Describe this image in detail
         }).encode()
         req = urllib.request.Request(
             GROQ_URL, data=payload,
-            headers={"Authorization": f"Bearer {_get_next_key()}", "Content-Type": "application/json", "User-Agent": "EliteOmni/1.0", "Accept": "application/json", "Content-Length": str(len(data))}
+            headers={"Authorization": f"Bearer {_get_next_key()}", "Content-Type": "application/json", "User-Agent": "EliteOmni/1.0", "Accept": "application/json", "Content-Length": str(len(payload))}
         )
         with urllib.request.urlopen(req, timeout=30) as r:
-            data = _json.loads(r.read())
-        msg = data["choices"][0]["message"]
+            resp_resp_data = _json.loads(r.read())
+        msg = resp_data["choices"][0]["message"]
         return msg.get("content","").strip() or msg.get("reasoning","").strip()
     except Exception as e:
         return f"[Vision error: {e}]"
@@ -684,3 +687,21 @@ except Exception as e:
                 return
             except Exception as e2:
                 return
+
+# ── MISTRAL ALIAS ─────────────────────────────────────────────────────────────
+# All pipeline code imports mistral_stream; route it to groq_stream with Mistral model
+MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-saba-24b")
+
+def mistral_stream(msgs: list, max_tokens: int = 0):
+    # Force Codestral for coding tasks
+    global GROQ_MODEL
+    msgs_str = str(msgs).lower()
+    coding_indicators = ["python", "code", "function", "def ", "javascript", "implement", "class"]
+    if any(ind in msgs_str for ind in coding_indicators):
+        GROQ_MODEL = "codestral-latest"
+    """Alias: stream via Groq using Mistral model."""
+    return groq_stream(msgs, max_tokens=max_tokens, model=MISTRAL_MODEL)
+
+def mistral_generate(msgs: list, max_tokens: int = 0) -> str:
+    """Alias: generate via Groq using Mistral model."""
+    return groq_generate(msgs, max_tokens=max_tokens, model=MISTRAL_MODEL)

@@ -283,8 +283,8 @@ def _parallel_prefetch(msg, skill, history):
     def _do_search():
         try:
             if _needs_fresh_search(msg):
-                from search import tool_search_multi as multi_search
-                results["search"] = tool_search_multi(msg, max_results=3)
+                from modules.services.search import tool_search_multi as multi_search
+                results["search"] = tool_search_multi(msg)
         except Exception as e:
             print(f"[prefetch] search error: {e}")
 
@@ -299,7 +299,7 @@ def _parallel_prefetch(msg, skill, history):
     t1 = threading.Thread(target=_do_search,  daemon=True)
     t2 = threading.Thread(target=_do_memory,  daemon=True)
     t1.start(); t2.start()
-    t1.join(timeout=3); t2.join(timeout=2)
+    t1.join(timeout=15); t2.join(timeout=2)
     return results
 
 
@@ -490,8 +490,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
                 news_triggers = ["news", "latest", "today", "current", "recent", "2026"]
                 try:
                     if any(t in msg_lower for t in news_triggers):
-                        from search import tool_search_multi as multi_search
-                        r = tool_search_multi(msg[:300], max_results=5)
+                        from modules.services.search import tool_search_multi as multi_search
+                        r = tool_search_multi(msg[:300])
                     else:
                         r = tool_search(msg[:300])
                     if r and "error" not in r.lower(): forced_results.append(f"SEARCH RESULTS (use these, not training data):\n{r[:6000]}")
@@ -567,8 +567,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if _needs_fresh_search(msg) and not search_ctx:
         print(f'[KnowledgeCutoff] Stale topic detected — auto-triggering search')
         try:
-            from search import tool_search_multi as multi_search
-            search_ctx = tool_search_multi(msg, max_results=3)
+            from modules.services.search import tool_search_multi as multi_search
+            search_ctx = tool_search_multi(msg)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx:
@@ -627,7 +627,10 @@ def pipeline_sync(msg: str, history: list) -> dict:
                 response = f"**🏗️ Plan:**\n{plan}\n\n**💻 Implementation:**\n{impl}"
 
     # ── ACT: OODA agentic loop ────────────────────────────────────────────────
-    prompt      = build_chatml(system, hist_msgs, clean_msg)
+    _final_msg = clean_msg
+    if skill == "coder":
+        _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. Every function fully implemented."
+    prompt      = build_chatml(system, hist_msgs, _final_msg)
     seen_sents: set = set()
     # KV cache hint: system prompt is stable — always first message, never mutated
 
@@ -748,11 +751,79 @@ def pipeline_sync(msg: str, history: list) -> dict:
     from modules.services.agents import strip_tool_syntax
     final  = strip_tool_syntax(final)
     if skill == "coder":
+        # ── Anti-pseudocode gate — reject and rewrite if detected ────────────
+        _PSEUDO_SIGNALS = [
+            "# TODO", "# FIXME", "# implement", "# add logic", "# your code here",
+            "pass  #", "raise NotImplementedError", "fake_", "mock_", "stub_",
+            "placeholder", "in production you would", "for a real system",
+            "simplified version", "for demonstration", "conceptually",
+            "rest of implementation", "similar pattern", "your_api_key",
+            "your_db_url", "your_password", "example.com/api",
+        ]
+        _pseudo_hits = [s for s in _PSEUDO_SIGNALS if s.lower() in final.lower()]
+        if _pseudo_hits:
+            print(f"[AntiPseudo] detected pseudocode signals: {_pseudo_hits} — forcing rewrite")
+            try:
+                final = generate_sync(
+                    build_chatml(
+                        system + "\n\nCRITICAL FAILURE: Your response contained pseudocode/stubs: "
+                        + str(_pseudo_hits) + ". MANDATORY REWRITE: Return ONLY complete, "
+                        "real, runnable production Python code. Every function must have a real body. "
+                        "No pass. No TODO. No stubs. No placeholders. No 'In real impl'. "
+                        "Use real libraries. Real DB connections. Real error handling. "
+                        "Code must run as-is with zero changes.",
+                        hist_msgs,
+                        msg + "\n\n[REWRITE ENFORCEMENT: Production code only. Zero pseudocode. Zero stubs.]"
+                    ),
+                    max_t, skill, len(msg)
+                )
+            except Exception as _pe:
+                print(f"[AntiPseudo rewrite] {_pe}")
         final = _lint_feedback_loop(final, msg, system, max_t, skill)
+        # ── Auto-execute code blocks and append results ──────────────────────
+        try:
+            from modules.code_executor import extract_code_blocks, run_code_safe
+            blocks = extract_code_blocks(final)
+            exec_results = []
+            for code in blocks[:3]:
+                passed, stdout, stderr = run_code_safe(code, timeout=15)
+                if stdout and stdout != "SKIPPED: external deps":
+                    exec_results.append("```\n▶ Executed Output:\n" + stdout[:1200] + "\n```")
+                if stderr and not passed:
+                    exec_results.append("```\n⚠ Execution Error:\n" + stderr[:600] + "\n```")
+                    try:
+                        fix = generate_sync(
+                            build_chatml(system, hist_msgs,
+                                "Fix this error:\n" + stderr[:400] + "\n\nCode:\n" + code[:800]),
+                            max_t, skill, len(msg)
+                        )
+                        if fix and len(fix) > 30:
+                            exec_results.append("**Auto-fix:**\n" + fix[:1000])
+                    except Exception:
+                        pass
+            if exec_results:
+                final = final.rstrip() + "\n\n" + "\n".join(exec_results)
+        except Exception as _ce:
+            print(f"[CodeExec] {_ce}")
     final  = verification_pipeline(final, msg, skill)
     has_search = bool(search_ctx and search_ctx.strip())
     final  = strip_fake_citations(final, has_search)
     final  = _dedup_paragraphs(final)
+    # ── MCP sequential thinking for hard problems ───────────────────────────
+    if complexity == "hard" and skill in ("coder", "analyst", "researcher"):
+        try:
+            from modules.services.mcp import mcp_call, _MCP_TOOLS
+            if "sequentialthinking" in _MCP_TOOLS:
+                st = mcp_call("sequentialthinking", {
+                    "thought": f"Verify and improve this response to: {msg[:300]}",
+                    "nextThoughtNeeded": False,
+                    "thoughtNumber": 1,
+                    "totalThoughts": 1
+                })
+                if st and "[MCP ERROR]" not in st and len(st) > 50:
+                    final = final.rstrip() + "\n\n💭 *Reasoning check:* " + st[:600]
+        except Exception as _se:
+            pass
     final  = cai_critique_revise(final, msg, skill, complexity)
     final  = gpt55_enhance(msg, final)
     scratchpad_save(f"a_{int(time.time())}", final[:120])
@@ -900,12 +971,14 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     if _needs_fresh_search(msg) and not search_ctx:
         print(f'[KnowledgeCutoff] Stale topic detected — auto-triggering search')
         try:
-            from search import tool_search_multi as multi_search
-            search_ctx = tool_search_multi(msg, max_results=3)
+            from modules.services.search import tool_search_multi as multi_search
+            search_ctx = tool_search_multi(msg)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx: system += f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS, IGNORE TRAINING DATA. Today is {__import__('datetime').date.today()}]\n{search_ctx[:3000]}\n[/WEB]"
     mcp_p = mcp_tool_list_prompt()
+    from modules.services.mcp import mcp_tools_prompt as _mtp
+    system += "\n" + _mtp()
     if mcp_p:      system += f"\n\n{mcp_p}"
 
     hist_msgs = []
@@ -917,12 +990,17 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     max_t = 16000  # no cap — model decides
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
-    msgs  = build_chatml(system, hist_msgs, clean_msg)
+    if search_ctx and search_ctx.strip():
+        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:2000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above."
+    else:
+        user_msg = clean_msg
+    msgs  = build_chatml(system, hist_msgs, user_msg)
 
     return {
         "cached": None, "skill": skill, "complexity": complexity,
         "mode": mode, "effort": effort, "msgs": msgs,
         "max_t": max_t, "system": system, "msg": msg, "model": _tier["models"][0],
+        "mcp_tools": [],
     }
 
 
@@ -1015,7 +1093,7 @@ def pipeline_stream(msg: str, history: list):
 
     # ── Build prompt — PARALLEL I/O ─────────────────────────────────────────
     from concurrent.futures import ThreadPoolExecutor
-    clean_msg, _ = extract_search_context(msg)
+    clean_msg, search_ctx = extract_search_context(msg)
     history = clean_history(history or [])
     if _count_tokens(history) > 1500:
         history = compress_history(history)[0]
@@ -1038,34 +1116,77 @@ def pipeline_stream(msg: str, history: list):
                          [{"role": h.get("role","user"), "content": str(h.get("content",""))[:800]} for h in (recent or [])[-8:]],
                          complexity)
 
-    # ── Fast path for easy queries ────────────────────────────────────────────
-    if complexity == "easy" and skill not in ("coder", "calculator", "researcher"):
-        fast_msgs = [m for m in [{"role":"system","content":system[:500]}] + hist_msgs][-5:]
-        fast_msgs.append({"role": "user", "content": clean_msg})
-        yield {"_meta": True, "skill": skill, "mode": "fast", "vetoed": False, "complexity": complexity}
-        chunks = []
-        for tok in mistral_stream(fast_msgs, max_tokens=400, model=_tier["models"][0]):
-            yield tok
-            chunks.append(tok)
-        fast_response = "".join(chunks)
-        if fast_response:
-            cache_set(msg, skill, fast_response)
-            mem_save(f"Q:{msg[:80]} A:{fast_response[:160]}")
-        return
 
     # ── Full agentic path — stream from generate ──────────────────────────────
-    prompt   = build_chatml(system, hist_msgs, clean_msg)
+    # ── Anti-pseudocode injection for coder skill ─────────────────────
+    _final_msg = clean_msg
+    if skill == "coder":
+        _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. ZERO TODO. Every function fully implemented with real logic. Ships to prod as-is."
+    prompt   = build_chatml(system, hist_msgs, _final_msg)
     max_t    = 16000  # no cap — model decides when to stop
 
     yield {"_meta": True, "skill": skill, "mode": "agentic", "vetoed": False, "complexity": complexity}
 
-    # Stream tokens directly
-    chunks = []
+    from modules.services.tool_schemas import NATIVE_TOOLS, dispatch_tool_call
+    import json as _jtool
+
     _ttft = TTFTTracker(label=f"{skill}/{complexity}")
-    for tok in mistral_stream(prompt, max_tokens=max_t, model=_tier["models"][0]):
-        _ttft.on_token(tok)
-        yield tok
-        chunks.append(tok)
+    chunks = []
+    _tool_rounds = 0
+    _max_tool_rounds = 3
+    _current_prompt = prompt
+    _marker = chr(0) + "TOOLCALL" + chr(0)
+
+    while True:
+        _round_chunks = []
+        _pending_tool_calls = []
+        for tok in mistral_stream(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS):
+            _ttft.on_token(tok)
+            if isinstance(tok, str) and tok.startswith(_marker):
+                try:
+                    _tc = _jtool.loads(tok[len(_marker):])
+                    _pending_tool_calls.append(_tc)
+                except Exception as _tce:
+                    print(f"[tool_call parse error] {_tce}")
+                continue
+            yield tok
+            _round_chunks.append(tok)
+            chunks.append(tok)
+
+        if _pending_tool_calls and _tool_rounds < _max_tool_rounds:
+            _tool_rounds += 1
+            _assistant_msg = {"role": "assistant", "content": "".join(_round_chunks) or None, "tool_calls": []}
+            _tool_result_msgs = []
+            for _i, _tc in enumerate(_pending_tool_calls):
+                _tc_id = f"call_{_tool_rounds}_{_i}"
+                _fn_name = _tc.get("name", "")
+                try:
+                    _fn_args = _jtool.loads(_tc.get("arguments") or "{}")
+                except Exception:
+                    _fn_args = {}
+                _assistant_msg["tool_calls"].append({
+                    "id": _tc_id,
+                    "type": "function",
+                    "function": {"name": _fn_name, "arguments": _tc.get("arguments") or "{}"}
+                })
+                print(f"[tool_call] {_fn_name}({_fn_args})")
+                yield "\n\n\U0001F527 *Calling `" + _fn_name + "`...*\n\n"
+                try:
+                    _tool_result = dispatch_tool_call(_fn_name, _fn_args)
+                except Exception as _de:
+                    _tool_result = f"[tool error: {_de}]"
+                _tool_result_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": _tc_id,
+                    "name": _fn_name,
+                    "content": str(_tool_result)[:4000]
+                })
+            _current_prompt = _current_prompt + [_assistant_msg] + _tool_result_msgs
+            continue
+
+        break
+
+    final = "".join(chunks)
     final = "".join(chunks)
 
     # ── Post-processing (after streaming) ─────────────────────────────────────
@@ -1075,11 +1196,33 @@ def pipeline_stream(msg: str, history: list):
         # ── VERIFICATION + SELF-CORRECTION ───────────────────────────────
         print(f"[Verify] skill={skill} len={len(final)}")
         if skill == "coder":
-            verified = verification_pipeline(final, msg, skill)
-            if verified != final:
-                suffix = verified[len(final):]
-                yield suffix  # stream the correction/verification result
-                final = verified
+            # ── Anti-pseudocode streaming rewrite ────────────────────────
+            _PSEUDO_SIGNALS = [
+                "# TODO", "# FIXME", "# implement", "# add logic here",
+                "# your code here", "pass  #", "raise NotImplementedError",
+                "fake_", "mock_", "stub_", "placeholder",
+                "in production you would", "for a real system",
+                "simplified version", "for demonstration",
+                "rest of implementation", "similar pattern",
+                "your_api_key", "your_db_url", "your_password",
+            ]
+            from modules.services.code_enforcer import enforce_production_code, build_rewrite_prompt
+            _clean, _violations, _rewrite_prompt = enforce_production_code(final, msg)
+            if not _clean:
+                print(f"[AntiPseudo] AST+regex violations={_violations} — streaming rewrite")
+                rewrite_msgs = build_chatml(system, hist_msgs, _rewrite_prompt)
+                yield "\n\n---\n⚡ *Violations detected: " + ", ".join(_violations[:3]) + " — rewriting with real production code...*\n\n"
+                rewrite_chunks = []
+                for tok in mistral_stream(rewrite_msgs, max_tokens=max_t, model=_tier["models"][0]):
+                    yield tok
+                    rewrite_chunks.append(tok)
+                final = "".join(rewrite_chunks)
+            else:
+                verified = verification_pipeline(final, msg, skill)
+                if verified != final:
+                    suffix = verified[len(final):]
+                    yield suffix
+                    final = verified
         # ─────────────────────────────────────────────────────────────────
         cache_set(msg, skill, final)
         mem_save(f"Q:{msg[:80]} A:{final[:160]}")
@@ -2500,14 +2643,13 @@ async def stream_chat(req: Request):
     if any(t in msg.lower() for t in _critique_triggers):
         msg = f"[SELF-CRITIQUE MODE] Carefully verify your answer before responding. State your confidence level explicitly. Original question: {msg}"
 
+    loop = asyncio.get_event_loop()
+    ctx = await loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist))
+
     async def _gen():
         import asyncio, queue as _q, threading as _t, re as _re_s
         loop = asyncio.get_event_loop()
 
-        import importlib as _il, sys as _sys
-        _app_mod = _sys.modules.get('__main__') or _sys.modules.get('app')
-        _fn = getattr(_app_mod, '_build_stream_context_fast', None) or _build_stream_context
-        ctx = await loop.run_in_executor(None, lambda: _fn(msg, hist))
 
         if ctx["cached"]:
             yield json.dumps({"skill": ctx["skill"], "mode": "cached"}) + "\n"
@@ -2529,7 +2671,7 @@ async def stream_chat(req: Request):
 
         def _worker():
             try:
-                for tok in mistral_stream(ctx["msgs"], max_tokens=ctx["max_t"], model=ctx.get("model", "accounts/fireworks/models/deepseek-v4-pro")):
+                for tok in mistral_stream(ctx["msgs"], max_tokens=ctx["max_t"], model=ctx.get("model", "accounts/fireworks/models/deepseek-v4-pro"), tools=ctx.get("mcp_tools")):
                     loop.call_soon_threadsafe(tok_q.put_nowait, tok)
             except Exception as e:
                 print(f"[stream worker] {e}")
@@ -2543,6 +2685,32 @@ async def stream_chat(req: Request):
             tok = await tok_q.get()
             if tok is None:
                 break
+            if tok.startswith("\x00TOOLCALL\x00"):
+                _tc = json.loads(tok[len("\x00TOOLCALL\x00"):])
+                from modules.services.mcp import mcp_call as _mcp_call
+                try:
+                    _targs = json.loads(_tc.get("arguments") or "{}")
+                except Exception:
+                    _targs = {}
+                _tres = _mcp_call(_tc["name"], _targs)
+                yield f"\n\n[Using {_tc['name']}...]\n"
+                _cont_msgs3 = ctx["msgs"] + [
+                    {"role": "assistant", "content": buf or "", "tool_calls": [
+                        {"id": "call_1", "type": "function",
+                         "function": {"name": _tc["name"], "arguments": _tc.get("arguments","{}")}}
+                    ]},
+                    {"role": "tool", "tool_call_id": "call_1", "name": _tc["name"], "content": _tres[:2000]}
+                ]
+                def _tool_cont_worker():
+                    try:
+                        for t2 in mistral_stream(_cont_msgs3, max_tokens=4096, model=ctx.get("model"), tools=ctx.get("mcp_tools")):
+                            loop.call_soon_threadsafe(tok_q.put_nowait, t2)
+                    except Exception as e:
+                        print(f"[tool cont] {e}")
+                    finally:
+                        loop.call_soon_threadsafe(tok_q.put_nowait, None)
+                _t.Thread(target=_tool_cont_worker, daemon=True, name="tool_cont").start()
+                continue
             buf += tok
             if "<think>" in buf:
                 in_think[0] = True
@@ -2574,6 +2742,47 @@ async def stream_chat(req: Request):
                 yield out
 
         final = "".join(chunks)
+
+        # ── MCP tool-call handling ──────────────────────────────────────────
+        _mcp_rounds = 0
+        while _mcp_rounds < 3:
+            _m = _re_s.search(r'MCP_CALL\(\s*([a-zA-Z0-9_\-]+)\s*,\s*(\{.*?\})\s*\)', final, _re_s.DOTALL)
+            if not _m:
+                break
+            _mcp_rounds += 1
+            _tool_name = _m.group(1)
+            try:
+                _args = json.loads(_m.group(2))
+            except Exception:
+                _args = {}
+            from modules.services.mcp import mcp_call as _mcp_call
+            _tool_result = _mcp_call(_tool_name, _args)
+            _result_msg = f"\n\n[MCP_RESULT for {_tool_name}]\n{_tool_result[:2000]}\n[/MCP_RESULT]\n"
+            yield _result_msg
+            chunks.append(_result_msg)
+
+            _cont_msgs2 = ctx["msgs"] + [
+                {"role": "assistant", "content": final},
+                {"role": "user", "content": f"Tool result for {_tool_name}:\n{_tool_result[:2000]}\n\nContinue your response using this result."}
+            ]
+            _cont_chunks2 = []
+            def _mcp_cont_worker():
+                try:
+                    for tok in mistral_stream(_cont_msgs2, max_tokens=4096, model=ctx.get("model")):
+                        loop.call_soon_threadsafe(tok_q.put_nowait, tok)
+                except Exception as e:
+                    print(f"[mcp cont worker] {e}")
+                finally:
+                    loop.call_soon_threadsafe(tok_q.put_nowait, None)
+            _t.Thread(target=_mcp_cont_worker, daemon=True, name="mcp_cont").start()
+            while True:
+                tok = await tok_q.get()
+                if tok is None:
+                    break
+                _cont_chunks2.append(tok)
+                yield tok
+            final = "".join(_cont_chunks2)
+            chunks.append(final)
 
         # ── Auto-continuation: resume if response was cut off ──────────────
         _max_continuations = 3
@@ -3822,6 +4031,8 @@ async def speech_to_text(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
+    from modules.services.mcp import mcp_discover_all
+    mcp_discover_all()
     uvicorn.run(app, host="0.0.0.0", port=8080)
 
 # ── NIGHTLY SELF-OPTIMIZATION ─────────────────────────────────────────────────
@@ -3930,6 +4141,7 @@ def pgd_get_active_prompt_injection() -> str:
 
 # ── TTFT PATCH: parallel pre-processing ─────────────────────────────────────
 def _build_stream_context_fast(msg: str, hist: list) -> dict:
+    print("[ENTER _build_stream_context_fast]")
     """Drop-in replacement for _build_stream_context with parallel enrichment."""
     from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     from modules.core.constants import get_infra_tier
@@ -4082,8 +4294,8 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     if _needs_fresh_search(msg) and not search_ctx:
         print("[KnowledgeCutoff] Stale topic detected — auto-triggering search")
         try:
-            from search import tool_search_multi
-            search_ctx = tool_search_multi(msg, max_results=3)
+            from modules.services.search import tool_search_multi
+            search_ctx = tool_search_multi(msg)
         except Exception as _se:
             print(f"[KnowledgeCutoff] search failed: {_se}")
 
@@ -4094,6 +4306,21 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
                    f"\n{search_ctx[:3000]}\n[/WEB]")
 
     mcp_p = mcp_tool_list_prompt()
+    from modules.services.mcp import mcp_tools_prompt as _mtp
+
+    from modules.services.mcp import _MCP_TOOLS as _mcp_tools_dict
+    print(f"[mcp debug fast] _MCP_TOOLS keys: {list(_mcp_tools_dict.keys())}")
+    _tools_schema = []
+    for _tname, _tinfo in list(_mcp_tools_dict.items()):
+        _tools_schema.append({
+            "type": "function",
+            "function": {
+                "name": _tname,
+                "description": _tinfo.get("description","")[:300],
+                "parameters": _tinfo.get("schema") or {"type":"object","properties":{}}
+            }
+        })
+    system += "\n" + _mtp()
     if mcp_p: system += f"\n\n{mcp_p}"
 
     hist_msgs = []
@@ -4105,11 +4332,16 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     max_t = 16000  # no cap — model decides
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
-    msgs  = build_chatml(system, hist_msgs, clean_msg)
+    if search_ctx and search_ctx.strip():
+        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:2000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above."
+    else:
+        user_msg = clean_msg
+    msgs  = build_chatml(system, hist_msgs, user_msg)
 
     return {
         "cached": None, "skill": skill, "complexity": complexity,
         "mode": mode, "effort": effort, "msgs": msgs,
         "max_t": max_t, "system": system, "msg": msg, "model": _tier["models"][0],
+        "mcp_tools": _tools_schema,
     }
 # ── END TTFT PATCH ────────────────────────────────────────────────────────────

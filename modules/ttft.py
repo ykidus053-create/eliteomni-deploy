@@ -13,15 +13,21 @@ SYSTEM_PROMPT_CAPS = {
     "medium": 1200,  # ~300 tokens — skill + tools + key rules
     "hard":   2400,  # ~600 tokens — full reasoning suite
 }
+SYSTEM_PROMPT_CAPS_CODER = {
+    "easy":   8000,  # CodeRAG + principles need room
+    "medium": 12000,
+    "hard":   16000,
+}
 
-def trim_system_prompt(system: str, complexity: str) -> str:
+def trim_system_prompt(system: str, complexity: str, skill: str = "") -> str:
     """
     Hard-cap system prompt length by complexity.
     Single biggest TTFT win — fewer input tokens = faster prefill.
     Preserves the START of the prompt (identity + skill) and
     trims redundant rule blocks from the end.
     """
-    cap = SYSTEM_PROMPT_CAPS.get(complexity, 1200)
+    caps = SYSTEM_PROMPT_CAPS_CODER if skill == 'coder' else SYSTEM_PROMPT_CAPS
+    cap = caps.get(complexity, 1200)
     if len(system) <= cap:
         return system
     trimmed = system[:cap]

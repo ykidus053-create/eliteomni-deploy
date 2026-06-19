@@ -1,3 +1,28 @@
+import sys as _sys
+_sys.path.insert(0, '/home/kidus/eliteomni_app')
+try:
+    from knowledge_rag import get_knowledge_context as _get_knowledge_ctx, start_background_indexer as _start_rag
+    _start_rag()
+    print("[KnowledgeRAG] loaded")
+except Exception as _e:
+    print(f"[KnowledgeRAG] skipped: {_e}")
+    _get_knowledge_ctx = lambda q, top_k=5: ""
+
+try:
+    from voting_engine import should_use_voting, self_consistent_answer
+    print("[VotingEngine] loaded")
+except Exception as _e:
+    print(f"[VotingEngine] skipped: {_e}")
+    should_use_voting = lambda *a, **kw: False
+    self_consistent_answer = None
+
+try:
+    from reflexion_loop import reflexion_verify
+    print("[ReflexionLoop] loaded")
+except Exception as _e:
+    print(f"[ReflexionLoop] skipped: {_e}")
+    reflexion_verify = None
+
 import re, math, time, os, asyncio
 import sqlite3 as _sqlite3
 
@@ -123,7 +148,7 @@ def set_user_instructions(text: str):
         con.commit()
         con.close()
     except Exception:
-        pass
+        print(f"[pipeline] suppressed: {Exception}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SCRATCHPAD
@@ -153,6 +178,14 @@ def cache_get(msg: str, skill: str):
 def cache_set(msg: str, skill: str, response: str):
     if not _cache_enabled:
         return
+    # Hassabis: only cache high-confidence responses — never cache hallucinations
+    try:
+        from modules.services.uncertainty import assess_uncertainty
+        u = assess_uncertainty(response, msg)
+        if u["score"] >= 0.5:
+            print(f"[Cache] skipped — uncertainty too high ({u['score']:.2f})")
+            return
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     key = _cache_key(msg, skill)
     if len(_response_cache) >= CACHE_MAX:
         del _response_cache[next(iter(_response_cache))]
@@ -208,14 +241,14 @@ def formal_verify(text: str, skill: str, original_msg: str) -> tuple:
         violations.append(f"Overconfidence: {oc} absolute claims without hedging")
         # AUTO-FIX: replace overconfident words with calibrated alternatives
         replacements = {
-            r'exactly': 'approximately',
-            r'always': 'generally',
-            r'never': 'rarely',
-            r'100%': 'highly likely',
-            r'guaranteed': 'expected',
-            r'definitely': 'likely',
-            r'certainly': 'probably',
-            r'absolutely': 'largely',
+            r"\bexact\w*": "approximately",
+            r"\balways\b": "generally",
+            r"\bnever\b": "rarely",
+            r"\b100%": "highly likely",
+            r"\bguaranteed\w*": "expected",
+            r"\bdefinitely\b": "likely",
+            r"\bcertainly\b": "probably",
+            r"\babsolutely\b": "largely",
         }
         for pattern, replacement in replacements.items():
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -301,7 +334,7 @@ def _validate_schedule_disabled(response: str, msg: str) -> tuple:
     return True, ""
 
 
-def verification_pipeline(text: str, msg: str, skill: str) -> str:
+def verification_pipeline(text: str, msg: str, skill: str, complexity: str = 'medium') -> str:
     """
     Post-generation verification with self-correction loop:
     1. Clean excessive newlines
@@ -340,6 +373,15 @@ def verification_pipeline(text: str, msg: str, skill: str) -> str:
 
     if not is_valid and violations:
         text += "\n\n> ⚠️ " + " · ".join(violations[:2])
+    if skill in ("coder","researcher") and complexity == "hard":
+        try:
+            from modules.services.prm import prm_score_steps
+            _prm = prm_score_steps(text, msg, generate_sync)
+            if _prm.get("needs_regen"):
+                text += (f"\n\n> ⚠️ Process reward model flagged weak reasoning "
+                         f"(min step score: {_prm['min_score']}/5). "
+                         f"Consider re-asking with more detail.")
+        except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     if skill == "coder":
         from modules.services.tools import _extract_code_blocks, tool_lint, tool_exec
         blocks = _extract_code_blocks(text)
@@ -454,7 +496,12 @@ Never fabricate facts. If you don't know something, say "I don't have reliable i
 For complex claims, briefly note what evidence supports your answer.
 '''
 
+_patch_call_count = 0
 def _get_learned_patch():
+    global _patch_call_count
+    _patch_call_count += 1
+    if _patch_call_count % 50 != 1:
+        return ""
     try:
         from modules.services.active_learning import run_learning_cycle
         return run_learning_cycle()
@@ -463,9 +510,29 @@ def _get_learned_patch():
 
 def build_system_prompt(skill: str, memory: list, episodic: list,
                         rlhf_note: str, ctx_summary: str = "",
-                        complexity: str = "medium") -> str:
+                        complexity: str = "medium", msg: str = "",
+                        search_ctx: str = "") -> str:
     from datetime import datetime, timezone
     _today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
+    # ── Code RAG: inject correct reference patterns ──────────────────────────
+    _code_rag_ctx = ""
+    if skill == "coder":
+        try:
+            from modules.code_rag import get_reference_context
+            _code_rag_ctx = get_reference_context(msg or ctx_summary or "")
+            if _code_rag_ctx:
+                print(f"[CodeRAG] injected {len(_code_rag_ctx)} chars of reference patterns")
+        except Exception as _e:
+            print(f"[CodeRAG] skipped: {_e}")
+    # ── Knowledge RAG: inject relevant knowledge into every prompt ──────────
+    _know_ctx = ""
+    try:
+        _know_ctx = _get_knowledge_ctx(msg or ctx_summary or "", top_k=5)
+        if _know_ctx:
+            print(f"[KnowledgeRAG] injected {len(_know_ctx)} chars")
+    except Exception as _e:
+        print(f"[KnowledgeRAG] error: {_e}")
+
     effort = EFFORT_LEVEL
     if complexity == "hard":
         effort = "high"
@@ -480,19 +547,22 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         ]
     else:
         parts = [
-            f"Today is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after 2023.",
-            " ".join(HIERARCHY["system"]),
-            HIERARCHY["operator"][0],
-            f"SKILL: {SKILLS[skill]['prompt']}",
-            f"WORKFLOW: {WORKFLOWS.get(skill, WORKFLOWS['general'])}",
-            "Tools: SEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) BROWSER(url) GREP(p). Never say you cannot search. BROWSER(url) fetches live web pages.",
+            "## ROLE\n" + " ".join(HIERARCHY["system"]) + " " + HIERARCHY["operator"][0],
+            f"## TASK\nSKILL: {SKILLS[skill]['prompt']}\nWORKFLOW: {WORKFLOWS.get(skill, WORKFLOWS['general'])}",
+            f"## CONTEXT\nToday is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after 2023.",
+            "## TOOLS\nSEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) BROWSER(url) GREP(p). Never say you cannot search. BROWSER(url) fetches live web pages.",
         ]
+
+    if _know_ctx:
+        parts.append(f"RELEVANT KNOWLEDGE:\n{_know_ctx}")
+    if _code_rag_ctx:
+        parts.append(f"CODE REFERENCE PATTERNS:\n{_code_rag_ctx}")
 
     parts.append(UNCERTAINTY_PROMPT.strip())
     try:
         from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
-    except Exception: pass
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     parts.append(RESPONSE_STYLE_PROMPT.strip())
 
     if complexity in ("medium", "hard"):
@@ -500,10 +570,15 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
 
     if complexity == "easy":
         joined = "\n".join(parts)
-        return joined[:2000]
+        base = joined[:2000]
+        if search_ctx:
+            base += f"\n\n[LIVE SEARCH RESULTS — today's data, use these, ignore training data]:\n{search_ctx[:3000]}"
+        return base
 
     effort_prompts = get_effort_prompts(effort, complexity, skill)
     parts.extend(effort_prompts)
+    if search_ctx:
+        parts.append(f"[LIVE SEARCH RESULTS — today's data, use these, ignore training data]:\n{search_ctx[:3000]}")
 
     # ── Claude-style intelligence (injected like Anthropic does it) ──
     try:
@@ -540,7 +615,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         if _exemplars:
             parts.append(_exemplars)
     except Exception:
-        pass
+        print(f"[pipeline] suppressed: {Exception}")
     # ─────────────────────────────────────────────────────────────────
 
 
@@ -581,6 +656,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         parts.insert(1, LOGIC_AUDIT_PROMPT.strip())
         parts.append(COMPUTER_USE_PROMPT.strip())
         parts.append(SCIENTIFIC_COMPUTING_PROMPT.strip())
+        parts.append(CODER_SUFFIX.strip())
     if skill == "researcher":
         parts.append(SCIENTIFIC_COMPUTING_PROMPT.strip())
         parts.append(PEVI_LOOP_PROMPT.strip())
@@ -640,19 +716,63 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         parts.append(f"USER PERSISTENT INSTRUCTIONS (always follow):\n{user_inst}")
 
     if memory:
-        parts.append("MEMORY:\n" + "\n".join(f"- {m[:120]}" for m in memory[:6]))
+        try:
+            from modules.services.memory_weight import weighted_memory_retrieve
+            _wmem = weighted_memory_retrieve(memory, msgs[-1] if isinstance(msgs, list) and msgs else "", top_k=6)
+        except Exception:
+            _wmem = memory[:6]
+        parts.append("MEMORY:\n" + "\n".join(f"- {str(m)[:120]}" for m in _wmem))
     if episodic:
         parts.append("EPISODIC:\n" + "\n".join(f"- {e[:100]}" for e in episodic[:3]))
-    if ctx_summary:
-            _lp = _get_learned_patch()
+    try:
+        from modules.services.user_profile import profile_get_context
+        _upc = profile_get_context()
+        if _upc: parts.append(_upc)
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+    # Intelligence core: pre-answer context
+    try:
+        from modules.services.intelligence_core import get_pre_answer_context
+        _ic = get_pre_answer_context(
+            memory[-1] if memory else "", skill, complexity
+        )
+        if _ic: parts.append(_ic)
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+    # Hassabis+Ng+Li: route to advanced reasoning engines
+    try:
+        from modules.services.reasoning_engine import route_to_reasoning_engine
+        _re_ctx = route_to_reasoning_engine(
+            memory[-1] if memory else "",
+            skill, complexity, generate_sync
+        )
+        if _re_ctx: parts.append(_re_ctx)
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+    _lp = _get_learned_patch()
     if _lp: parts.append(_lp)
-    parts.append(f"PRIOR CONTEXT SUMMARY: {ctx_summary[:300]}")
+    if ctx_summary:
+        parts.append(f"PRIOR CONTEXT SUMMARY: {ctx_summary[:300]}")
 
+    # Move critical reasoning prompts to front so truncation never cuts them
+    _critical = []
+    _noncritical = []
+    _critical_keywords = [
+        "REASONING_DISCIPLINE", "ANTI_HALLUCINATION", "UNCERTAINTY",
+        "SKILL:", "WORKFLOW:", "HIERARCHY", "identity_override",
+        "Today is", "EliteOmni"
+    ]
+    for p in parts:
+        if any(k in p for k in _critical_keywords):
+            _critical.append(p)
+        else:
+            _noncritical.append(p)
+    parts = _critical + _noncritical
     joined = "\n".join(parts)
-    # TTFT-optimized caps — smaller = faster prefill = faster first token
-    _cap = {"easy": 800, "medium": 3000, "hard": 8000}.get(complexity, 3000)
+    # Coder skill needs full rigor prompt even on easy — never truncate below 4000
+    _base_cap = {"easy": 800, "medium": 3000, "hard": 8000}.get(complexity, 3000)
+    _cap = 4000 if skill == "coder" else _base_cap
     if len(joined) > _cap:
         joined = joined[:_cap]
+    if _code_rag_ctx:
+        joined = _code_rag_ctx + "\n\n" + joined
     return joined
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -683,9 +803,23 @@ def _budget(msg: str, skill: str, complexity: str) -> int:
     else:               length_boost = 0
 
     budget = int(base * skill_mult) + length_boost
+    try:
+        from modules.services.memory import surprise_get_budget_boost
+        budget += surprise_get_budget_boost(skill, complexity)
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
 
     # Hard caps — Mistral API limit is 16k output safely
     budget = max(256, min(budget, 16000))
+
+    # Ng: log budget decisions for drift analysis
+    try:
+        import sqlite3 as _bsql, time as _bt
+        _bc = _bsql.connect(_DB_PATH)
+        _bc.execute("CREATE TABLE IF NOT EXISTS budget_log (ts REAL, skill TEXT, complexity TEXT, msg_len INTEGER, budget INTEGER)")
+        _bc.execute("INSERT INTO budget_log VALUES (?,?,?,?,?)", (_bt.time(), skill, complexity, msg_len, budget))
+        _bc.execute("DELETE FROM budget_log WHERE ts < ?", (_bt.time() - 86400 * 7,))
+        _bc.commit(); _bc.close()
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
 
     return budget
 
@@ -713,15 +847,26 @@ def build_chatml(system: str, history: list, user_msg: str,
     """Dynamic context window: hard tasks see more history, easy tasks see less.
     Complexity-aware caps prevent context rot without starving reasoning chains.
     """
-    msgs = [{"role": "system", "content": system}]
-    # Hassabis: multi-step reasoning needs full context
-    _hist_turns = {"easy": 4, "medium": 8, "hard": 14}.get(complexity, 8)
-    _char_cap   = {"easy": 300, "medium": 800, "hard": 2000}.get(complexity, 800)
+    try:
+        from context_budget import allocate_budget
+        _budget = allocate_budget(complexity)
+        _hist_turns = {"easy": 4, "medium": 8, "hard": 14}.get(complexity, 8)
+        _char_cap = _budget.get("history", 800)
+    except Exception:
+        _hist_turns = {"easy": 4, "medium": 8, "hard": 14}.get(complexity, 8)
+        _char_cap   = {"easy": 300, "medium": 800, "hard": 2000}.get(complexity, 800)
+
+    # ALL PROMPTS AS USER TURNS — every system prompt injected for maximum compliance
+    msgs = []
+    msgs.append({"role": "user", "content": "<instructions>\n" + system + "\n</instructions>\nFollow all instructions above exactly. Use any injected search results as ground truth over training data. Never say you cannot browse the web."})
+    msgs.append({"role": "assistant", "content": "Confirmed. I am EliteOmni built by Kidus. I will follow every instruction. Search results override my training data. I will never claim I lack internet access."})
     for h in (history or [])[-_hist_turns:]:
         r = h.get("role", "user")
-        c = h.get("content", "")[:_char_cap]
-        if c.strip():
-            msgs.append({"role": r, "content": c})
+        _c = h.get("content", "")[:_char_cap]
+        if _c.strip():
+            msgs.append({"role": r, "content": _c})
+    msgs.append({"role": "user", "content": user_msg[:6000]})
+    return msgs
     msgs.append({"role": "user", "content": user_msg[:6000]})
     return msgs
 
@@ -765,14 +910,21 @@ def _token_budget(msg: str, skill: str, complexity: str) -> dict:
 
 def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int, provider: str = "mistral", model: str = None) -> str:
     from modules.core.http_client import mistral_stream
-    mdl = model or "mistral-large-latest"
+    mdl = model or "magistral-medium-latest"
     result = "".join(mistral_stream(msgs, max_tokens=max_new, model=mdl))
-    if result:
-        # Hassabis: flag uncertain claims before serving
+    # Hassabis: flag uncertain claims before serving
     try:
         from modules.services.uncertainty import append_uncertainty_disclaimer
         result = append_uncertainty_disclaimer(result, msgs[-1].get('content','') if msgs else '')
-    except Exception: pass
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+    # Intelligence core: metacognitive post-processing
+    try:
+        from modules.services.intelligence_core import apply_intelligence_core
+        _msg = msgs[-1].get("content","") if msgs else ""
+        result = apply_intelligence_core(_msg,"general","medium",result,
+            lambda m,max_tokens=500: "".join(__import__("modules.core.http_client",
+            fromlist=["mistral_stream"]).mistral_stream(m,max_tokens=max_tokens)))
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     return _clean(result)
     if llm is None:
         return "Model not loaded."
@@ -783,6 +935,31 @@ def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int, complexity
     from modules.core.http_client import mistral_stream
     from modules.reliability import route_model_v3
     _, model = route_model_v3(skill, complexity)
+
+    # ── Voting: self-consistency for hard/research tasks ─────────────────────
+    last_user_msg = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), "")
+    if should_use_voting(last_user_msg, skill, complexity) and self_consistent_answer:
+        print(f"[VotingEngine] activating for skill={skill} complexity={complexity}")
+        def _gen_fn(m):
+            return "".join(mistral_stream(m, max_tokens=max_new, model=model))
+        result = self_consistent_answer(_gen_fn, msgs, n_samples=3, max_tokens=max_new)
+        # ── Reflexion: verify code output ─────────────────────────────────
+        if skill == "coder" and reflexion_verify:
+            print("[ReflexionLoop] activating for coder task")
+            result = reflexion_verify(result, _gen_fn, model=model)
+        yield result
+        return
+
+    # ── Reflexion only (no voting) for coder tasks ────────────────────────
+    if skill == "coder" and reflexion_verify and complexity in ("medium", "hard"):
+        print("[ReflexionLoop] activating for coder task")
+        def _gen_fn(m):
+            return "".join(mistral_stream(m, max_tokens=max_new, model=model))
+        raw = "".join(mistral_stream(msgs, max_tokens=max_new, model=model))
+        result = reflexion_verify(raw, _gen_fn, model=model)
+        yield result
+        return
+
     for tok in mistral_stream(msgs, max_tokens=max_new, model=model):
         yield tok
 
@@ -815,6 +992,20 @@ Only output WHAT and relevant WHAT_IF warnings. Hide WHY and VERIFY in <think>.
 # ══════════════════════════════════════════════════════
 # 100X REASONING UPGRADES — Hassabis + Ng + Li + Karpathy
 # ══════════════════════════════════════════════════════
+
+def _self_consistency_check(msg: str, skill: str, response: str) -> str:
+    """Hassabis: run a second pass and flag if answers diverge."""
+    try:
+        msgs2 = [{"role":"user","content":msg}]
+        r2 = generate_sync(msgs2, 400, skill, len(msg))
+        # Check if numeric answers match
+        import re
+        nums1 = re.findall(r'\b\d+\.?\d*\b', response)
+        nums2 = re.findall(r'\b\d+\.?\d*\b', r2)
+        if nums1 and nums2 and nums1[0] != nums2[0]:
+            return response + f"\n\n> ⚠️ **Consistency warning:** Two independent runs gave different answers ({nums1[0]} vs {nums2[0]}). Verify this result."
+    except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+    return response
 
 def enhanced_generate(msg: str, skill: str, complexity: str,
                        history: list, system: str) -> str:
@@ -855,7 +1046,7 @@ def enhanced_generate(msg: str, skill: str, complexity: str,
             condensed = hierarchical_summarize(msg, target_length=800, domain="research")
             msg = condensed + "\n\n[Original query condensed above]"
         except Exception:
-            pass
+            print(f"[pipeline] suppressed: {Exception}")
 
     msgs = build_chatml(system, history, msg)
     response = generate_sync(msgs, _budget(msg, skill, complexity), skill, len(msg))
@@ -863,8 +1054,23 @@ def enhanced_generate(msg: str, skill: str, complexity: str,
     # Ng: log quality for drift detection
     try:
         from modules.services.rlaif import log_response_quality
-        log_response_quality(skill, complexity, response, msg, min(9.0, 4.0 + len(response)/500))
+        try:
+            from modules.services.quality_heuristics import compute_response_quality
+            _qs = compute_response_quality(response, msg, skill)
+        except Exception:
+            _qs = min(9.0, 4.0 + len(response)/500)
+        log_response_quality(skill, complexity, response, msg, _qs)
     except Exception:
-        pass
+        print(f"[pipeline] suppressed: {Exception}")
 
     return response
+
+CODER_SUFFIX = """
+Production requirements — non-negotiable:
+- Every import explicit
+- Input validation on every public function
+- Typed exceptions, never bare except
+- Logging on every error path
+- No pass, no TODO, no placeholder
+- Code runs as-is with python3
+"""

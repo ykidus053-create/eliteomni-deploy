@@ -304,7 +304,9 @@ def pipeline_sync(msg: str, history: list) -> dict:
             norm = re.sub(r"[^a-z0-9 ]", "", msg.strip().lower())
             norm_words = set(norm.split())
             best_score, best_val = 0.0, None
-            for k, v in _response_cache.items():
+            # O(N) scan limited to 500 entries max to bound latency
+            _cache_sample = list(_response_cache.items())[-500:]
+            for k, v in _cache_sample:
                 if not k.startswith(skill + "::"): continue
                 k_norm = re.sub(r"[^a-z0-9 ]", "", k.split("::", 1)[-1])
                 k_words = set(k_norm.split())
@@ -312,6 +314,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
                 jaccard = len(norm_words & k_words) / len(norm_words | k_words)
                 if jaccard > best_score:
                     best_score, best_val = jaccard, v
+                if best_score >= 0.95:  # early exit on near-exact match
+                    break
             if best_score >= 0.85 and best_val:
                 cache_set(msg, skill, best_val)
                 return {"response": best_val, "skill": skill, "mode": "fuzzy_cache",
@@ -352,6 +356,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     forced_results = []
 
     # FORCED PRE-SEARCH — runs before model responds, bypasses model memory
+    msg_lower = msg.lower()  # FIX: must be defined before _news_force check
     _news_force = ["news", "latest", "recent", "today", "current", "this week", "this year", "2025", "2026", "just released", "new model", "update"]
     if any(t in msg_lower for t in _news_force) and skill != "calculator":
         try:
@@ -414,7 +419,24 @@ def pipeline_sync(msg: str, history: list) -> dict:
         memory = list(memory or []) + sem_mem[:3]
     rag_hits = rag_get(msg, k=3)
     rag_ctx = "\n[KNOWLEDGE BASE]\n" + "\n".join(f"- {r["text"][:200]}" for r in rag_hits) + "\n[END KNOWLEDGE BASE]" if rag_hits else ""
-    system = build_system_prompt(skill, memory, episodic, rlhf_note, ctx_sum or "", complexity)
+    
+    # RELEVANCE-GATED MEMORY — inject only memories relevant to this query
+    if _DRIFT_FREE:
+        try:
+            from modules.intelligence.context_manager import filter_memories
+            all_mems = memory + episodic if 'episodic' in dir() else memory
+            relevant_only = filter_memories([str(m) for m in all_mems], msg, char_budget=400)
+            memory = [relevant_only] if relevant_only else []
+        except Exception:
+            pass
+
+    # GROQ PREFIX CACHE: static prefix first, dynamic content appended after
+    # Groq caches the longest common prefix — keep first ~1024 tokens identical across requests
+    _static_prefix = (
+        "You are EliteOmni, an advanced AI assistant. Be accurate, concise, and helpful. "
+        "Current date: " + __import__('datetime').date.today().isoformat() + ". "
+    )
+    system = _static_prefix + build_system_prompt(skill, memory, episodic, rlhf_note, ctx_sum or "", complexity)
     if rag_ctx:
         system += rag_ctx
 
@@ -554,41 +576,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
     # ── FINALIZE (GPT-5.5 style: verify + trim + continue if incomplete) ─────
     final = response or ""
 
-    # 1. SELF-VERIFICATION — check own work before outputting
-    if final and complexity == "hard":
-        try:
-            vcheck = "".join(mistral_stream(
-                build_chatml(
-                    "You are a strict verifier. Reply APPROVED if the response fully answers the question. "
-                    "If not, reply INCOMPLETE: [what is missing] in one line.",
-                    [],
-                    f"Question: {msg[:300]}\nResponse: {final[:3000]}"
-                ),
-                max_tokens=60
-            ))
-            if vcheck and "INCOMPLETE:" in vcheck:
-                missing = vcheck.split("INCOMPLETE:", 1)[-1].strip()
-                followup = generate_sync(
-                    build_chatml(system, hist_msgs, f"{clean_msg}\n\n[Complete this part: {missing}]"),
-                    max_t, skill, len(msg)
-                )
-                if followup and len(followup) > 50:
-                    final = final.rstrip() + "\n\n" + followup
-            elif vcheck and "CONTRADICTION:" in vcheck:
-                contradiction = vcheck.split("CONTRADICTION:", 1)[-1].strip()
-                print(f"[Verify] Contradiction detected: {contradiction}")
-                fixup = generate_sync(
-                    build_chatml(
-                        system, hist_msgs,
-                        f"{clean_msg}\n\n[Your previous answer had a contradiction: {contradiction}. "
-                        f"Recompute carefully and give ONE consistent final answer.]"
-                    ),
-                    max_t, skill, len(msg)
-                )
-                if fixup and len(fixup) > 50:
-                    final = fixup
-        except Exception as ve:
-            print(f"[SelfVerify] {ve}")
+    # Self-verification removed: doubles latency on hard queries with marginal gain.
+    # Mistral handles consistency well in single pass. Re-enable only if eval shows regression.
 
     # 2. TOKEN EFFICIENCY — strip sycophantic openers and filler (saves ~35% tokens)
     import re as _re3

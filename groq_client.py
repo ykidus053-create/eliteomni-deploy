@@ -422,7 +422,7 @@ def groq_generate(msgs: list, max_tokens: int = 0, model: str = None) -> str:
     payload = {
         "model": mdl,
         "messages": msgs_trimmed,
-        "max_completion_tokens": min(max_tokens, 4000),
+        "max_completion_tokens": max_tokens,
         "stream": False,
     }
     if _skip_reason:
@@ -543,7 +543,7 @@ def groq_stream(msgs: list, max_tokens: int = 0, model: str = None):
     payload = {
         "model":       mdl,
         "messages":    msgs_trimmed,
-        "max_completion_tokens": min(max_tokens, 4000),
+        "max_completion_tokens": max_tokens,
         "temperature": 0.7,
         "stream":      True,
     }
@@ -634,6 +634,17 @@ except Exception as e:
 
 # ── LOCAL CONFIG ──────────────────────────────────────────────────────────────
 
+def _mistral_stream(mdl: str, msgs: list, max_tokens: int = 2048, api_key: str = ""):
+    """Stream tokens from a Mistral-compatible local endpoint."""
+    import urllib.request as _ur
+    MISTRAL_URL = "http://localhost:8081/v1/chat/completions"
+    req = _ur.Request(
+        MISTRAL_URL,
+        data=None,
+        headers={"Content-Type": "application/json",
+                 **({"Authorization": f"Bearer {api_key}"} if api_key else {})}
+    )
+
 
 
 
@@ -643,7 +654,7 @@ except Exception as e:
     import urllib.request, json as _json
     payload = _json.dumps({
         "model": mdl, "messages": msgs,
-        "max_tokens": min(max_tokens, 4000), "temperature": 0.6, "stream": True,
+        "max_tokens": max_tokens, "temperature": 0.6, "stream": True,
     }).encode()
     try:
         with urllib.request.urlopen(req, timeout=60) as r:

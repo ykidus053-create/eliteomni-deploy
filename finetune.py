@@ -37,6 +37,22 @@ def finetune_save(skill: str, complexity: str, system: str, user: str, response:
     except Exception as e:
         print(f"[finetune_save] {e}")
 
+    _maybe_trigger_sft()
+
+def _maybe_trigger_sft():
+    """Auto-trigger SFT fine-tune every 200 good samples."""
+    try:
+        con = _sqlite3.connect(FINETUNE_DB)
+        count = con.execute("SELECT COUNT(*) FROM samples WHERE rating >= 7").fetchone()[0]
+        con.close()
+        if count > 0 and count % 100 == 0:
+            import threading
+            from mistral_finetune import upload_sft_and_finetune
+            print(f"[SFT] {count} samples — auto-triggering SFT fine-tune")
+            threading.Thread(target=upload_sft_and_finetune, kwargs={"min_rating": 7}, daemon=True).start()
+    except Exception as e:
+        print(f"[SFT] auto-trigger error: {e}")
+
 def finetune_export_jsonl(min_rating: int = 0, path: str = None) -> str:
     """Export training data as JSONL ready for Unsloth/HuggingFace fine-tuning."""
     path = path or os.path.expanduser("~/eliteomni_finetune.jsonl")

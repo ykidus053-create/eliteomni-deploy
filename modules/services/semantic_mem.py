@@ -31,7 +31,8 @@ def _init_semantic_memory():
     except Exception as e:
         print(f"[SemanticMem] Not available: {e} — pip install chromadb sentence-transformers")
 
-_init_semantic_memory()
+import threading as _sm_th
+_sm_th.Thread(target=_init_semantic_memory, daemon=True).start()
 
 def semantic_mem_save(text: str, meta: dict = None):
     """Save text to vector store."""
@@ -50,7 +51,15 @@ def semantic_mem_get(query: str, k: int = 6) -> list:
     try:
         emb = list(_embedder.embed([query]))[0].tolist()
         results = _chroma_col.query(query_embeddings=emb, n_results=min(k, _chroma_col.count()), include=["documents","distances"])
-        docs=results["documents"][0] if results["documents"] else []; dists=results.get("distances",[[[]]]) [0] if results.get("distances") else [0.0]*len(docs); return [d for d,s in zip(docs,dists) if s<0.5]
+        docs = results["documents"][0] if results["documents"] else []
+        dists = results.get("distances", [[]])[0] if results.get("distances") else [0.0]*len(docs)
+        hits = [d for d, s in zip(docs, dists) if s < 0.5]
+        # Fei-Fei: reinforce retrieved memories (Hebbian — used = stronger)
+        try:
+            from modules.services.memory import mem_increment_hit
+            for h in hits: mem_increment_hit(h)
+        except Exception: pass
+        return hits
     except Exception as e:
         print(f"[SemanticMem get] {e}")
         return []

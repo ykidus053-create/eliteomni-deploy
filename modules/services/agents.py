@@ -119,7 +119,6 @@ def tool_bash(cmd: str, timeout: int = 10) -> str:
 
 # -- Feature 34: GUARANTEED JSON OUTPUT ---------------------------------------
 def groq_json(msgs: list, schema: dict, max_tokens: int = 1000, model: str = None) -> dict:
-    if not "not_needed": return {}
     import urllib.request as _ur, json as _j
     mdl = model or "zai-glm-4.7"
     payload = _j.dumps({
@@ -233,22 +232,62 @@ def groq_moderate(text: str) -> dict:
     except Exception as e:
         print(f"[Guard] {e}"); return {"safe": True, "category": None}
 
+_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "steps": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "step_number": {"type": "integer"},
+                    "state_before": {"type": "string", "description": "Exact runtime state before this step executes"},
+                    "action": {"type": "string", "description": "What executes in this step — name real data structures, types, and concurrency primitives"},
+                    "state_after": {"type": "string", "description": "Exact runtime state after this step"},
+                    "failure_handling": {"type": "string", "description": "What can fail and how it is handled"},
+                    "external_system": {"type": ["string", "null"], "description": "Name of any real external system this step depends on, or null"}
+                },
+                "required": ["step_number", "state_before", "action", "state_after", "failure_handling", "external_system"]
+            }
+        }
+    },
+    "required": ["steps"]
+}
+
 def architect_plan(msg: str) -> str:
     """
     Phase 1 — Hidden Reasoning: internal plan only, no code.
+    Returns a structured JSON plan (via groq_json + json_schema) rendered
+    back to a numbered-step string for editor_implement.
     Separates reasoning from patch emission to prevent syntax leakage.
     """
     plan_msgs = build_chatml(
-        "You are a software architect. Think step by step internally. "
-        "Output ONLY a numbered execution plan (max 8 steps, NO code). "
-        "Be specific: name functions, data structures, algorithms.",
+        "You are a systems engineer, not an interviewer. "
+        "Produce an execution plan as structured JSON (max 8 steps, NO code in any field). "
+        "Name real data structures with types. Name real concurrency primitives. "
+        "Never write a step that contains TODO, stub, or placeholder. "
+        "If a step requires a real external system, name it explicitly; otherwise use null.",
         [],
-        f"Plan how to implement this task minimally and correctly: {msg[:400]}"
+        f"Plan how to implement this task as a real running system: {msg[:400]}"
     )
     try:
-        plan = generate_sync(plan_msgs, 400, "coder", len(msg))
-        return plan
-    except Exception:
+        result = groq_json(plan_msgs, _PLAN_SCHEMA, max_tokens=600)
+        steps = result.get("steps", [])
+        if not steps:
+            return ""
+        lines = []
+        for s in steps:
+            lines.append(
+                f"{s.get('step_number', '?')}. {s.get('action', '')}\n"
+                f"   - before: {s.get('state_before', '')}\n"
+                f"   - after: {s.get('state_after', '')}\n"
+                f"   - failure handling: {s.get('failure_handling', '')}"
+                + (f"\n   - external system: {s['external_system']}" if s.get('external_system') else "")
+            )
+        return "\n".join(lines)
+    except Exception as _e:
+        print(f"[architect_plan] {_e}")
         return ""
 
 def editor_implement(plan: str, msg: str, system: str,
@@ -507,7 +546,7 @@ def tool_browser(url: str, max_chars: int = 600) -> str:
         return f"[browser error: {e}]"
 
 
-def _mistral_stream(messages: list, system: str = "", model: str = "mistral-large-latest", max_tokens: int = 2048) -> str:
+def _mistral_stream(messages: list, system: str = "", model: str = "magistral-medium-latest", max_tokens: int = 2048) -> str:
     try:
         from modules.services.pipeline import generate_sync
         msgs = [{"role": "system", "content": system}] + messages if system else messages
@@ -564,3 +603,6 @@ def meta_maybe_rewrite_prompt(skill: str, score: int):
         print(f"[MetaPrompt] {e}")
 
 # ── ATTENTION GATING ─────────────────────────────────────────────────────────
+def detect_emotion_context(msg: str) -> dict:
+    """Stub — returns neutral emotion context."""
+    return {"emotion": "neutral", "intensity": 0.0, "requires_empathy": False}

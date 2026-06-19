@@ -71,6 +71,18 @@ def _db_init():
 
 def db_mem_save(text: str, source: str = "conversation"):
     try:
+        # Fei-Fei Li: tag every memory with type+importance before storing
+        try:
+            from modules.services.memory_weight import structure_extraction, score_memory_importance
+            _struct = structure_extraction(text)
+            _importance = _struct.get("importance", 0.5)
+            _type = _struct.get("type", "general")
+            # Skip storing low-importance noise (score < 0.2)
+            if _importance < 0.2 and source == "conversation":
+                return
+            text = f"[{_type}|{_importance:.2f}] {text}"
+        except Exception as _e:
+            print(f"[memory] suppressed: {_e}")
         con = _sqlite3.connect(_DB_PATH)
         con.execute("INSERT INTO memory (text,source,ts) VALUES (?,?,?)",
                     (text[:2000], source, time.time()))
@@ -328,10 +340,11 @@ SKILLS = {
         "prompt": "Research Agent: structured answers. Mark [VERIFIED]/[UNCERTAIN]. Use ## headers. End with **Summary**.",
     },
     "coder": {
-        "meta": ["code","python","javascript","typescript","function","implement",
+        "meta": ["code","python","javascript","typescript","function","implement","type hint","typed","annotation",
                  "debug","algorithm","program","script","html","css","react","api",
                  "bug","error","write a","build","create a"],
         "prompt": """Code Agent — Principal Engineer Standard. MANDATORY SEQUENCE:
+0. TYPE CONTRACT: before writing any code, state the full type signature of every function you will write. No untyped parameters. No missing return types. No bare collections.
 1. FORMAL PROBLEM STATEMENT: restate in mathematical terms, define input/output domain and constraints.
 2. ALGORITHM SELECTION: list all viable algorithms with O(time)/O(space). Prove chosen one is optimal. State loop invariant formally.
 3. CORRECTNESS PROOF: write the trace AS A TABLE with columns: step | variables | state. Show every variable at every iteration. A checklist tick without the actual table = automatic failure.
@@ -519,7 +532,9 @@ def _ensure_hit_count_col():
         con = _sq.connect(_DB_PATH)
         con.execute("ALTER TABLE memory ADD COLUMN hit_count INTEGER DEFAULT 0")
         con.commit(); con.close()
-    except Exception: pass
+    except Exception as _e:
+        if "duplicate column" not in str(_e):
+            print(f"[memory] suppressed: {_e}")
 _ensure_hit_count_col()
 
 def mem_increment_hit(text: str):
@@ -527,7 +542,9 @@ def mem_increment_hit(text: str):
         con = _sq.connect(_DB_PATH)
         con.execute("UPDATE memory SET hit_count=hit_count+1 WHERE text=?", (text[:2000],))
         con.commit(); con.close()
-    except Exception: pass
+    except Exception as _e:
+        if "duplicate column" not in str(_e):
+            print(f"[memory] suppressed: {_e}")
 
 def mem_prune_unused():
     try:
@@ -535,7 +552,9 @@ def mem_prune_unused():
         con.execute("DELETE FROM memory WHERE hit_count=0 AND ts < ?", (_t.time()-604800,))
         con.commit(); con.close()
         print("[Hebbian] pruned unused memories older than 7 days")
-    except Exception: pass
+    except Exception as _e:
+        if "duplicate column" not in str(_e):
+            print(f"[memory] suppressed: {_e}")
 
 # ── EPISODIC CONSOLIDATION ────────────────────────────────────────────────────
 def consolidate_episodic():

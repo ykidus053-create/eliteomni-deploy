@@ -14,7 +14,10 @@ import urllib.request, urllib.parse
 from modules.core.http_client import mistral_stream as _mistral_stream_shim
 def _mistral_gen(msgs, max_tokens=1000, **kw):
     if isinstance(msgs, str): msgs = [{"role":"user","content":msgs}]
-    return "".join(_mistral_stream_shim(msgs, max_tokens=max_tokens))
+    result = _mistral_stream_shim(msgs, max_tokens=max_tokens)
+    if hasattr(result, '__iter__') and not isinstance(result, str):
+        return "".join(result)
+    return result or ""
 groq_generate = _mistral_gen
 
 
@@ -233,23 +236,29 @@ def _init_quality_db():
 
 _init_quality_db()
 
-def log_response_quality(skill: str, complexity: str, response: str,
-                          question: str, hhh_score: float):
-    import time
-    try:
-        con = _qsql.connect(_QUALITY_DB)
-        qhash = _qhash.md5(question[:100].encode()).hexdigest()
-        con.execute(
-            "INSERT INTO quality_log (ts,skill,complexity,hhh_score,response_len,"
-            "had_search,had_calc,question_hash) VALUES (?,?,?,?,?,?,?,?)",
-            (time.time(), skill, complexity, hhh_score, len(response),
-             int("SEARCH(" in response or "[WEB" in response),
-             int("CALC(" in response or "PATH B" in response), qhash)
-        )
-        con.commit(); con.close()
-        _check_drift(skill, hhh_score)
-    except Exception as e:
-        print(f"[QualityLog] {e}")
+def log_response_quality(skill: str, complexity: str, response: str, question: str, hhh_score: float):
+    import time, threading, hashlib as _qhash2, sqlite3 as _qsql2, statistics as _qstat2
+    def _async_log():
+        try:
+            con = _qsql2.connect(_QUALITY_DB)
+            qhash = _qhash2.md5(question[:100].encode()).hexdigest()
+            con.execute("INSERT INTO quality_log (ts,skill,complexity,hhh_score,response_len,had_search,had_calc,question_hash) VALUES (?,?,?,?,?,?,?,?)",
+                (time.time(), skill, complexity, hhh_score, len(response),
+                 int("SEARCH(" in response or "[WEB" in response),
+                 int("CALC(" in response or "PATH B" in response), qhash))
+            con.execute("DELETE FROM quality_log WHERE ts < ?", (time.time() - 86400*7,))
+            con.commit(); con.close()
+            rows = _qsql2.connect(_QUALITY_DB).execute("SELECT hhh_score FROM quality_log WHERE skill=? ORDER BY ts DESC LIMIT 50", (skill,)).fetchall()
+            if len(rows) >= 10:
+                scores = [r[0] for r in rows]
+                recent = _qstat2.mean(scores[:10])
+                baseline = _qstat2.mean(scores[10:])
+                if baseline > 0 and (baseline - recent) / baseline > 0.15:
+                    print(f"[QualityDrift] WARNING {skill} dropped {(baseline-recent)/baseline*100:.0f}%")
+        except Exception as e:
+            print(f"[QualityLog] {e}")
+    threading.Thread(target=_async_log, daemon=True).start()
+
 
 def _check_drift(skill: str, new_score: float):
     import time, os
@@ -271,6 +280,13 @@ def _check_drift(skill: str, new_score: float):
                   f"(baseline={baseline:.2f}, recent={recent_avg:.2f})")
             with open(os.path.expanduser("~/eliteomni_drift.log"), "a") as f:
                 f.write(f"{time.time()},{skill},{baseline:.3f},{recent_avg:.3f}\n")
+            try:
+                from modules.services.pipeline import set_user_instructions, get_user_instructions
+                _cur = get_user_instructions()
+                _drift_note = f"[AUTO-DRIFT-ALERT] {skill} quality dropped {(baseline-recent_avg)/baseline*100:.0f}% — prioritize clarity and completeness for {skill} tasks."
+                if "[AUTO-DRIFT-ALERT]" not in _cur:
+                    set_user_instructions((_cur + "\n" + _drift_note).strip())
+            except Exception: pass
     except Exception as e:
         print(f"[DriftCheck] {e}")
 

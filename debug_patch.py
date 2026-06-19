@@ -98,11 +98,22 @@ def _calc_cost(model, in_tok, out_tok):
 
 _real_urlopen = _urlmod.urlopen
 
+_tls = _threading.local()
+
 def _debug_urlopen(req, **kwargs):
+    if getattr(_tls, "_in_call", False):
+        return _real_urlopen(req, **kwargs)
+    _tls._in_call = True
+    try:
+        return _debug_urlopen_inner(req, **kwargs)
+    finally:
+        _tls._in_call = False
+
+def _debug_urlopen_inner(req, **kwargs):
     global _req_counter
     url = req.full_url if hasattr(req, "full_url") else str(req)
     is_groq    = "groq.com" in url
-    is_searxng = "8888" in url or "searxng" in url.lower()
+    is_searxng = "8888" in url or "8889" in url or "searxng" in url.lower()
     is_mcp     = any(f":{p}" in url for p in range(3001, 3035))
     with _lock:
         _req_counter += 1
@@ -202,13 +213,37 @@ def _debug_urlopen(req, **kwargs):
         _stats["errors_by_code"][status] += 1
         if status == 413: _stats["413_count"] += 1
         if status == 429: _stats["429_count"] += 1
+        import traceback as _tb2; _log("error", f"STACK", _tb2.format_stack()[-8:])
         _log("error", f"HTTP ERR #{req_id}", _col_str(f"✗ {latency}ms", "red"), {
             "URL": url, "Error": str(err), "Body": body_str,
             "Hint": _col_str(_classify_error(status, body_str, model), "yellow"),
         })
         raise
 
-_urlmod.urlopen = _debug_urlopen
+if _urlmod.urlopen is not _debug_urlopen:
+    _urlmod.urlopen = _debug_urlopen
+
+# Trap: detect if anything re-patches urlopen after us
+import sys as _sys
+class _UrlopenGuard:
+    def __init__(self):
+        self._patched = _debug_urlopen
+    def __set_name__(self, owner, name): pass
+
+_orig_setattr = type(_urlmod).__setattr__ if hasattr(type(_urlmod), '__setattr__') else None
+
+def _watch_urlopen():
+    import time as _t
+    while True:
+        _t.sleep(1)
+        current = _urlmod.urlopen
+        if current is not _debug_urlopen:
+            import traceback as _traceback
+            print(f"[DEBUG PATCH] ⚠️  urlopen was replaced by: {current}")
+            _traceback.print_stack()
+            _urlmod.urlopen = _debug_urlopen
+
+_threading.Thread(target=_watch_urlopen, daemon=True, name="urlopen_guard").start()
 
 def install_fastapi_debug(app):
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -384,10 +419,13 @@ _MCP_PORTS = {3001:"filesystem",3002:"github",3003:"brave-search",3004:"fetch",3
 def _mcp_watcher():
     while True:
         _time.sleep(60)
-        up, down = [], []
-        for port, name in _MCP_PORTS.items():
-            try: s = _socket.create_connection(("localhost", port), timeout=1); s.close(); up.append(f"{name}:{port}")
-            except: down.append(f"{name}:{port}")
+        try:
+            from modules.services.mcp import mcp_status
+            status = mcp_status()
+            up   = [n for n,s in status.items() if s == "up"]
+            down = [n for n,s in status.items() if s == "down"]
+        except Exception as e:
+            up, down = [], [f"error:{e}"]
         _log("info", "MCP STATUS", _col_str(f"{len(up)} up", "green") + f" / {len(down)} down", {"UP": ", ".join(up) or "none", "DOWN": ", ".join(down[:8]) or "none"})
 _threading.Thread(target=_mcp_watcher, daemon=True, name="debug_mcp").start()
 

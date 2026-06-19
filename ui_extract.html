@@ -1027,7 +1027,6 @@ async function send(){
   if(!cur)newChat();
   inp.value='';inp.style.height='auto';
   addBub(msg,'user',false,true,null);
-  clearAttachments();
   busy=true;
   document.getElementById('send').disabled=true;
   inp.disabled=true;
@@ -1044,7 +1043,8 @@ async function send(){
   const imgs=(_pendingFiles||[]).filter(f=>f.type==='image');
   const docs=(_pendingFiles||[]).filter(f=>f.type==='doc');
   const payload={message:msg,history:hist};
-  if(imgs.length)payload.image_b64=imgs[0].b64;
+  if(_pendingImg) payload.image_b64=_pendingImg;
+  else if(imgs.length) payload.image_b64=imgs[0].b64;
   if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||''}));
 
   try{
@@ -1074,55 +1074,50 @@ async function send(){
       const{done,value}=await reader.read();
       if(done)break;
       const raw=decoder.decode(value,{stream:true});
+      // Parse SSE: split on "data: ...\n\n" frames
       buf+=raw;
-
-      // Extract JSON metadata from first line (only once)
-      if(!metaParsed){
-        const nl=buf.indexOf('\n');
-        if(nl!==-1){
-          const firstLine=buf.slice(0,nl).trim();
-          try{
-            const meta=JSON.parse(firstLine);
-            if(meta && meta.skill){
-              skillName=meta.skill;
-              modeName=meta.mode||'fast';
-              buf=buf.slice(nl+1);
-            }
-          }catch(e){}
+      const sseLines=buf.split('\n');
+      buf=sseLines.pop(); // keep incomplete line
+      for(const line of sseLines){
+        const t=line.trim();
+        if(!t || !t.startsWith('data:')) continue;
+        const payload=t.slice(5).trim();
+        if(payload==='[DONE]') continue;
+        let val;
+        try{ val=JSON.parse(payload); }catch(e){ val=payload; }
+        if(!metaParsed){
+          if(val && typeof val==='object' && val.skill){
+            skillName=val.skill;
+            modeName=val.mode||'fast';
+            metaParsed=true;
+            continue;
+          }
           metaParsed=true;
-          fullText=buf;
-        } else if(buf.length>200){
-          // No newline and buffer large — no metadata, treat all as text
-          metaParsed=true;
-          fullText=buf;
         }
-      } else {
-        fullText=buf;
+        if(typeof val==='string') fullText+=val;
+        else if(val && typeof val==='object' && !val.skill) fullText+=JSON.stringify(val);
       }
 
-      // Render current text
+      // Render current text — throttled via RAF
       if(aiBub && metaParsed && fullText){
-        try{
-          const ce=document.getElementById('cur');if(ce)ce.remove();
-          aiBub.innerHTML=renderMd(fullText);
-          aiBub.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b);}catch(e){}});
-          const ce2=document.createElement('span');
-          ce2.className='cursor';ce2.id='cur';
-          aiBub.appendChild(ce2);
-        }catch(e){
-          try{
-            const fenceCount=(fullText.match(/```/g)||[]).length;
-            const safe=fenceCount%2!==0?fullText+'
-```':fullText;
-            aiBub.innerHTML=renderMd(safe);
-            aiBub.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b);}catch(e){}});
-            const ce3=document.createElement('span');
-            ce3.className='cursor';ce3.id='cur';
-            aiBub.appendChild(ce3);
-          }catch(e2){ aiBub.textContent=fullText; }
+        if(!aiBub._rafPending){
+          aiBub._rafPending=true;
+          requestAnimationFrame(()=>{
+            aiBub._rafPending=false;
+            try{
+              const ce=document.getElementById('cur');if(ce)ce.remove();
+              const fenceCount=(fullText.match(/`/g)||[]).length;
+              const safe=fenceCount%2!==0?fullText+'\n```':fullText;
+              aiBub.innerHTML=renderMd(safe);
+              aiBub.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b);}catch(e){}});
+              const ce2=document.createElement('span');
+              ce2.className='cursor';ce2.id='cur';
+              aiBub.appendChild(ce2);
+            }catch(e){ aiBub.textContent=fullText; }
+            scr();
+          });
         }
       }
-      scr();
     }
 
     // Force final render after stream ends (handles single-chunk models like compound-mini)
@@ -1201,6 +1196,8 @@ async function send(){
     if(fullText && !fullText.startsWith('Error:')){
       cur.msgs.push({role:'user',text:msg},{role:'assistant',text:fullText,skill:skillName});
     }
+    clearImg();
+    clearAttachments();
     saveConv();unlock();scr();
   }
 }
