@@ -1,5 +1,5 @@
 import sys as _sys
-_sys.path.insert(0, '/home/kidus/eliteomni_app')
+_sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from knowledge_rag import get_knowledge_context as _get_knowledge_ctx, start_background_indexer as _start_rag
     _start_rag()
