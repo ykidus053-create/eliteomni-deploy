@@ -22,3 +22,4 @@ charset-normalizer
 click
 httpx
 starlette
+python-multipart
