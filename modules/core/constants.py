@@ -30,14 +30,15 @@ _searxng_lock      = Lock()
 def _probe_searxng(timeout: float = 15.0) -> bool:
     """Return True if SearXNG answers a health-check ping."""
     try:
-        import subprocess as _sp
-        r = _sp.run(
-            ["curl", "-s", "-m", "10", "-o", "/dev/null", "-w", "%{http_code}",
-             f"{SEARXNG_URL}/search?q=test&format=json&engines=google"],
-            capture_output=True, text=True, timeout=12
+        import requests as _req
+        r = _req.get(
+            f"{SEARXNG_URL}/search",
+            params={"q": "test", "format": "json", "engines": "google"},
+            timeout=10
         )
-        return r.stdout.strip() == "200"
-    except Exception:
+        return r.status_code == 200
+    except Exception as _e:
+        print(f"[SearXNG] probe exception: {type(_e).__name__}: {_e}")
         return False
 
 def _ensure_searxng() -> bool:
