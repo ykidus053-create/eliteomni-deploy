@@ -336,6 +336,36 @@ def _vision_call(msgs: list, max_tokens: int = 800, model: str = "mistral-small-
     except Exception as _e:
         return f"[vision_call error: {_e}]"
 
+def ocr_document(file_b64: str, filename: str = "document.pdf") -> str:
+    """
+    Extract text from a PDF/document using Mistral's dedicated OCR model.
+    Returns markdown-formatted extracted text, or an error string.
+    """
+    import requests as _req
+    try:
+        is_pdf = filename.lower().endswith(".pdf")
+        doc_payload = {
+            "type": "document_url",
+            "document_url": f"data:application/pdf;base64,{file_b64}"
+        } if is_pdf else {
+            "type": "image_url",
+            "image_url": f"data:image/jpeg;base64,{file_b64}"
+        }
+        resp = _req.post(
+            "https://api.mistral.ai/v1/ocr",
+            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "mistral-ocr-latest", "document": doc_payload},
+            timeout=45,
+        )
+        if resp.status_code != 200:
+            return f"[OCR error: HTTP {resp.status_code}: {resp.text[:300]}]"
+        data = resp.json()
+        pages = data.get("pages", [])
+        text = "\n\n".join(p.get("markdown", "") for p in pages)
+        return text.strip() or "[OCR returned no text]"
+    except Exception as _e:
+        return f"[OCR error: {type(_e).__name__}: {_e}]"
+
 def _img_content(image_b64: str) -> dict:
     """Build image content block — auto-detect JPEG vs PNG."""
     mime = "image/png" if image_b64.startswith("iVBOR") else "image/jpeg"

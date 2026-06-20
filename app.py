@@ -1581,7 +1581,8 @@ textarea#inp::placeholder{color:var(--text-3)}
         <div id="attach-preview-inner"></div>
         <div class="irow">
           <input type="file" id="imgfile" accept="image/*" style="display:none" onchange="handleImgFile(this)">
-          <button class="itl" onclick="document.getElementById('imgfile').click()" title="Attach image" style="padding:4px 6px;font-size:16px">📎</button>
+          <button class="itl" onclick="document.getElementById('imgfile').click()" title="Attach image" style="padding:4px 6px;font-size:16px">🖼️</button>
+          <button class="itl" onclick="document.getElementById('file-doc').click()" title="Attach document" style="padding:4px 6px;font-size:16px">📎</button>
           <div style="flex:1;position:relative">
             <textarea id="inp" placeholder="Message EliteOmni…" rows="1"></textarea>
             <div id="imgpreview" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;background:#222;border:1px solid var(--border);border-radius:8px;padding:6px;z-index:10">
@@ -1983,13 +1984,15 @@ function handleFiles(files, type){
   for(const f of files){
     const r=new FileReader();
     r.onload=(e)=>{
+      const data=e.target.result;
       const entry={name:f.name,type,data,b64:data.split(',')[1]||null,text:null};
       if(type==='doc'){
         // read as text for text-based files
         const tr=new FileReader();
         tr.onload=(ev)=>{entry.text=ev.target.result.slice(0,8000);};
         if(f.type==='application/pdf'||f.name.endsWith('.pdf')){
-          entry.text='[PDF file — will be sent as base64 for analysis]';
+          entry.text='[PDF file — extracting text via OCR]';
+          entry.b64=data.split(',')[1];
         } else {
           tr.readAsText(f);
         }
@@ -2003,7 +2006,7 @@ function handleFiles(files, type){
 }
 
 function renderAttachPreview(){
-  const bar=document.getElementById('attach-bar')||document.getElementById('att-bar')||document.querySelector('.att-bar');
+  const bar=document.getElementById('attach-preview-inner');
   if(!bar)return;
   if(!_pendingFiles.length){bar.style.display='none';return;}
   bar.style.display='flex';bar.innerHTML='';
@@ -2215,7 +2218,7 @@ async function send(){
   const docs=(_pendingFiles||[]).filter(f=>f.type==='doc');
   const payload={message:msg,history:hist};
   if(imgs.length)payload.image_b64=imgs[0].b64;
-  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||''}));
+  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.name.toLowerCase().endsWith('.pdf')?f.b64:null}));
 
   try{
     const resp=await fetch('/stream',{
@@ -2638,8 +2641,15 @@ async def stream_chat(req: Request):
         for f in file_texts[:5]:
             name = f.get("name", "file")
             text = f.get("text", "").strip()
+            pdf_b64 = f.get("b64")
+            if pdf_b64 and name.lower().endswith(".pdf"):
+                try:
+                    from modules.core.http_client import ocr_document
+                    text = ocr_document(pdf_b64, name)
+                except Exception as _oe:
+                    text = f"[OCR failed: {_oe}]"
             if text:
-                file_ctx += f"\n\n[Attached file: {name}]\n{text[:3000]}"
+                file_ctx += f"\n\n[Attached file: {name}]\n{text[:6000]}"
         if file_ctx:
             msg = (msg + file_ctx) if msg else file_ctx.strip()
 
