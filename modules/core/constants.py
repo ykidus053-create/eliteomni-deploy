@@ -33,7 +33,7 @@ def _probe_searxng(timeout: float = 15.0) -> bool:
         import subprocess as _sp
         r = _sp.run(
             ["curl", "-s", "-m", "10", "-o", "/dev/null", "-w", "%{http_code}",
-             f"{SEARXNG_URL}/search?q=test&format=json&engines=duckduckgo"],
+             f"{SEARXNG_URL}/search?q=test&format=json&engines=google"],
             capture_output=True, text=True, timeout=12
         )
         return r.stdout.strip() == "200"
