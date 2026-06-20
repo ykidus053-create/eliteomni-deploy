@@ -410,7 +410,7 @@ def _searxng_watcher():
     while True:
         _time.sleep(30)
         try:
-            r = _real_urlopen("http://localhost:8888/healthz", timeout=3)
+            r = _real_urlopen(_os.environ.get("SEARXNG_URL", "http://localhost:8888") + "/healthz", timeout=3)
             _log("info", "SEARXNG HEALTH", _col_str(f"✓ status={r.status}", "green"))
         except Exception as e: _log("warning", "SEARXNG HEALTH", _col_str(f"✗ {e}", "yellow"))
 _threading.Thread(target=_searxng_watcher, daemon=True, name="debug_searxng").start()
