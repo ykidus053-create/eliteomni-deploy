@@ -2207,6 +2207,7 @@ async function send(){
   const msg=inp.value.trim();if(!msg)return;
   if(!cur)newChat();
   inp.value='';inp.style.height='auto';
+  const _filesToSend=[..._pendingFiles];
   addBub(msg,'user',false,true,null);
   clearAttachments();
   busy=true;
@@ -2222,8 +2223,8 @@ async function send(){
   _abortCtrl=new AbortController();
 
   // Build payload
-  const imgs=(_pendingFiles||[]).filter(f=>f.type==='image');
-  const docs=(_pendingFiles||[]).filter(f=>f.type==='doc');
+  const imgs=(_filesToSend||[]).filter(f=>f.type==='image');
+  const docs=(_filesToSend||[]).filter(f=>f.type==='doc');
   const payload={message:msg,history:hist};
   if(imgs.length)payload.image_b64=imgs[0].b64;
   if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.name.toLowerCase().endsWith('.pdf')?f.b64:null}));
