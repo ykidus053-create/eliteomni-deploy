@@ -155,7 +155,7 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         "stream":     True,
     }
     if mdl.startswith("mistral-medium") or mdl.startswith("mistral-large"):
-        payload["reasoning_effort"] = "high" if (skill and skill.lower() in CODING_SKILLS) else "medium"
+        payload["reasoning_effort"] = "high" if (skill and skill.lower() in CODING_SKILLS) else "none"
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
