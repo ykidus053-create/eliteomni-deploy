@@ -2674,11 +2674,13 @@ async def stream_chat(req: Request):
 
     # ── Inject uploaded documents into message context ─────────────────────
     if file_texts:
+        print("[DEBUG file_texts] count=" + str(len(file_texts)))
         file_ctx = ""
         for f in file_texts[:5]:
             name = f.get("name", "file")
             text = f.get("text", "").strip()
             file_b64 = f.get("b64")
+            print("[DEBUG file] name=" + str(name) + " text_len=" + str(len(text)) + " text_start=" + repr(text[:50]) + " has_b64=" + str(bool(file_b64)))
             if file_b64 and (name.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")) or text.startswith("[Binary")):
                 try:
                     from modules.core.http_client import ocr_document
