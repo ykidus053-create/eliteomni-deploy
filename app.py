@@ -2685,8 +2685,10 @@ async def stream_chat(req: Request):
                 try:
                     from modules.core.http_client import ocr_document
                     text = ocr_document(file_b64, name)
+                    print("[DEBUG OCR result] len=" + str(len(text)) + " start=" + repr(text[:200]))
                 except Exception as _oe:
                     text = f"[OCR failed: {_oe}]"
+                    print("[DEBUG OCR exception] " + str(_oe))
             if text:
                 file_ctx += f"\n\n[Attached file: {name}]\n{text[:6000]}"
         if file_ctx:
