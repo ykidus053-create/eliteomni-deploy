@@ -1121,30 +1121,30 @@ def pipeline_stream(msg: str, history: list):
         except Exception:
             pass
 
-    # ── Build prompt — PARALLEL I/O ─────────────────────────────────────────
+    # ── Build prompt — FULLY PARALLEL I/O ───────────────────────────────────
     from concurrent.futures import ThreadPoolExecutor
-    clean_msg, search_ctx = extract_search_context(msg)
     history = clean_history(history or [])
     if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
 
-    with ThreadPoolExecutor(max_workers=4) as _ex:
+    with ThreadPoolExecutor(max_workers=7) as _ex:
+        _f_search  = _ex.submit(lambda: extract_search_context(msg))
         _f_hist    = _ex.submit(lambda: compress_history(_strip_thinking_from_history(history)))
         _f_mem     = _ex.submit(lambda: mem_get(msg, k=3))
         _f_episodic= _ex.submit(lambda: mem_get_episodic(msg))
         _f_rlhf    = _ex.submit(lambda: get_rlhf_note(skill))
+        _f_memctx  = _ex.submit(lambda: build_memory_context(msg))
 
+    clean_msg, search_ctx = _f_search.result()
     recent, ctx_sum = _f_hist.result()
     _mem_working    = _f_mem.result()
     _mem_episodic   = _f_episodic.result()
     rlhf_note       = _f_rlhf.result()
-    _mem_ctx        = build_memory_context(msg)
+    _mem_ctx        = _f_memctx.result()
     system          = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
     if _mem_ctx: system += _mem_ctx
     system          = trim_system_prompt(system, complexity)
-    hist_msgs       = trim_history_for_ttft(
-                         [{"role": h.get("role","user"), "content": str(h.get("content",""))[:800]} for h in (recent or [])[-8:]],
-                         complexity)
+    hist_msgs       = [{"role": h.get("role","user"), "content": str(h.get("content",""))} for h in (recent or [])]
 
 
     # ── Full agentic path — stream from generate ──────────────────────────────
