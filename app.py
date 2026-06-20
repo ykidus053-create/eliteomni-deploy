@@ -37,7 +37,7 @@ FORCE_TOOL_PATTERNS = {
 }
 
 from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -95,6 +95,36 @@ from modules.services.agents import *
 from modules.services.mcp import *
 from modules.reliability import clean_history, build_memory_context, safe_tool_call, call_llm
 from modules.ttft import trim_system_prompt, cap_max_tokens, trim_history_for_ttft, TTFTTracker
+import uuid as _uuid_mod
+_EDIT_FILES_DIR = "/tmp/eliteomni_edits"
+import os as _os_edit
+_os_edit.makedirs(_EDIT_FILES_DIR, exist_ok=True)
+
+@app.get("/download/{file_id}")
+async def download_edited_file(file_id: str):
+    import json as _json_dl
+    registry_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + ".meta.json")
+    if not _os_edit.path.exists(registry_path):
+        return JSONResponse({"error": "File not found or expired"}, status_code=404)
+    with open(registry_path, "r") as _mf:
+        meta = _json_dl.load(_mf)
+    file_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + "_" + meta["filename"])
+    if not _os_edit.path.exists(file_path):
+        return JSONResponse({"error": "File content not found"}, status_code=404)
+    return FileResponse(file_path, filename=meta["filename"], media_type="application/octet-stream")
+
+def _save_edited_file(filename, content):
+    import json as _json_sv
+    file_id = str(_uuid_mod.uuid4())
+    safe_name = _os_edit.path.basename(filename) or "edited_file.txt"
+    file_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + "_" + safe_name)
+    with open(file_path, "w", encoding="utf-8") as _f:
+        _f.write(content)
+    meta_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + ".meta.json")
+    with open(meta_path, "w") as _mf:
+        _json_sv.dump({"filename": safe_name}, _mf)
+    return file_id
+
 @app.get("/mcp/servers")
 async def mcp_list_servers():
     """List registered MCP servers and their discovered tools."""
@@ -2877,6 +2907,30 @@ async def stream_chat(req: Request):
             _stream_post_process(msg, final, ctx["skill"],
                                  ctx["complexity"], ctx["effort"],
                                  ctx.get("system",""))
+            # ── File editing: detect <file_edit> blocks, apply, save for download ──
+            try:
+                import re as _re_fe
+                _edit_blocks = _re_fe.findall(
+                    r'<file_edit filename="([^"]+)">\s*<old_str>\s*(.*?)\s*</old_str>\s*<new_str>\s*(.*?)\s*</new_str>\s*</file_edit>',
+                    final, _re_fe.DOTALL
+                )
+                if _edit_blocks:
+                    _orig_by_name = {f.get("name",""): f.get("text","") for f in file_texts}
+                    _edited_by_file = {}
+                    for _fname, _old, _new in _edit_blocks:
+                        _base = _orig_by_name.get(_fname, _edited_by_file.get(_fname, ""))
+                        if _old in _base:
+                            _edited_by_file[_fname] = _base.replace(_old, _new, 1)
+                        else:
+                            print(f"[FileEdit] old_str not found verbatim in {_fname}, skipping that block")
+                    _links = []
+                    for _fname, _new_content in _edited_by_file.items():
+                        _fid = _save_edited_file(_fname, _new_content)
+                        _links.append(f"\n\n📄 **Edited file ready:** [Download {_fname}](/download/{_fid})")
+                    if _links:
+                        yield "".join(_links)
+            except Exception as _fe_err:
+                print(f"[FileEdit] error: {_fe_err}")
 
     return StreamingResponse(_gen(), media_type="text/plain",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache",

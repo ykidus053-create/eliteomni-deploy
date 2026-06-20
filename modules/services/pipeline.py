@@ -558,6 +558,22 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         parts.append(f"RELEVANT KNOWLEDGE:\n{_know_ctx}")
     if _code_rag_ctx:
         parts.append(f"CODE REFERENCE PATTERNS:\n{_code_rag_ctx}")
+    parts.append(
+        "## FILE EDITING\n"
+        "When the user asks you to edit, fix, or modify an uploaded file, you MUST respond with one or more edit blocks in this EXACT format:\n\n"
+        "<file_edit filename=\"exact_original_filename.ext\">\n"
+        "<old_str>\n"
+        "exact text to find, copied verbatim from the original file\n"
+        "</old_str>\n"
+        "<new_str>\n"
+        "replacement text\n"
+        "</new_str>\n"
+        "</file_edit>\n\n"
+        "Rules: old_str must match the original file content EXACTLY including whitespace and must be unique in the file. "
+        "Use multiple file_edit blocks for multiple separate changes. "
+        "For a full rewrite, use old_str containing the ENTIRE original file content. "
+        "Always briefly explain the change in plain text before the edit block(s)."
+    )
 
     parts.append(UNCERTAINTY_PROMPT.strip())
     try:
