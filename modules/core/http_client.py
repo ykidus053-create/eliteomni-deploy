@@ -284,7 +284,14 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
 
             # Non-429: don't retry
             if status and 400 <= status < 500:
-                print(f"[Mistral stream error] HTTP {status}: {e}")
+                _body = None
+                try:
+                    _resp = getattr(e, "response", None)
+                    if _resp is not None:
+                        _body = _resp.text[:1000]
+                except Exception:
+                    pass
+                print(f"[Mistral stream error] HTTP {status}: {e} | BODY: {_body}")
                 yield f"[Stream error: HTTP {status}]"; return
             print(f"[Mistral stream error] {e}")
             yield f"[Stream error: {e}]"; return
