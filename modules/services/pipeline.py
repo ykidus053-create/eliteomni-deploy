@@ -560,7 +560,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         parts.append(f"CODE REFERENCE PATTERNS:\n{_code_rag_ctx}")
     parts.append(
         "## FILE EDITING\n"
-        "When the user asks you to edit, fix, or modify an uploaded file, you MUST respond with one or more edit blocks in this EXACT format:\n\n"
+        "When the user asks you to make small, precise changes to an uploaded file, use one or more edit blocks:\n\n"
         "<file_edit filename=\"exact_original_filename.ext\">\n"
         "<old_str>\n"
         "exact text to find, copied verbatim from the original file\n"
@@ -569,10 +569,12 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         "replacement text\n"
         "</new_str>\n"
         "</file_edit>\n\n"
-        "Rules: old_str must match the original file content EXACTLY including whitespace and must be unique in the file. "
-        "Use multiple file_edit blocks for multiple separate changes. "
-        "For a full rewrite, use old_str containing the ENTIRE original file content. "
-        "Always briefly explain the change in plain text before the edit block(s)."
+        "Rules for file_edit: old_str must match the original file content EXACTLY including whitespace and must be unique in the file. Use multiple file_edit blocks for multiple separate small changes.\n\n"
+        "When the user asks for broad changes, a full rewrite, or to 'improve' a large document overall, instead use a SINGLE file_rewrite block containing the COMPLETE new file content:\n\n"
+        "<file_rewrite filename=\"exact_original_filename.ext\">\n"
+        "the complete new file content goes here, replacing the entire original file\n"
+        "</file_rewrite>\n\n"
+        "Always briefly explain the change in plain text before the edit/rewrite block(s)."
     )
 
     parts.append(UNCERTAINTY_PROMPT.strip())

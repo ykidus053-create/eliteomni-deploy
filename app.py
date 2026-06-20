@@ -2933,6 +2933,18 @@ async def stream_chat(req: Request):
                         _links.append(f"\n\n📄 **Edited file ready:** [Download {_fname}](/download/{_fid})")
                     if _links:
                         yield "".join(_links)
+
+                _rewrite_blocks = _re_fe.findall(
+                    r'<file_rewrite filename="([^"]+)">\s*(.*?)\s*</file_rewrite>',
+                    final, _re_fe.DOTALL
+                )
+                if _rewrite_blocks:
+                    _rw_links = []
+                    for _rfname, _rcontent in _rewrite_blocks:
+                        _rfid = _save_edited_file(_rfname, _rcontent)
+                        _rw_links.append("\n\n📄 **Rewritten file ready:** [Download " + _rfname + "](/download/" + _rfid + ")")
+                    if _rw_links:
+                        yield "".join(_rw_links)
             except Exception as _fe_err:
                 print(f"[FileEdit] error: {_fe_err}")
 
