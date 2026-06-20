@@ -1,8 +1,7 @@
 {
   "$schema": "https://schema.railway.app/railway.schema.json",
   "build": {
-    "builder": "RAILPACK",
-    "buildCommand": "python -m venv /app/.venv && /app/.venv/bin/pip install --upgrade pip && /app/.venv/bin/pip install -r requirements.txt"
+    "builder": "RAILPACK"
   },
   "deploy": {
     "startCommand": "/app/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port $PORT"
