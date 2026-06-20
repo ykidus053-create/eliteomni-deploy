@@ -1,0 +1,38 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - bing
+      - wikipedia
+      - hackernews
+      - reddit
+
+server:
+  port: 8080
+  bind_address: '0.0.0.0'
+  secret_key: 'ultrasecretkeyforomni'
+  limiter: false
+  image_proxy: true
+
+search:
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    use_mobile_ui: false
+  - name: bing
+    engine: bing
+    shortcut: bi
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+  - name: hackernews
+    engine: hnews
+    shortcut: hn
+  - name: reddit
+    engine: reddit
+    shortcut: re
