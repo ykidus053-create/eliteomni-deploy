@@ -26,3 +26,4 @@ eliteomni_app/.env
 .venv/
 venv/
 venv/
+searxng_docker_local/
