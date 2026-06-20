@@ -59,11 +59,11 @@ def _audit(event: str, data: dict):
         pass
 
 # ── MESSAGE TRIMMER ───────────────────────────────────────────────────────────
-def _trim_msgs(msgs: list, max_chars: int = 6000) -> list:
+def _trim_msgs(msgs: list, max_chars: int = 180000) -> list:
     system      = [m for m in msgs if m.get("role") == "system"]
     others      = [m for m in msgs if m.get("role") != "system"]
-    sys_trimmed = [{**m, "content": m.get("content","")[:4000]} for m in system]
-    oth_trimmed = [{**m, "content": m.get("content","")[:2000]} for m in others]
+    sys_trimmed = [{**m, "content": m.get("content","")[:40000]} for m in system]
+    oth_trimmed = [{**m, "content": m.get("content","")[:30000]} for m in others]
     budget = max_chars - sum(len(m.get("content","")) for m in sys_trimmed)
     kept = []
     for m in reversed(oth_trimmed):
@@ -135,7 +135,7 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         yield "[MISTRAL_API_KEY not set]"; return
 
     mdl      = get_model_for_skill(skill, model)
-    trimmed  = _trim_msgs(msgs, max_chars=6000)
+    trimmed  = _trim_msgs(msgs, max_chars=180000)
 
     # Route to correct endpoint based on model name
     if mdl.startswith("mistral-") or mdl.startswith("codestral-") or mdl.startswith("devstral-") or mdl.startswith("magistral-"):
@@ -154,6 +154,8 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         "temperature": 0.1 if (skill and skill.lower() in CODING_SKILLS) else 0.3,
         "stream":     True,
     }
+    if mdl.startswith("mistral-medium") or mdl.startswith("mistral-large"):
+        payload["reasoning_effort"] = "high" if (skill and skill.lower() in CODING_SKILLS) else "medium"
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"

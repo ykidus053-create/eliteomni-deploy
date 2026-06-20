@@ -936,8 +936,28 @@ def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int, complexity
     from modules.reliability import route_model_v3
     _, model = route_model_v3(skill, complexity)
 
-    # ── Voting: self-consistency for hard/research tasks ─────────────────────
     last_user_msg = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), "")
+
+    # ── Deep Think: 4-stage math pipeline for hard math/reasoning tasks ──────
+    _MATH_TRIGGERS = ("calculate", "solve", "prove", "equation", "integral", "derivative",
+                       "how many", "find the value", "compute", "what is the sum",
+                       "probability", "geometry", "algebra")
+    if complexity == "hard" and (skill == "calculator" or
+            any(t in last_user_msg.lower() for t in _MATH_TRIGGERS)):
+        try:
+            from modules.deep_think_math import deep_think_math
+            def _dt_gen_fn(p):
+                return "".join(mistral_stream(
+                    [{"role": "user", "content": p}], max_tokens=max_new, model=model))
+            print(f"[DeepThink] routing hard math query, skill={skill}")
+            dt_result = deep_think_math(last_user_msg, _dt_gen_fn, complexity=complexity)
+            if dt_result:
+                yield dt_result
+                return
+        except Exception as _e:
+            print(f"[DeepThink] failed, falling back: {_e}")
+
+    # ── Voting: self-consistency for hard/research tasks ─────────────────────
     if should_use_voting(last_user_msg, skill, complexity) and self_consistent_answer:
         print(f"[VotingEngine] activating for skill={skill} complexity={complexity}")
         def _gen_fn(m):
