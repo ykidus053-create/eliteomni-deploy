@@ -1464,6 +1464,39 @@ textarea#inp::placeholder{color:var(--text-3)}
   .wtitle{font-size:22px}
 }
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* MOBILE RESPONSIVE */
+@media (max-width: 768px) {
+  body{font-size:14px}
+  #sb{position:fixed;top:0;left:0;height:100dvh;z-index:400;box-shadow:2px 0 20px rgba(0,0,0,.4)}
+  #sb.off{width:0;box-shadow:none}
+  #sb:not(.off){width:80vw;max-width:280px}
+  #topbar{height:48px;padding:0 12px}
+  #welcome{padding:24px 16px}
+  .wtitle{font-size:20px;margin-bottom:20px}
+  .wgrid{grid-template-columns:1fr;max-width:100%}
+  .wcard{padding:12px 14px;font-size:13px}
+  .mrow{padding-left:14px;padding-right:14px;padding-top:10px;padding-bottom:10px}
+  .bub{font-size:14.5px}
+  .bub.ub{max-width:92%;padding:10px 14px}
+  #foot{padding:8px 10px 14px}
+  textarea#inp{font-size:16px}
+  #send,#stop{width:36px;height:36px}
+  .ibot{flex-wrap:wrap}
+  .itl{font-size:11px;padding:4px 7px}
+  .ab pre code{font-size:12px;padding:10px}
+  .ab table{font-size:12.5px}
+  .ab th,.ab td{padding:6px 8px}
+  #mem-box,#sysprompt-box,#fb-box{width:94vw;padding:16px}
+  #badge{bottom:78px;right:10px;font-size:10px}
+}
+
+@media (max-width: 480px) {
+  .wtitle{font-size:18px}
+  .model-tag{display:none}
+  .hint{display:none}
+}
+
 </style>
 </head>
 <body>
