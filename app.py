@@ -1572,7 +1572,7 @@ textarea#inp::placeholder{color:var(--text-3)}
   <div id="msgs" style="display:none"></div>
 
   <input type="file" id="file-img" accept="image/*" multiple style="display:none" onchange="handleFiles(this.files,'image')">
-  <input type="file" id="file-doc" accept=".pdf,.txt,.md,.py,.js,.csv,.docx,.json,.html,.css" multiple style="display:none" onchange="handleFiles(this.files,'doc')">
+  <input type="file" id="file-doc" multiple style="display:none" onchange="handleFiles(this.files,'doc')">
   <div id="attach-preview"></div>
 
   <div id="foot">
@@ -1980,8 +1980,16 @@ function showStop(){document.getElementById('send').style.display='none';documen
 let _pendingImg=null;
 let _pendingFiles=[];
 
+const _SUPPORTED_DOC_EXT=['.pdf','.txt','.md','.py','.js','.csv','.docx','.json','.html','.css'];
 function handleFiles(files, type){
   for(const f of files){
+    if(type==='doc'){
+      const ext='.'+f.name.split('.').pop().toLowerCase();
+      if(!_SUPPORTED_DOC_EXT.includes(ext)){
+        alert(f.name+' is not a supported file type. Supported: '+_SUPPORTED_DOC_EXT.join(', '));
+        continue;
+      }
+    }
     const r=new FileReader();
     r.onload=(e)=>{
       const data=e.target.result;
