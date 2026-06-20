@@ -1980,16 +1980,8 @@ function showStop(){document.getElementById('send').style.display='none';documen
 let _pendingImg=null;
 let _pendingFiles=[];
 
-const _SUPPORTED_DOC_EXT=['.pdf','.txt','.md','.py','.js','.csv','.docx','.json','.html','.css'];
 function handleFiles(files, type){
   for(const f of files){
-    if(type==='doc'){
-      const ext='.'+f.name.split('.').pop().toLowerCase();
-      if(!_SUPPORTED_DOC_EXT.includes(ext)){
-        alert(f.name+' is not a supported file type. Supported: '+_SUPPORTED_DOC_EXT.join(', '));
-        continue;
-      }
-    }
     const r=new FileReader();
     r.onload=(e)=>{
       const data=e.target.result;
@@ -1998,11 +1990,16 @@ function handleFiles(files, type){
         // read as text for text-based files
         const tr=new FileReader();
         tr.onload=(ev)=>{entry.text=ev.target.result.slice(0,8000);};
+        const _textExts=['.txt','.md','.py','.js','.csv','.json','.html','.css','.ts','.jsx','.tsx','.yaml','.yml','.xml','.log','.sh','.c','.cpp','.java','.go','.rs','.rb','.php'];
+        const _ext='.'+f.name.split('.').pop().toLowerCase();
         if(f.type==='application/pdf'||f.name.endsWith('.pdf')){
           entry.text='[PDF file — extracting text via OCR]';
           entry.b64=data.split(',')[1];
-        } else {
+        } else if(_textExts.includes(_ext)||f.type.startsWith('text/')){
           tr.readAsText(f);
+        } else {
+          entry.text='[Binary/unsupported file — attempting OCR/extraction]';
+          entry.b64=data.split(',')[1];
         }
       }
       if(type==='image'){entry.b64=data.split(',')[1];}
@@ -2227,7 +2224,7 @@ async function send(){
   const docs=(_filesToSend||[]).filter(f=>f.type==='doc');
   const payload={message:msg,history:hist};
   if(imgs.length)payload.image_b64=imgs[0].b64;
-  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.name.toLowerCase().endsWith('.pdf')?f.b64:null}));
+  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.b64||null}));
 
   try{
     const resp=await fetch('/stream',{
@@ -2642,6 +2639,7 @@ async def stream_chat(req: Request):
     hist         = data.get("history", [])
     image_b64    = data.get("image_b64", "")
     image_prompt = data.get("image_prompt", msg or "Describe this image in detail.")
+    print(f"[DEBUG image_b64] received={bool(image_b64)}, length={len(image_b64) if image_b64 else 0}")
     file_texts   = data.get("file_texts", [])  # [{name, text}, ...]
 
     # ── Inject uploaded documents into message context ─────────────────────
@@ -2650,11 +2648,11 @@ async def stream_chat(req: Request):
         for f in file_texts[:5]:
             name = f.get("name", "file")
             text = f.get("text", "").strip()
-            pdf_b64 = f.get("b64")
-            if pdf_b64 and name.lower().endswith(".pdf"):
+            file_b64 = f.get("b64")
+            if file_b64 and (name.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")) or text.startswith("[Binary")):
                 try:
                     from modules.core.http_client import ocr_document
-                    text = ocr_document(pdf_b64, name)
+                    text = ocr_document(file_b64, name)
                 except Exception as _oe:
                     text = f"[OCR failed: {_oe}]"
             if text:
