@@ -678,8 +678,8 @@ def compress_history(history: list, complexity: str = "medium"):
     if not history:
         return [], None
 
-    _budget_map = {"easy": 800, "medium": 2000, "hard": 6000}
-    _window_map  = {"easy": 4, "medium": 10, "hard": 20}
+    _budget_map = {"easy": 40000, "medium": 100000, "hard": 180000}
+    _window_map  = {"easy": 60, "medium": 150, "hard": 400}
     token_budget = _budget_map.get(complexity, 2000)
     ctx_window   = _window_map.get(complexity, 10)
 

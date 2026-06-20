@@ -850,11 +850,11 @@ def build_chatml(system: str, history: list, user_msg: str,
     try:
         from context_budget import allocate_budget
         _budget = allocate_budget(complexity)
-        _hist_turns = {"easy": 4, "medium": 8, "hard": 14}.get(complexity, 8)
-        _char_cap = _budget.get("history", 800)
+        _hist_turns = {"easy": 60, "medium": 150, "hard": 400}.get(complexity, 150)
+        _char_cap = {"easy": 8000, "medium": 20000, "hard": 60000}.get(complexity, 20000)
     except Exception:
-        _hist_turns = {"easy": 4, "medium": 8, "hard": 14}.get(complexity, 8)
-        _char_cap   = {"easy": 300, "medium": 800, "hard": 2000}.get(complexity, 800)
+        _hist_turns = {"easy": 60, "medium": 150, "hard": 400}.get(complexity, 150)
+        _char_cap   = {"easy": 8000, "medium": 20000, "hard": 60000}.get(complexity, 20000)
 
     # ALL PROMPTS AS USER TURNS — every system prompt injected for maximum compliance
     msgs = []

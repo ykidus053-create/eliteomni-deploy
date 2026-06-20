@@ -398,7 +398,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             pass
 
     # Auto-compact history if too large (mirrors Claude Code compaction)
-    if _count_tokens(history) > 1500:
+    if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
     recent, ctx_sum = compress_history(_strip_thinking_from_history(history))
     # Feature 15: hierarchical memory — query each store separately then merge
@@ -1095,7 +1095,7 @@ def pipeline_stream(msg: str, history: list):
     from concurrent.futures import ThreadPoolExecutor
     clean_msg, search_ctx = extract_search_context(msg)
     history = clean_history(history or [])
-    if _count_tokens(history) > 1500:
+    if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
 
     with ThreadPoolExecutor(max_workers=4) as _ex:

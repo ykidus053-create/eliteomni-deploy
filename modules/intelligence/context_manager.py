@@ -100,7 +100,7 @@ def filter_memories(memories: List[str], query: str, char_budget=400) -> str:
         return ""
     return "[RELEVANT MEMORY]\n" + "\n".join(f"- {m}" for m in out[:6])
 
-def compress_history(history: List[Dict], keep_recent=6) -> List[Dict]:
+def compress_history(history: List[Dict], keep_recent=150) -> List[Dict]:
     if len(history) <= keep_recent:
         return history
     system = [m for m in history if m.get("role") == "system"]

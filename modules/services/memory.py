@@ -601,7 +601,7 @@ def surprise_get_budget_boost(skill: str, complexity: str) -> int:
 # ── HEBBIAN HIT COUNTS ──────────────────────────────────────────────────────
 import sqlite3 as _sq2, time as _t2
 
-def compress_history(history: list, max_tokens: int = 3000) -> list:
+def compress_history(history: list, max_tokens: int = 100000) -> list:
     """
     Summarize middle turns when history exceeds token budget.
     Keeps system prompt + last 4 turns intact; summarizes the rest.
