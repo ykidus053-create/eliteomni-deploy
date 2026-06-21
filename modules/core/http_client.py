@@ -93,7 +93,7 @@ try:
     _session.mount("https://", adapter)
     _session.mount("http://", adapter)
     _session.headers.update({
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Connection": "keep-alive",
         "Accept": "text/event-stream",
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -322,17 +322,24 @@ def _vision_call(msgs: list, max_tokens: int = 800, model: str = "mistral-small-
     """Raw vision API call — mistral-medium-latest."""
     import requests as _req
     try:
+        # Override session's default Accept: text/event-stream header — this
+        # is a non-streaming call and must receive a single JSON response,
+        # not SSE chunks.
         _r = _session.post(
             "https://api.mistral.ai/v1/chat/completions",
             json={"model": model, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.3},
+            headers={"Accept": "application/json"},
             timeout=30,
         ) if _USE_SESSION else None
         if _r and _r.status_code == 200:
             return _r.json()["choices"][0]["message"]["content"].strip()
         _r2 = _req.post("https://api.mistral.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json",
+                     "Accept": "application/json"},
             json={"model": model, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.3},
             timeout=30)
+        if _r2.status_code != 200:
+            return f"[vision_call error: HTTP {_r2.status_code}: {_r2.text[:300]}]"
         return _r2.json()["choices"][0]["message"]["content"].strip()
     except Exception as _e:
         return f"[vision_call error: {_e}]"
