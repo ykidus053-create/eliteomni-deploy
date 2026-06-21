@@ -427,11 +427,59 @@ def _bm25_scores(query, chunks):
     return scores
 
 
+async def _rerank(query: str, candidates: list[str], top_k: int) -> list[str]:
+    """LLM-based listwise reranking: shows the model the query + numbered
+    candidates, asks it to return the best top_k indices in order. This is
+    the single highest-leverage retrieval-quality improvement available —
+    BM25/vector scores are proxies for relevance, this reads query and
+    chunk together the way the final answer-generation step will.
+
+    Falls back to returning candidates unchanged (original order) on any
+    failure — reranking is a quality enhancement, never load-bearing.
+    Costs one extra LLM call per retrieve() when enabled."""
+    if len(candidates) <= 1:
+        return candidates[:top_k]
+    try:
+        from modules.core.http_client import mistral_generate
+        numbered = "\n".join(f"[{i}] {c[:500]}" for i, c in enumerate(candidates))
+        prompt = (
+            f"Question: {query}\n\n"
+            f"Candidate passages:\n{numbered}\n\n"
+            f"Return the indices of the {min(top_k, len(candidates))} most relevant "
+            f"passages, most relevant first, as a JSON array of integers only. "
+            f"Example: [3, 0, 7]"
+        )
+        raw = mistral_generate([{"role": "user", "content": prompt}], max_tokens=100)
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        indices = json.loads(raw.strip())
+        if not isinstance(indices, list) or not indices:
+            raise ValueError("rerank did not return a usable index list")
+        result = []
+        seen = set()
+        for i in indices:
+            if isinstance(i, int) and 0 <= i < len(candidates) and i not in seen:
+                result.append(candidates[i])
+                seen.add(i)
+        if not result:
+            raise ValueError("no valid indices in rerank response")
+        return result[:top_k]
+    except Exception as e:
+        logger.warning(f"rerank failed ({e}), falling back to original order")
+        return candidates[:top_k]
+
+
 async def retrieve(query: str, top_k: Optional[int] = None, fetch_k: Optional[int] = None,
-                    use_parents: bool = True, history=None) -> list[str]:
+                    use_parents: bool = True, history=None, rerank: bool = False) -> list[str]:
     await init_db()
     top_k = top_k or config.default_top_k
     fetch_k = fetch_k or config.default_fetch_k
+    # when reranking, fetch more candidates than top_k so the reranker has
+    # real choices to work with, not just the top_k already-blended results
+    blend_k = max(top_k * 3, fetch_k) if rerank else top_k
 
     async with _timed("retrieve", query_len=len(query)) as _:
         q_vec = (await embed([query]))[0]
@@ -469,7 +517,15 @@ async def retrieve(query: str, top_k: Optional[int] = None, fetch_k: Optional[in
                              chunk, doc_id, parent_idx))
 
         blended.sort(key=lambda x: x[0], reverse=True)
-        top = blended[:top_k]
+        top = blended[:blend_k]
+
+        if rerank:
+            candidate_texts = [c for _, c, _, _ in top]
+            reranked_texts = await _rerank(query, candidate_texts, top_k)
+            text_to_row = {c: (s, c, d, p) for s, c, d, p in top}
+            top = [text_to_row[t] for t in reranked_texts if t in text_to_row]
+        else:
+            top = top[:top_k]
 
         if not use_parents:
             return [c for _, c, _, _ in top]
@@ -535,9 +591,11 @@ async def multi_query_retrieve(query: str, top_k: Optional[int] = None, history=
 # ── CONTEXT INJECTION ────────────────────────────────────────────────────────
 
 async def inject_rag(msgs: list[dict], query: str, top_k: Optional[int] = None,
-                      history=None, use_multi_query: bool = False) -> list[dict]:
-    fn = multi_query_retrieve if use_multi_query else retrieve
-    chunks = await fn(query, top_k=top_k, history=history)
+                      history=None, use_multi_query: bool = False, rerank: bool = False) -> list[dict]:
+    if use_multi_query:
+        chunks = await multi_query_retrieve(query, top_k=top_k, history=history)
+    else:
+        chunks = await retrieve(query, top_k=top_k, history=history, rerank=rerank)
     if not chunks:
         return msgs
 
@@ -561,10 +619,11 @@ async def inject_rag(msgs: list[dict], query: str, top_k: Optional[int] = None,
 
 async def rag_ask(query: str, msgs: Optional[list[dict]] = None, skill: str = "general",
                    max_tokens: int = 2000, top_k: Optional[int] = None,
-                   use_multi_query: bool = False) -> str:
+                   use_multi_query: bool = False, rerank: bool = False) -> str:
     from modules.guardrails import gateway
     base = (msgs or []) + [{"role": "user", "content": query}]
-    rag_msgs = await inject_rag(base, query, top_k=top_k, history=msgs, use_multi_query=use_multi_query)
+    rag_msgs = await inject_rag(base, query, top_k=top_k, history=msgs,
+                                 use_multi_query=use_multi_query, rerank=rerank)
     result = gateway(rag_msgs, skill=skill, max_tokens=max_tokens)
     return result["response"] if not asyncio.iscoroutine(result) else (await result)["response"]
 

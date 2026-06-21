@@ -203,6 +203,43 @@ async def test_inject_rag_no_hits_returns_original_messages(rag_module):
     assert result == msgs
 
 
+# ── RERANKING ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_rerank_falls_back_gracefully_without_llm(rag_module):
+    """No modules.core.http_client available in test env -> must not crash,
+    must still return usable results in original order."""
+    rag = rag_module
+    await rag.ingest("rerank fallback test content about oceans and tides. " * 50, source="unit_test")
+    results = await rag.retrieve("oceans and tides", top_k=2, rerank=True)
+    assert len(results) > 0
+    assert len(results) <= 2
+
+
+@pytest.mark.asyncio
+async def test_retrieve_rerank_false_matches_default_behavior(rag_module):
+    """rerank defaults to False and must not change existing behavior."""
+    rag = rag_module
+    await rag.ingest("default behavior regression check content. " * 50, source="unit_test")
+    results_default = await rag.retrieve("default behavior check", top_k=3)
+    results_explicit_false = await rag.retrieve("default behavior check", top_k=3, rerank=False)
+    assert results_default == results_explicit_false
+
+
+@pytest.mark.asyncio
+async def test_rerank_single_candidate_returns_immediately():
+    from modules.knowledge_rag import _rerank
+    result = await _rerank("any query", ["only one candidate"], top_k=3)
+    assert result == ["only one candidate"]
+
+
+@pytest.mark.asyncio
+async def test_rerank_empty_candidates_returns_empty():
+    from modules.knowledge_rag import _rerank
+    result = await _rerank("any query", [], top_k=3)
+    assert result == []
+
+
 # ── CONFIG VALIDATION ────────────────────────────────────────────────────────
 
 def test_config_rejects_invalid_weight():
