@@ -643,8 +643,10 @@ def pipeline_sync(msg: str, history: list) -> dict:
         plan = plan_fut.result(timeout=45) or ""
         team_result = team_fut.result(timeout=90)
         if plan: scratchpad_save(f"plan_{int(time.time())}", plan[:200])
+        # Plan used internally only — never shown to user. Output must be
+        # production-grade implementation only, no design doc preamble.
         if team_result:
-            response = f"**🏗️ Architecture Plan:**\n{plan}\n\n{team_result}" if plan else team_result
+            response = team_result
 
     elif skill == "coder" and complexity in ("hard", "medium"):
         # Standard architect→editor split
