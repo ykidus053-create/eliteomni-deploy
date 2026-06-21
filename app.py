@@ -2813,11 +2813,22 @@ async def stream_chat(req: Request):
                 else:
                     buf = ""
                     continue
-            out = _re_s.sub(
-                r"(?m)^(INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|PLAN|DRAFT"
-                r"|SELF-CHECK|CORRECTION|VERIFY|EXECUTE|IMPROVE|SEARCH|ANALYSIS):[^\n]*\n",
-                "", buf
+            _label_re = _re_s.compile(
+                r"(?m)^\s*(INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|PLAN|DRAFT"
+                r"|SELF-CHECK|CORRECTION|VERIFY|EXECUTE|IMPROVE|SEARCH|ANALYSIS):"
             )
+            if _label_re.search(buf):
+                # We're inside a raw (untagged) reasoning block.
+                # Hold output until a blank line signals the block ended,
+                # or until enough has accumulated that this looks like a
+                # false positive (e.g. the word appears mid-sentence).
+                if "\n\n" in buf:
+                    # Drop everything up to and including the blank line —
+                    # that was the reasoning block.
+                    buf = buf.split("\n\n", 1)[-1]
+                else:
+                    continue
+            out = buf
             if out:
                 chunks.append(out)
                 yield out
