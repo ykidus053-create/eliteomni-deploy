@@ -681,7 +681,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         fast_msgs[0]["content"] = fast_msgs[0]["content"][:500]  # cap system prompt at 500 chars
         # 2. Stream chunks directly instead of joining (lower perceived latency)
         chunks = []
-        for chunk in mistral_stream(fast_msgs, max_tokens=400, model=_tier["models"][0]):  # 3. max_tokens=400
+        for chunk in mistral_stream_traced(fast_msgs, max_tokens=400, model=_tier["models"][0], label="fast_tier"):  # 3. max_tokens=400
             chunks.append(chunk)
         fast_response = "".join(chunks)
         if fast_response:
@@ -2763,7 +2763,7 @@ async def stream_chat(req: Request):
 
         def _worker():
             try:
-                for tok in mistral_stream(ctx["msgs"], max_tokens=ctx["max_t"], model=ctx.get("model", "accounts/fireworks/models/deepseek-v4-pro"), tools=ctx.get("mcp_tools")):
+                for tok in mistral_stream_traced(ctx["msgs"], max_tokens=ctx["max_t"], model=ctx.get("model", "accounts/fireworks/models/deepseek-v4-pro"), tools=ctx.get("mcp_tools"), label="main_gen"):
                     loop.call_soon_threadsafe(tok_q.put_nowait, tok)
             except Exception as e:
                 print(f"[stream worker] {e}")
