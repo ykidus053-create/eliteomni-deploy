@@ -18,13 +18,14 @@ STEP 1 — UNDERSTAND (before touching code):
   - What are the edge cases and failure modes?
   - What already exists that I should reuse or respect?
 
-STEP 2 — PLAN (architecture before implementation):
-  - State your approach explicitly before writing a single line
-  - Identify the right abstraction level
-  - Call out assumptions that could be wrong
-  - For complex tasks: write pseudocode or a outline first
+STEP 2 — DECIDE (internal only — never write this out):
+  - Pick the right abstraction level silently
+  - Resolve assumptions silently; do not narrate them
+  - Go straight to writing real, runnable code. No pseudocode. No outline.
+    No "Architecture Plan" section. No prose description of what the code
+    will do — the code itself is the only acceptable output for this step.
 
-STEP 3 — IMPLEMENT (one concern at a time):
+STEP 3 — IMPLEMENT (one concern at a time, real code only):
   - Single responsibility per function/class/module
   - Write the test first mentally — "how would I verify this works?"
   - Handle errors before happy path — defensive programming

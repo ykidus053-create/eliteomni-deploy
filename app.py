@@ -2804,13 +2804,22 @@ async def stream_chat(req: Request):
                 _t.Thread(target=_tool_cont_worker, daemon=True, name="tool_cont").start()
                 continue
             buf += tok
-            if "<think>" in buf:
-                in_think[0] = True
+            _OPEN_TAGS = ("<think>", "<extended_thinking>", "<extended_thinking_math>")
+            _CLOSE_TAGS = ("</think>", "</extended_thinking>", "</extended_thinking_math>")
+            if not in_think[0]:
+                for _ot in _OPEN_TAGS:
+                    if _ot in buf:
+                        in_think[0] = True
+                        break
             if in_think[0]:
-                if "</think>" in buf:
-                    buf = buf.split("</think>", 1)[-1]
-                    in_think[0] = False
-                else:
+                _closed = False
+                for _ct in _CLOSE_TAGS:
+                    if _ct in buf:
+                        buf = buf.split(_ct, 1)[-1]
+                        in_think[0] = False
+                        _closed = True
+                        break
+                if not _closed:
                     buf = ""
                     continue
             _label_re = _re_s.compile(
