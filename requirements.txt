@@ -27,3 +27,6 @@ python-multipart
 
 # bust2
 langchain-core
+aiosqlite>=0.20
+qdrant-client>=1.18
+pydantic-settings>=2.0
