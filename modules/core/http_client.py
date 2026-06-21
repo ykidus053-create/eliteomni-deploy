@@ -151,7 +151,8 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         "model":      mdl,
         "messages":   trimmed,
         "max_tokens": min(max_tokens, 16000),
-        "temperature": 0.1 if (skill and skill.lower() in CODING_SKILLS) else 0.3,
+        "temperature": 0.1 if (skill and skill.lower() in CODING_SKILLS) else 0.7,
+        "top_p": 0.95,
         "stream":     True,
     }
     if mdl.startswith("mistral-medium") or mdl.startswith("mistral-large"):
