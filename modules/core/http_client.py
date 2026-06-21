@@ -554,3 +554,91 @@ def mistral_ocr(file_b64: str, filename: str = "document.pdf") -> str:
     except Exception as e:
         print(f"[OCR error] {e}")
         return f"[OCR failed: {e}]"
+
+
+def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
+                           skill: str = None, tools: list = None, label: str = "default"):
+    """
+    Thin tracing wrapper around mistral_stream. Logs prompt/response/latency
+    to eliteomni.db via modules.langchain_tracing, without changing any
+    existing generation behavior. Drop-in replacement: same signature + yields.
+    """
+    import time as _time_tr
+    try:
+        from modules.langchain_tracing import trace_call
+    except Exception:
+        trace_call = None
+
+    _t0 = _time_tr.time()
+    _prompt_preview = ""
+    try:
+        _last_user = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
+        _prompt_preview = str(_last_user)[:500]
+    except Exception:
+        pass
+
+    _chunks = []
+    _error = None
+    try:
+        for tok in mistral_stream(msgs, max_tokens=max_tokens, model=model, skill=skill, tools=tools):
+            _chunks.append(tok if isinstance(tok, str) else "")
+            yield tok
+    except Exception as _e:
+        _error = str(_e)[:500]
+        raise
+    finally:
+        if trace_call:
+            _latency_ms = (_time_tr.time() - _t0) * 1000
+            _response_text = "".join(_chunks)
+            try:
+                trace_call(
+                    label=label, skill=skill or "", complexity="", model=model or "",
+                    prompt_text=_prompt_preview, response_text=_response_text,
+                    latency_ms=_latency_ms, error=_error
+                )
+            except Exception as _te:
+                print(f"[LangChainTrace] wrapper log failed: {_te}")
+
+
+def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
+                           skill: str = None, tools: list = None, label: str = "default"):
+    """
+    Thin tracing wrapper around mistral_stream. Logs prompt/response/latency
+    to eliteomni.db via modules.langchain_tracing, without changing any
+    existing generation behavior. Drop-in replacement: same signature + yields.
+    """
+    import time as _time_tr
+    try:
+        from modules.langchain_tracing import trace_call
+    except Exception:
+        trace_call = None
+
+    _t0 = _time_tr.time()
+    _prompt_preview = ""
+    try:
+        _last_user = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
+        _prompt_preview = str(_last_user)[:500]
+    except Exception:
+        pass
+
+    _chunks = []
+    _error = None
+    try:
+        for tok in mistral_stream(msgs, max_tokens=max_tokens, model=model, skill=skill, tools=tools):
+            _chunks.append(tok if isinstance(tok, str) else "")
+            yield tok
+    except Exception as _e:
+        _error = str(_e)[:500]
+        raise
+    finally:
+        if trace_call:
+            _latency_ms = (_time_tr.time() - _t0) * 1000
+            _response_text = "".join(_chunks)
+            try:
+                trace_call(
+                    label=label, skill=skill or "", complexity="", model=model or "",
+                    prompt_text=_prompt_preview, response_text=_response_text,
+                    latency_ms=_latency_ms, error=_error
+                )
+            except Exception as _te:
+                print(f"[LangChainTrace] wrapper log failed: {_te}")

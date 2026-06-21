@@ -125,6 +125,13 @@ def _save_edited_file(filename, content):
         _json_sv.dump({"filename": safe_name}, _mf)
     return file_id
 
+@app.get("/traces")
+async def view_traces(limit: int = 50):
+    """Debug dashboard: recent LLM call traces (prompt, response, latency, errors)."""
+    from modules.langchain_tracing import get_recent_traces
+    traces = get_recent_traces(limit)
+    return JSONResponse({"count": len(traces), "traces": traces})
+
 @app.get("/mcp/servers")
 async def mcp_list_servers():
     """List registered MCP servers and their discovered tools."""
@@ -1170,7 +1177,8 @@ def pipeline_stream(msg: str, history: list):
     while True:
         _round_chunks = []
         _pending_tool_calls = []
-        for tok in mistral_stream(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS):
+        from modules.core.http_client import mistral_stream_traced
+        for tok in mistral_stream_traced(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS, skill=skill, label=skill+"/"+complexity):
             _ttft.on_token(tok)
             if isinstance(tok, str) and tok.startswith(_marker):
                 try:
