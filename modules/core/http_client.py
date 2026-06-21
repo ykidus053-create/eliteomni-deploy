@@ -643,3 +643,51 @@ def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
                 )
             except Exception as _te:
                 print(f"[LangChainTrace] wrapper log failed: {_te}")
+
+# ── BEST-OF-N GENERATE (Chip Huyen Ch.2 — Test Time Compute) ─────────────────
+def mistral_generate_best_of(
+    msgs: list,
+    max_tokens: int = 2000,
+    model: str = None,
+    skill: str = None,
+    n: int = 2,
+    critique: bool = False,
+) -> str:
+    """
+    Generate N outputs, pick the best by score (length + no error markers).
+    If critique=True, runs a self-critique pass on the winner (Ch.5).
+    n=2 is the sweet spot — noticeable quality gain at ~2x cost.
+    """
+    import concurrent.futures
+
+    def _score(text: str) -> float:
+        if not text or text.startswith("["):  # error marker
+            return -1.0
+        # Penalize very short or very long responses
+        length = len(text)
+        score = min(length, 3000) / 3000.0
+        # Penalize uncertainty markers
+        hedges = ["i'm not sure", "i don't know", "i cannot", "i can't", "unclear"]
+        for h in hedges:
+            if h in text.lower():
+                score -= 0.15
+        return score
+
+    # Generate N outputs in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as ex:
+        futures = [ex.submit(mistral_generate, msgs, max_tokens, model, skill) for _ in range(n)]
+        outputs = [f.result() for f in futures]
+
+    # Pick best
+    best = max(outputs, key=_score)
+
+    # Optional self-critique pass (Ch.5)
+    if critique:
+        try:
+            from modules.prompts import self_critique_msgs
+            critique_msgs = self_critique_msgs(msgs, best)
+            best = mistral_generate(critique_msgs, max_tokens=max_tokens, model=model, skill=skill)
+        except Exception as _e:
+            print(f"[best_of_n] critique pass failed: {_e}")
+
+    return best
