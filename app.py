@@ -624,7 +624,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         # Claude: never send empty turns, truncate long history turns
         if c and len(c) > 2:
             hist_msgs.append({"role": r, "content": c[:800]})
-    max_t = 16000  # no cap — model decides
+    max_t = 64000  # generous ceiling; model's own judgment decides actual length
     mode  = "extended_think" if effort == "high" else ("think" if effort == "medium" else "fast")
 
     # ── DECIDE: routing strategy ───────────────────────────────────────────────
@@ -1026,7 +1026,13 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         if c2 and len(c2) > 2:
             hist_msgs.append({"role": r2, "content": c2[:800]})
 
-    max_t = 16000  # no cap — model decides
+    _LARGE_SCOPE_KEYWORDS = (
+        "distributed", "microservice", "multiworker", "multi-worker",
+        "production system", "full system", "entire system", "end-to-end",
+        "from scratch", "complete application", "complete platform"
+    )
+    _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
+    max_t = 32000 if _is_large_scope else 16000
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
@@ -4479,7 +4485,13 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         if c2 and len(c2) > 2:
             hist_msgs.append({"role": r2, "content": c2[:800]})
 
-    max_t = 16000  # no cap — model decides
+    _LARGE_SCOPE_KEYWORDS = (
+        "distributed", "microservice", "multiworker", "multi-worker",
+        "production system", "full system", "entire system", "end-to-end",
+        "from scratch", "complete application", "complete platform"
+    )
+    _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
+    max_t = 32000 if _is_large_scope else 16000
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
