@@ -455,7 +455,7 @@ def tool_weather(location: str) -> str:
 
 def tool_calc(expr: str) -> str:
     try:
-        safe = re.sub(r'[^0-9+\\-*/().,% e]', '', expr).replace('%', '/100').replace('^', '**')
+        safe = re.sub(r'[^0-9+*/().,% e-]', '', expr).replace('%', '/100').replace('^', '**')
         r = eval(safe, {"__builtins__":{},"math":math,"sqrt":math.sqrt,
                         "sin":math.sin,"cos":math.cos,"log":math.log,
                         "pi":math.pi,"e":math.e,"abs":abs,"round":round})

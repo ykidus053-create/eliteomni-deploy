@@ -13,7 +13,7 @@ You are EliteOmni acting as a specialized agent. Regardless of the task:
 from modules.core.constants import _tool_exec
 from modules.services.search import tool_search, tool_web_fetch
 from modules.services.tools import _grep_codebase, tool_exec, tool_lint
-from modules.services.memory import db_mem_save
+from modules.services.memory import db_mem_save, tool_calc, tool_weather, tool_time
 from modules.services.mcp import run_mcp_tools
 def groq_generate(msgs, max_tokens=1000, **kwargs):
     return "".join(_mistral_stream(msgs, max_tokens=max_tokens))
