@@ -4325,9 +4325,10 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         return {"cached": cached, "skill": skill, "complexity": complexity,
                 "mode": "cached", "effort": effort, "msgs": [], "max_t": 0}
 
-    clean_msg, search_ctx = extract_search_context(msg)
+    # ── 2. Parallel I/O tasks (all I/O runs concurrently) ───────────────────
+    def _do_search():
+        return extract_search_context(msg)
 
-    # ── 2. Parallel I/O tasks ────────────────────────────────────────────────
     def _do_history():
         h = hist
         if _count_tokens(h) > 6000:
@@ -4353,7 +4354,8 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     def _do_rlhf():
         return get_rlhf_note(skill)
 
-    _bsc_ex = ThreadPoolExecutor(max_workers=7)
+    _bsc_ex = ThreadPoolExecutor(max_workers=8)
+    f_search  = _bsc_ex.submit(_do_search)
     f_hist    = _bsc_ex.submit(_do_history)
     f_mem     = _bsc_ex.submit(_do_mem)
     f_sem     = _bsc_ex.submit(_do_sem_mem)
@@ -4362,8 +4364,9 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     f_rag     = _bsc_ex.submit(_do_rag)
     f_rlhf    = _bsc_ex.submit(_do_rlhf)
     def _sr(f, default, name):
-        try: return f.result(timeout=4)
+        try: return f.result(timeout=8)
         except Exception as _e: print("[bsc] " + name + " failed: " + str(_e)); return default
+    clean_msg, search_ctx = _sr(f_search, (msg, ""), "search")
     recent, ctx_sum  = _sr(f_hist,  ([], ""),  "hist")
     _mem_working     = _sr(f_mem,   [],         "mem")
     sem_memory       = _sr(f_sem,   [],         "sem")
