@@ -1142,20 +1142,25 @@ def pipeline_stream(msg: str, history: list):
     if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
 
-    with ThreadPoolExecutor(max_workers=7) as _ex:
-        _f_search  = _ex.submit(lambda: extract_search_context(msg))
-        _f_hist    = _ex.submit(lambda: compress_history(_strip_thinking_from_history(history)))
-        _f_mem     = _ex.submit(lambda: mem_get(msg, k=3))
-        _f_episodic= _ex.submit(lambda: mem_get_episodic(msg))
-        _f_rlhf    = _ex.submit(lambda: get_rlhf_note(skill))
-        _f_memctx  = _ex.submit(lambda: build_memory_context(msg))
+    _ex2 = ThreadPoolExecutor(max_workers=7)
+    _f_search  = _ex2.submit(lambda: extract_search_context(msg))
+    _f_hist    = _ex2.submit(lambda: compress_history(_strip_thinking_from_history(history)))
+    _f_mem     = _ex2.submit(lambda: mem_get(msg, k=3))
+    _f_episodic= _ex2.submit(lambda: mem_get_episodic(msg))
+    _f_rlhf    = _ex2.submit(lambda: get_rlhf_note(skill))
+    _f_memctx  = _ex2.submit(lambda: build_memory_context(msg))
 
-    clean_msg, search_ctx = _f_search.result()
-    recent, ctx_sum = _f_hist.result()
-    _mem_working    = _f_mem.result()
-    _mem_episodic   = _f_episodic.result()
-    rlhf_note       = _f_rlhf.result()
-    _mem_ctx        = _f_memctx.result()
+    def _safe(f, default, name):
+        try: return f.result(timeout=5)
+        except Exception as _e: print("[parallel] " + name + " failed: " + str(_e)); return default
+
+    clean_msg, search_ctx = _safe(_f_search, (msg, ""), "search_ctx")
+    recent, ctx_sum       = _safe(_f_hist,   ([], ""),  "hist")
+    _mem_working          = _safe(_f_mem,    [],         "mem")
+    _mem_episodic         = _safe(_f_episodic, [],       "episodic")
+    rlhf_note             = _safe(_f_rlhf,  "",         "rlhf")
+    _mem_ctx              = _safe(_f_memctx, "",        "memctx")
+    _ex2.shutdown(wait=False)
     system          = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
     if _mem_ctx: system += _mem_ctx
     system          = trim_system_prompt(system, complexity)
