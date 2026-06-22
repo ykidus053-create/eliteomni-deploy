@@ -2755,7 +2755,7 @@ async def stream_chat(req: Request):
         print("[stream_chat] _build_stream_context_fast timed out, using minimal ctx")
         from modules.core.constants import get_infra_tier
         _t = get_infra_tier("medium")
-        ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 4096, "model": _t["models"][0], "system": "", "mode": "fallback", "vetoed": False}
+        ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 4096, "model": _t["models"][0], "system": "", "mode": "fallback", "vetoed": False, "cached": None, "mcp_tools": []}
 
     async def _gen():
         import asyncio, queue as _q, threading as _t, re as _re_s
