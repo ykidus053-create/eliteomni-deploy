@@ -4347,22 +4347,25 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     def _do_rlhf():
         return get_rlhf_note(skill)
 
-    with ThreadPoolExecutor(max_workers=7) as ex:
-        f_hist    = ex.submit(_do_history)
-        f_mem     = ex.submit(_do_mem)
-        f_sem     = ex.submit(_do_sem_mem)
-        f_sqlite  = ex.submit(_do_sqlite_mem)
-        f_epis    = ex.submit(_do_episodic)
-        f_rag     = ex.submit(_do_rag)
-        f_rlhf    = ex.submit(_do_rlhf)
-
-    recent, ctx_sum  = f_hist.result()
-    _mem_working     = f_mem.result()
-    sem_memory       = f_sem.result()
-    _mem_sqlite      = f_sqlite.result()
-    _mem_episodic    = f_epis.result()
-    rag_hits         = f_rag.result()
-    rlhf_note        = f_rlhf.result()
+    _bsc_ex = ThreadPoolExecutor(max_workers=7)
+    f_hist    = _bsc_ex.submit(_do_history)
+    f_mem     = _bsc_ex.submit(_do_mem)
+    f_sem     = _bsc_ex.submit(_do_sem_mem)
+    f_sqlite  = _bsc_ex.submit(_do_sqlite_mem)
+    f_epis    = _bsc_ex.submit(_do_episodic)
+    f_rag     = _bsc_ex.submit(_do_rag)
+    f_rlhf    = _bsc_ex.submit(_do_rlhf)
+    def _sr(f, default, name):
+        try: return f.result(timeout=4)
+        except Exception as _e: print("[bsc] " + name + " failed: " + str(_e)); return default
+    recent, ctx_sum  = _sr(f_hist,  ([], ""),  "hist")
+    _mem_working     = _sr(f_mem,   [],         "mem")
+    sem_memory       = _sr(f_sem,   [],         "sem")
+    _mem_sqlite      = _sr(f_sqlite,[],         "sqlite")
+    _mem_episodic    = _sr(f_epis,  [],         "epis")
+    rag_hits         = _sr(f_rag,   [],         "rag")
+    rlhf_note        = _sr(f_rlhf,  "",         "rlhf")
+    _bsc_ex.shutdown(wait=False)
 
     # Dedupe memory
     _seen_m, memory = set(), []
