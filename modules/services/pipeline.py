@@ -579,6 +579,11 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
 
     parts.append(UNCERTAINTY_PROMPT.strip())
     try:
+        from modules.hallucination_guard import build_hallucination_guard_prompt
+        _hg = build_hallucination_guard_prompt(msg, [], skill, complexity)
+        if _hg: parts.append(_hg)
+    except Exception as _hge2: print("[HallucinationGuard] inject failed: " + str(_hge2))
+    try:
         from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
@@ -591,14 +596,13 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         joined = "\n".join(parts)
         base = joined[:2000]
         if search_ctx:
-            base += f"\n\n[LIVE SEARCH RESULTS — today's data, use these, ignore training data]:\n{search_ctx[:3000]}"
+            base += f"\n\n[LIVE SEARCH RESULTS — cite as [1][2] etc, ONLY state facts found here]:\n{search_ctx[:2000]}"
         return base
 
     effort_prompts = get_effort_prompts(effort, complexity, skill)
     parts.extend(effort_prompts)
     if search_ctx:
-        parts.append(f"[LIVE SEARCH RESULTS — today's data, use these, ignore training data]:\n{search_ctx[:3000]}")
-
+        parts.append(f"[LIVE SEARCH RESULTS — cite as [1][2] etc, ONLY state facts found here]:\n{search_ctx[:2000]}")
     # ── Claude-style intelligence (injected like Anthropic does it) ──
     try:
         from modules.claude_intelligence import build_claude_intelligence
