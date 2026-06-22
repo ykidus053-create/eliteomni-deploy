@@ -4391,49 +4391,128 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         mem_save_episodic(ctx_sum)
         episodic = [ctx_sum] + episodic
 
-    # ── 3. Human-gap analysis (best-effort) ──────────────────────────────────
+    # ── 3+4. Human-gap analysis + force-tools (12-way parallel) ────────────
     _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = ""
     _neg_space = _tom_ctx = _constraints = _narrative_ctx = ""
     _rel_ctx = _prior_ctx = _depth_warn = ""
     _stakes = "low"
-    try:
-        from modules.services.agents import (
-            detect_emotion_context, knowledge_boundary_check, goals_get_context,
-            assess_stakes, stakes_system_addon, negative_space_analysis,
-            theory_of_mind_analysis, extract_constraints, narrative_get_context,
-            relationship_get_context, experience_prior_check, context_depth_warning)
-        _emotion_ctx   = detect_emotion_context(msg)
-        _kb_ctx        = knowledge_boundary_check(msg, skill)
-        _goals_ctx     = goals_get_context()
-        _stakes        = assess_stakes(msg, complexity)
-        _stakes_ctx    = stakes_system_addon(_stakes)
-        _neg_space     = negative_space_analysis(msg, complexity)
-        _tom_ctx       = theory_of_mind_analysis(msg, skill)
-        _constraints   = extract_constraints(msg)
-        _narrative_ctx = narrative_get_context()
-        _rel_ctx       = relationship_get_context()
-        _prior_ctx     = experience_prior_check(msg, skill)
-        _depth_warn    = context_depth_warning("", "")
-    except Exception as _hge:
-        print(f"[HumanGap pre] {_hge}")
-
-    # ── 4. Force-tool patterns ────────────────────────────────────────────────
     forced = []
-    _msg_lower_ft = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
-    for tool_name, triggers in FORCE_TOOL_PATTERNS.items():
-        if any(t in _msg_lower_ft for t in triggers):
-            if tool_name == "SEARCH" and not search_ctx and complexity != "easy":
-                r = tool_search(msg[:300])
-                if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
-            elif tool_name == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
-                import re as _rce
-                nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)
-                if nums:
-                    r = tool_calc(nums[0].strip())
-                    if r: forced.append(f"CALC result: {r}")
-            elif tool_name == "TIME":
-                forced.append(f"TIME: {tool_time()}")
-            break
+
+    if complexity != "easy":
+        def _hg_emotion():
+            try:
+                from modules.services.agents import detect_emotion_context
+                return detect_emotion_context(msg)
+            except: return ""
+        def _hg_kb():
+            try:
+                from modules.services.agents import knowledge_boundary_check
+                return knowledge_boundary_check(msg, skill)
+            except: return ""
+        def _hg_goals():
+            try:
+                from modules.services.agents import goals_get_context
+                return goals_get_context()
+            except: return ""
+        def _hg_stakes():
+            try:
+                from modules.services.agents import assess_stakes, stakes_system_addon
+                s = assess_stakes(msg, complexity)
+                return s, stakes_system_addon(s)
+            except: return "low", ""
+        def _hg_negspace():
+            try:
+                from modules.services.agents import negative_space_analysis
+                return negative_space_analysis(msg, complexity)
+            except: return ""
+        def _hg_tom():
+            try:
+                from modules.services.agents import theory_of_mind_analysis
+                return theory_of_mind_analysis(msg, skill)
+            except: return ""
+        def _hg_constraints():
+            try:
+                from modules.services.agents import extract_constraints
+                return extract_constraints(msg)
+            except: return ""
+        def _hg_narrative():
+            try:
+                from modules.services.agents import narrative_get_context
+                return narrative_get_context()
+            except: return ""
+        def _hg_rel():
+            try:
+                from modules.services.agents import relationship_get_context
+                return relationship_get_context()
+            except: return ""
+        def _hg_prior():
+            try:
+                from modules.services.agents import experience_prior_check
+                return experience_prior_check(msg, skill)
+            except: return ""
+        def _hg_depth():
+            try:
+                from modules.services.agents import context_depth_warning
+                return context_depth_warning("", "")
+            except: return ""
+        def _hg_force():
+            import re as _rce
+            _mlt = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
+            for _tn, _triggers in FORCE_TOOL_PATTERNS.items():
+                if any(t in _mlt for t in _triggers):
+                    if _tn == "SEARCH" and not search_ctx:
+                        r = tool_search(msg[:300])
+                        if r and "error" not in r.lower(): return f"SEARCH: {r[:400]}"
+                    elif _tn == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
+                        nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)
+                        if nums:
+                            r = tool_calc(nums[0].strip())
+                            if r: return f"CALC result: {r}"
+                    elif _tn == "TIME":
+                        return f"TIME: {tool_time()}"
+                    break
+            return ""
+
+        _hg_ex = ThreadPoolExecutor(max_workers=12)
+        _hg_fs = {
+            "emotion":   _hg_ex.submit(_hg_emotion),
+            "kb":        _hg_ex.submit(_hg_kb),
+            "goals":     _hg_ex.submit(_hg_goals),
+            "stakes":    _hg_ex.submit(_hg_stakes),
+            "negspace":  _hg_ex.submit(_hg_negspace),
+            "tom":       _hg_ex.submit(_hg_tom),
+            "constr":    _hg_ex.submit(_hg_constraints),
+            "narrative": _hg_ex.submit(_hg_narrative),
+            "rel":       _hg_ex.submit(_hg_rel),
+            "prior":     _hg_ex.submit(_hg_prior),
+            "depth":     _hg_ex.submit(_hg_depth),
+            "force":     _hg_ex.submit(_hg_force),
+        }
+        def _hgr(key, default):
+            try: return _hg_fs[key].result(timeout=3)
+            except Exception as _e: print(f"[HumanGap] {key}: {_e}"); return default
+
+        _emotion_ctx   = _hgr("emotion",   "")
+        _kb_ctx        = _hgr("kb",        "")
+        _goals_ctx     = _hgr("goals",     "")
+        _stakes, _stakes_ctx = _hgr("stakes", ("low", ""))
+        _neg_space     = _hgr("negspace",  "")
+        _tom_ctx       = _hgr("tom",       "")
+        _constraints   = _hgr("constr",    "")
+        _narrative_ctx = _hgr("narrative", "")
+        _rel_ctx       = _hgr("rel",       "")
+        _prior_ctx     = _hgr("prior",     "")
+        _depth_warn    = _hgr("depth",     "")
+        _force_result  = _hgr("force",     "")
+        _hg_ex.shutdown(wait=False)
+        if _force_result: forced.append(_force_result)
+    else:
+        _mlt = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
+        for _tn, _triggers in FORCE_TOOL_PATTERNS.items():
+            if any(t in _mlt for t in _triggers):
+                if _tn == "TIME": forced.append(f"TIME: {tool_time()}")
+                break
+
     if forced:
         search_ctx += "\n[Pre-executed tools]\n" + "\n".join(forced)
 
