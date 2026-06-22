@@ -302,14 +302,21 @@ def tool_search_multi(user_msg: str) -> str:
         return tool_search(q, _raw=True) or []
     ex = _get_search_pool()
     futures = {ex.submit(_run_query, q): q for q in queries}
-    for fut in as_completed(futures, timeout=20):
-        raw = fut.result()
-        if isinstance(raw, list):
-            for item in raw:
-                url = item.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    all_results.append(item)
+    try:
+        for fut in as_completed(futures, timeout=15):
+            try:
+                raw = fut.result(timeout=5)
+            except Exception as _fe:
+                print("[multi-search] future failed: " + str(_fe))
+                continue
+            if isinstance(raw, list):
+                for item in raw:
+                    url = item.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        all_results.append(item)
+    except TimeoutError:
+        print("[multi-search] timed out — using partial results: " + str(len(all_results)))
 
     # ── Step 2: iterative re-search if quality is low ─────────────────────────
     quality = _results_quality(all_results, user_msg)
