@@ -168,6 +168,15 @@ def tool_search(query: str, _raw: bool = False) -> str:
         _cached = _rcache.get(_ckey)
         if _cached: return _cached
     try:
+        # ── Query rewriting: optimize raw query for web search ──────────
+        try:
+            from modules.core.http_client import mistral_stream
+            _rewrite_prompt = [{"role": "system", "content": "You are a search query optimizer. Convert the user input into a short, precise web search query (max 8 words). Output ONLY the optimized query, nothing else. No quotes, no explanation."}, {"role": "user", "content": query}]
+            _rewritten = "".join(t for t in mistral_stream(_rewrite_prompt, max_tokens=30, model="mistral-small-latest") if isinstance(t, str)).strip()
+            if _rewritten and len(_rewritten) < 120:
+                query = _rewritten
+        except Exception as _rwe:
+            print(f"[search] rewrite skipped: {_rwe}")
         params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "duckduckgo,brave"}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
