@@ -168,18 +168,34 @@ def tool_search(query: str, _raw: bool = False) -> str:
         _cached = _rcache.get(_ckey)
         if _cached: return _cached
     try:
-        # ── Query rewriting: optimize raw query for web search ──────────
-        try:
-            from modules.core.http_client import mistral_stream
-            _rewrite_prompt = [{"role": "system", "content": "You are a search query optimizer. Convert the user input into a short, precise web search query (max 8 words). Output ONLY the optimized query, nothing else. No quotes, no explanation."}, {"role": "user", "content": query}]
-            _rewritten = "".join(t for t in mistral_stream(_rewrite_prompt, max_tokens=30, model="mistral-small-latest") if isinstance(t, str)).strip()
-            if _rewritten and len(_rewritten) < 120:
-                query = _rewritten
-        except Exception as _rwe:
-            print(f"[search] rewrite skipped: {_rwe}")
-        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "duckduckgo,brave"}
+        # ── Parallel: rewrite query + fire SearXNG simultaneously ─────
+        import threading as _sth
+        _rewritten_box = [query]
+        def _do_rewrite():
+            try:
+                from modules.core.http_client import mistral_stream
+                _rp = [{"role": "system", "content": "You are a search query optimizer. Convert the user input into a short, precise web search query (max 8 words). Output ONLY the optimized query, nothing else. No quotes, no explanation."}, {"role": "user", "content": query}]
+                _rw = "".join(t for t in mistral_stream(_rp, max_tokens=30, model="mistral-small-latest") if isinstance(t, str)).strip()
+                if _rw and len(_rw) < 120:
+                    _rewritten_box[0] = _rw
+                    print("[search] rewritten: " + repr(query) + " -> " + repr(_rw))
+            except Exception as _rwe:
+                print("[search] rewrite skipped: " + str(_rwe))
+        _rw_thread = _sth.Thread(target=_do_rewrite, daemon=True)
+        _rw_thread.start()
+        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "google,bing"}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
+        _rw_thread.join(timeout=0.1)
+        if _rewritten_box[0] != query:
+            try:
+                _r2 = requests.get(f"{SEARXNG_URL}/search", params={"q": _rewritten_box[0], "format": "json", "categories": "general", "language": "en", "engines": "google,bing"}, headers=headers, timeout=10)
+                _extra = _r2.json().get("results", [])
+                if _extra:
+                    r._content = r._content  # keep original, merge below
+                    raw = r.json().get("results", []) + _extra
+            except Exception:
+                pass
         r.raise_for_status()
         raw = r.json().get("results", [])
         results = _dynamic_filter_results(raw, query)
