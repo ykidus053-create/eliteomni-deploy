@@ -65,17 +65,41 @@ import requests
 
 def _dynamic_filter_results(results: list, query: str) -> list:
     """
-    Dynamic Filtering (web_search_20260209): score and re-rank results by
-    keyword relevance BEFORE injecting into context — reduces wasted tokens.
+    Dynamic Filtering: score and re-rank results by relevance before context injection.
+    Combines keyword coverage, title match, snippet length, and recency.
     """
     keywords = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
+    query_lower = query.lower()
     if not keywords:
         return results
+
     scored = []
     for item in results:
-        text = (item.get("title", "") + " " + item.get("content", "")).lower()
-        score = sum(1 for kw in keywords if kw in text)
-        scored.append((score, item))
+        title   = item.get("title", "").lower()
+        content = (item.get("content", "") or item.get("snippet", "")).lower()
+        date    = item.get("publishedDate", "") or item.get("age", "")
+        url     = item.get("url", "").lower()
+
+        # Keyword score: title matches worth 3x, content 1x
+        kw_title   = sum(3 for kw in keywords if kw in title)
+        kw_content = sum(1 for kw in keywords if kw in content)
+        kw_score   = kw_title + kw_content
+
+        # Exact phrase match bonus
+        phrase_bonus = 5 if query_lower in (title + " " + content) else 0
+
+        # Snippet length score (longer = more informative)
+        length_score = min(3, len(content) / 200)
+
+        # Recency score
+        recency = 2 if any(y in str(date) for y in ["2025", "2026"]) else                   1 if "2024" in str(date) else 0
+
+        # Penalize low-quality domains
+        spam_penalty = -3 if any(s in url for s in ["pinterest", "quora", "reddit.com/r/meme"]) else 0
+
+        total = kw_score + phrase_bonus + length_score + recency + spam_penalty
+        scored.append((total, item))
+
     scored.sort(key=lambda x: x[0], reverse=True)
     return [item for _, item in scored]
 
@@ -109,39 +133,90 @@ def _formulate_queries(user_msg: str) -> list:
 
 def _cite_results(results: list) -> str:
     """
-    Claude web_search_20260209 style:
-    - Extract only title + clean snippet per result
-    - No URLs, no numbered refs, no Sources block
-    - Model receives clean fact context and synthesizes naturally
+    Citation-formatted search results for model context injection.
+    Includes source URL, domain, date, and generous snippet for grounding.
     """
     if not results:
         return ""
     chunks = []
-    for item in results[:6]:
+    for i, item in enumerate(results[:8], 1):
         title   = item.get("title", "").strip()
         snippet = (item.get("content", "") or item.get("snippet", "")).strip()
+        url     = item.get("url", "").strip()
         date    = item.get("publishedDate", "") or item.get("age", "")
-        if snippet:
-            prefix = f"[{date}] " if date else ""
-            entry  = f"{prefix}{title}: {snippet[:400]}" if title else f"{prefix}{snippet[:400]}"
-            chunks.append(entry)
-    return "\n\n".join(chunks)
+        if not snippet:
+            continue
+        # Extract domain for source credibility signal
+        domain = ""
+        if url:
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc.replace("www.", "")
+            except Exception:
+                pass
+        parts = [f"[{i}]"]
+        if date:
+            parts.append(f"({date})")
+        if title:
+            parts.append(title)
+        if domain:
+            parts.append(f"— {domain}")
+        header = " ".join(parts)
+        # Give model 600 chars per snippet — enough to answer most questions
+        body = snippet[:600]
+        if url:
+            entry = f"{header}\n{body}\nSource: {url}"
+        else:
+            entry = f"{header}\n{body}"
+        chunks.append(entry)
+    return "\n\n---\n\n".join(chunks)
 
-def tool_web_fetch(url: str, max_chars: int = 400) -> str:
+def tool_web_fetch(url: str, max_chars: int = 1200) -> str:
     """
-    WebFetch (web_fetch_20260209): fetch a full page when snippets are
-    insufficient. Split from WebSearch per Claude Code architecture for
-    safety + injection surface control. Strips scripts/styles/HTML.
+    WebFetch: fetch full page content when snippets are insufficient.
+    Strips scripts/styles/nav/footer, extracts main content intelligently.
+    Returns clean text up to max_chars — never leaks errors into model context.
     """
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}, timeout=20)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+        r = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
         r.raise_for_status()
-        text = re.sub(r'<(script|style)[^>]*>.*?</(script|style)>', ' ', r.text, flags=re.DOTALL)
+
+        text = r.text
+
+        # Remove non-content elements first
+        text = re.sub(r'<(script|style|nav|footer|header|aside|iframe|noscript)[^>]*>.*?</\1>',
+                      ' ', text, flags=re.DOTALL | re.IGNORECASE)
+
+        # Try to extract main content block
+        main_match = re.search(
+            r'<(article|main|div[^>]*(?:content|article|post|entry)[^>]*)>(.*?)</\1>',
+            text, re.DOTALL | re.IGNORECASE
+        )
+        if main_match:
+            text = main_match.group(2)
+
+        # Strip remaining HTML
         text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
+        # Clean whitespace
+        text = re.sub(r'[ \t]+', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = text.strip()
+
+        # Remove cookie/GDPR boilerplate that clutters context
+        boilerplate = ["accept cookies", "cookie policy", "privacy policy",
+                       "subscribe to our newsletter", "sign up for our"]
+        lines = [l for l in text.split("\n")
+                 if not any(b in l.lower() for b in boilerplate)]
+        text = "\n".join(lines)
+
         return text[:max_chars]
     except Exception:
-        return None  # never leak error strings into model context
+        return None
 
 def tool_search(query: str, _raw: bool = False) -> str:
     if not query or not query.strip():
@@ -172,13 +247,23 @@ def tool_search(query: str, _raw: bool = False) -> str:
         import threading as _sth
         _rewritten_box = [query]
         def _do_rewrite():
+            # Fast regex-based query cleaning — no LLM call, no RPM cost
             try:
-                from modules.core.http_client import mistral_stream
-                _rp = [{"role": "system", "content": "You are a search query optimizer. Convert the user input into a short, precise web search query (max 8 words). Output ONLY the optimized query, nothing else. No quotes, no explanation."}, {"role": "user", "content": query}]
-                _rw = "".join(t for t in mistral_stream(_rp, max_tokens=30, model="mistral-small-latest") if isinstance(t, str)).strip()
-                if _rw and len(_rw) < 120:
-                    _rewritten_box[0] = _rw
-                    print("[search] rewritten: " + repr(query) + " -> " + repr(_rw))
+                q = query.strip()
+                # Strip filler phrases
+                q = re.sub(
+                    r'\b(please|can you|could you|tell me|what is|who is|where is'
+                    r'|find me|look up|search for|i want to know|give me|i need)\b',
+                    '', q, flags=re.IGNORECASE
+                ).strip(" ?.,!")
+                # Add current year for time-sensitive queries
+                time_triggers = ["latest", "current", "now", "today", "recent", "newest"]
+                if any(t in q.lower() for t in time_triggers) and "2026" not in q and "2025" not in q:
+                    q = q + " 2026"
+                q = re.sub(r'\s+', ' ', q).strip()[:120]
+                if q and q != query.strip():
+                    _rewritten_box[0] = q
+                    print("[search] rewritten: " + repr(query) + " -> " + repr(q))
             except Exception as _rwe:
                 print("[search] rewrite skipped: " + str(_rwe))
         _rw_thread = _sth.Thread(target=_do_rewrite, daemon=True)
@@ -283,18 +368,56 @@ def _openrouter_search_fallback(query: str) -> str:
 def _results_quality(results: list, query: str) -> float:
     """
     Score result pool quality 0.0-1.0.
+    Combines keyword coverage, snippet length, recency, and source diversity.
     Low score triggers a follow-up search (iterative chaining).
     """
     if not results:
         return 0.0
     keywords = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
     if not keywords:
-        return 1.0
-    hits = 0
-    for item in results[:3]:
-        text = (item.get("title","") + " " + item.get("content","")).lower()
-        hits += sum(1 for kw in keywords if kw in text)
-    return min(1.0, hits / (len(keywords) * 2))
+        return 0.5
+
+    keyword_score = 0.0
+    snippet_score = 0.0
+    recency_score = 0.0
+    seen_domains  = set()
+
+    for item in results[:5]:
+        title   = item.get("title", "")
+        content = item.get("content", "") or item.get("snippet", "")
+        text    = (title + " " + content).lower()
+        url     = item.get("url", "")
+        date    = item.get("publishedDate", "") or item.get("age", "")
+
+        # Keyword coverage
+        kw_hits = sum(1 for kw in keywords if kw in text)
+        keyword_score += kw_hits / max(len(keywords), 1)
+
+        # Snippet length (longer = more informative)
+        snippet_score += min(1.0, len(content) / 300)
+
+        # Recency signal
+        if date and any(y in str(date) for y in ["2025", "2026", "2024"]):
+            recency_score += 1.0
+
+        # Domain diversity
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc
+            seen_domains.add(domain)
+        except Exception:
+            pass
+
+    n = min(len(results), 5)
+    diversity_bonus = min(0.2, len(seen_domains) / n * 0.2)
+
+    combined = (
+        (keyword_score / n) * 0.5 +
+        (snippet_score / n) * 0.3 +
+        (recency_score / n) * 0.2 +
+        diversity_bonus
+    )
+    return min(1.0, combined)
 
 def tool_search_multi(user_msg: str) -> str:
     """
