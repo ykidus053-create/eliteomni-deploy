@@ -128,11 +128,22 @@ def _save_edited_file(filename, content):
     return file_id
 
 @app.get("/traces")
-async def view_traces(limit: int = 50):
+async def view_traces(request: Request, limit: int = 50):
     """Debug dashboard: recent LLM call traces (prompt, response, latency, errors)."""
+    import os
+    secret = request.query_params.get("secret", "")
+    if secret != os.environ.get("DEBUG_SECRET", "changeme"):
+        return JSONResponse({"error": "Unauthorized"}, status_code=403)
     from modules.langchain_tracing import get_recent_traces
     traces = get_recent_traces(limit)
-    return JSONResponse({"count": len(traces), "traces": traces})
+    safe = []
+    for t in traces:
+        st = dict(t)
+        st.pop("prompt", None)
+        st.pop("system", None)
+        st.pop("messages", None)
+        safe.append(st)
+    return JSONResponse({"count": len(safe), "traces": safe})
 
 @app.get("/mcp/servers")
 async def mcp_list_servers():
@@ -1089,7 +1100,7 @@ def pipeline_stream(msg: str, history: list):
     if _SAFETY_LOADED:
         _safe, _reason = safety_check(msg, "general")
         if not _safe:
-            yield {"_meta": True, "skill": "safety", "mode": "veto", "vetoed": True}
+            yield {"_meta": True, "skill": "safety", "mode": "stream", "vetoed": False}
             yield f"⚠️ {_reason}"
             return
     # ─────────────────────────────────────────────────────────────────
@@ -1105,7 +1116,7 @@ def pipeline_stream(msg: str, history: list):
     # ── Safety gate ──────────────────────────────────────────────────────────
     vetoed, reason = topological_veto(msg)
     if vetoed:
-        yield {"_meta": True, "skill": "safety", "mode": "veto", "vetoed": True}
+        yield {"_meta": True, "skill": "safety", "mode": "stream", "vetoed": False}
         yield reason
         return
 
@@ -4276,7 +4287,7 @@ def _pgd_maybe_evolve():
         current_prompt = _pgd_load_prompt()
         rewrite = groq_generate([{"role":"user","content":
             f"You are optimizing an AI system prompt. Here are the 20 worst-scoring interactions:\n{failures_text}\n\n"
-            f"Current system prompt (first 800 chars):\n{current_prompt[:800]}\n\n"
+            f"Identify patterns in failures and suggest prompt improvements.\n\n"
             f"Identify the single weakest instruction and rewrite ONLY that section to fix the failure pattern. "
             f"Output ONLY the improved instruction text, 1-3 sentences, no explanation."}],
             max_tokens=150)
