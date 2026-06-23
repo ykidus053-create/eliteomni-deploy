@@ -1790,10 +1790,25 @@ function renderMd(text){console.log("[renderMd]",text.length,text.slice(0,60));
   }catch(_){}
   const mmBlocks=[];
   text=text.replace(/```mermaid\n([\s\S]*?)```/g,(_,c)=>{const id='mm'+mmBlocks.length;mmBlocks.push({id,c:c.trim()});return '<MERMAID_'+id+'>';});
+  // Protect LaTeX blocks from marked mangling
+  const mathBlocks=[];
+  text=text.replace(/\$\$([\s\S]*?)\$\$/g,(_,m)=>{const id='MATH'+mathBlocks.length;mathBlocks.push({id,m,block:true});return 'MATHBLOCK_'+id;});
+  text=text.replace(/\$([^\$\n]+?)\$/g,(_,m)=>{const id='MATH'+mathBlocks.length;mathBlocks.push({id,m,block:false});return 'MATHINLINE_'+id;});
   let html=marked.parse(text);
   html=html.replace(/<pre><code(?: class="language-([^"]*)")?>/g,(_,lang)=>{const l=lang||'code';return `<pre><div class="pre-head"><span class="pre-lang">${l}</span><button class="pre-copy" onclick="cpCode(this)">Copy</button></div><code${lang?` class="language-${lang}"`:''}>`;});
   html=html.replace(/\[([0-9]+)\]/g,(_,n)=>`<sup class="cite-ref" onclick="jumpCite(${n})" title="Jump to source">[${n}]</sup>`);
   mmBlocks.forEach(({id,c})=>{html=html.replace(`<p>MERMAID_${id}</p>`,`<div class="mermaid-wrap"><div class="mermaid">${c}</div></div>`).replace(`MERMAID_${id}`,`<div class="mermaid-wrap"><div class="mermaid">${c}</div></div>`);});
+  // Restore LaTeX blocks rendered via KaTeX
+  mathBlocks.forEach(({id,m,block})=>{
+    try{
+      const rendered=katex.renderToString(m,{throwOnError:false,displayMode:block});
+      html=html.replace('MATHBLOCK_'+id,`<div class="katex-block">${rendered}</div>`);
+      html=html.replace('MATHINLINE_'+id,rendered);
+    }catch(e){
+      html=html.replace('MATHBLOCK_'+id,`$$${m}$$`);
+      html=html.replace('MATHINLINE_'+id,`$${m}$`);
+    }
+  });
   return html;
 }
 function postRenderMd(el){
