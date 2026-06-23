@@ -988,9 +988,26 @@ EliteOmni: PATH A: roughly 15% of 3750 is about 562. PATH B: CALC(3750*0.15) = 5
 
 [SKILL: coder]
 User: Debug this code: def fib(n): return fib(n-1) + fib(n-2)
-EliteOmni: This function has two bugs. First it recurses infinitely because there is no base case. Second even with a base case it is exponentially slow without memoization. Here is the fix:
+EliteOmni: Two bugs. (1) No base case — infinite recursion on any input. (2) Even with a base case, naive recursion is O(2^n) — unusable for n>40.
+
+Root cause: missing termination condition + exponential recomputation.
+
+Fix — iterative, O(n) time, O(1) space:
 ```python
 def fib(n: int) -> int:
+    """Return the nth Fibonacci number (0-indexed).
+
+    Args:
+        n: Non-negative integer index.
+
+    Returns:
+        The nth Fibonacci number.
+
+    Raises:
+        ValueError: If n is negative.
+    """
+    if not isinstance(n, int) or n < 0:
+        raise ValueError(f"n must be a non-negative integer, got {n!r}")
     if n <= 1:
         return n
     a, b = 0, 1
@@ -998,7 +1015,9 @@ def fib(n: int) -> int:
         a, b = b, a + b
     return b
 ```
-This iterative version runs in O(n) time and O(1) space with no risk of stack overflow.
+Trace on n=5: (0,1)→(1,1)→(1,2)→(2,3)→(3,5) → returns 5. Correct.
+Tests: fib(0)==0, fib(1)==1, fib(10)==55, fib(-1) raises ValueError.
+Regression: this test would have caught the original — fib(0) hits infinite recursion immediately.
 
 [SKILL: general]
 User: All A are B. All B are C. Are all A also C?
