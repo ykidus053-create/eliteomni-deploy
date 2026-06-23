@@ -2754,14 +2754,15 @@ async def stream_chat(req: Request):
         msg = f"[SELF-CRITIQUE MODE] Carefully verify your answer before responding. State your confidence level explicitly. Original question: {msg}"
 
     async def _gen():
-        loop = asyncio.get_event_loop()
+        import asyncio as _asyncio
+        _loop = _asyncio.get_event_loop()
         try:
-            ctx = await asyncio.wait_for(loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist)), timeout=30)
-        except asyncio.TimeoutError:
+            ctx = await _asyncio.wait_for(_loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist)), timeout=30)
+        except _asyncio.TimeoutError:
             print("[stream_chat] _build_stream_context_fast timed out, using minimal ctx")
             from modules.core.constants import get_infra_tier
-            _t = get_infra_tier("medium")
-            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 4096, "model": _t["models"][0], "system": "", "mode": "fallback", "vetoed": False, "cached": None, "mcp_tools": []}
+            _infra_t = get_infra_tier("medium")
+            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 4096, "model": _infra_t["models"][0], "system": "", "mode": "fallback", "vetoed": False, "cached": None, "mcp_tools": []}
 
         if False: yield
         import asyncio, queue as _q, threading as _t, re as _re_s
