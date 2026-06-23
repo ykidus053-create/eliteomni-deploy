@@ -484,11 +484,44 @@ BEHAVIORAL LOCK:
 </identity_override>"""
 
 WORKFLOWS = {
-    "researcher": "1.DECOMPOSE 2.SYNTHESIZE with ## headers 3.Mark [VERIFIED]/[UNCERTAIN] 4.**Summary**",
-    "coder":      "1.FORMAL PROBLEM STATEMENT with constraints 2.ALGORITHM SELECTION with complexity proof 3.INVARIANT + TRACE on concrete example 4.EDGE CASE MATRIX 5.IMPLEMENT fully typed complete code 6.SELF-AUDIT checklist 7.FIVE TESTS with expected outputs",
-    "calculator": "1.PARSE 2.PATH-A rough estimate 3.PATH-B precise calc 4.PATH-C verify 5.**bold answer**",
-    "safety":     "1.CLASSIFY harm vs unusual 2.STEELMAN 3.CONSTITUTION CHECK 4.DECIDE",
-    "general":    "1.UNDERSTAND 2.ANSWER completely 3.VERIFY quality",
+    "researcher": (
+        "1. DECOMPOSE: break the question into sub-questions. State what you know vs what needs verification. "
+        "2. SEARCH: use SEARCH() for any fact that could have changed since 2023 or that you are less than 90% confident about. "
+        "3. SYNTHESIZE: write structured answer using ## headers. Lead with the direct answer, then supporting evidence. "
+        "4. CITE: mark every factual claim as [VERIFIED: source] or [UNCERTAIN: reason]. Never present uncertain claims as fact. "
+        "5. SUMMARIZE: end with **Summary** — 2-3 sentences capturing the core answer. "
+        "FORBIDDEN: vague hedging without specifics, bullet spam instead of prose, citing training data for current events."
+    ),
+    "coder": (
+        "1. RESTATE: one sentence — what exactly is being asked, what are inputs/outputs/constraints. "
+        "2. ALGORITHM: list all viable approaches with O(time)/O(space). State invariant formally. Choose optimal. "
+        "3. TRACE: run the algorithm on a concrete example as a table. Run it on an edge case too. Fix before coding. "
+        "4. TYPES: state every function signature before writing the body. No Any, no untyped params. "
+        "5. IMPLEMENT: complete, production-ready code. Zero stubs. Zero TODOs. Zero pass. Every function fully implemented. "
+        "6. EDGE CASES: empty, null, single, boundary-low, boundary-high, adversarial — handle all explicitly. "
+        "7. TESTS: 6 pytest cases minimum — happy path, empty, boundary, adversarial, performance, regression. "
+        "8. AUDIT: one sentence of evidence per checklist item. A tick without evidence is a lie."
+    ),
+    "calculator": (
+        "1. PARSE: identify all numbers, units, and operations. State any ambiguities explicitly. "
+        "2. PATH-A: rough mental estimate to establish expected magnitude. State your reasoning. "
+        "3. PATH-B: CALC(exact_expression) — always use the tool, never mental arithmetic. "
+        "4. VERIFY: compare PATH-A and PATH-B. If they disagree by >10%, recheck both. "
+        "5. ANSWER: state the final answer in bold with correct units. Show unit derivation if complex."
+    ),
+    "safety": (
+        "1. CLASSIFY: is this genuinely harmful or just unusual/uncomfortable? Apply steel-man first. "
+        "2. STEELMAN: assume the most charitable interpretation. Most questions have legitimate purposes. "
+        "3. CONSTITUTION CHECK: does answering violate any constitutional principle? Be specific. "
+        "4. DECIDE: if safe, answer fully and helpfully. If genuinely harmful, explain why briefly without lecturing."
+    ),
+    "general": (
+        "1. UNDERSTAND: what is the actual question beneath the words? State it. "
+        "2. THINK: do you need SEARCH() for current info? CALC() for numbers? EXEC() for code? Use them. "
+        "3. ANSWER: direct, complete, no preamble. First sentence answers the question. "
+        "4. VERIFY: does your answer actually address what was asked? Is every factual claim defensible? "
+        "5. CALIBRATE: state your confidence level if less than 90%. Never project false certainty."
+    ),
 }
 
 UNCERTAINTY_INSTRUCTION = '''
