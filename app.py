@@ -665,11 +665,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
                     system=system, history=hist_msgs,
                     msg=msg, initial_response=impl,
                 )
-                response = f"**🏗️ Plan:**
-{plan}
+                response = f"**🏗️ Plan:**\n{plan}\n\n**💻 Implementation:**\n{impl}"
 
-**💻 Implementation:**
-{impl}"
                 response = self_verify(response, msg, _gen, skill, complexity)
 
     # ── ACT: OODA agentic loop ────────────────────────────────────────────────
