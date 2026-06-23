@@ -4335,6 +4335,10 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
     # ── 2. Parallel I/O tasks (all I/O runs concurrently) ───────────────────
     def _do_search():
+        # Skip search for short/conversational messages — saves 1-3s TTFT
+        _skip_words = {"hi","hello","hey","thanks","ok","okay","sure","yes","no","bye"}
+        if len(msg.split()) <= 3 and msg.lower().strip().rstrip("!?.") in _skip_words:
+            return (msg, "")
         return extract_search_context(msg)
 
     def _do_history():
