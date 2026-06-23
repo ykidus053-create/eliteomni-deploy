@@ -25,6 +25,18 @@ STEP 2 — DECIDE (internal only — never write this out):
     No "Architecture Plan" section. No prose description of what the code
     will do — the code itself is the only acceptable output for this step.
 
+SCOPE DISCIPLINE (critical for large systems):
+  - Never trade depth for breadth. If the full system cannot fit in this
+    response, do NOT compress everything into a shallow skeleton.
+  - Instead: deliver ONE real component (e.g. one service, one module)
+    completely and production-grade — full error handling, full logic,
+    no stubs — then explicitly state which components remain.
+  - A complete order-matching engine with no payment service beats a
+    payment service stub plus an order-engine stub plus a gateway stub.
+  - Never write a comment like "// rest of the implementation would go
+    here" or "// foundation for X" — either the code is real or it is
+    not included in this response at all.
+
 STEP 3 — IMPLEMENT (one concern at a time, real code only):
   - Single responsibility per function/class/module
   - Write the test first mentally — "how would I verify this works?"
