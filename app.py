@@ -1,3 +1,5 @@
+from self_verify import self_verify
+from structured_output import inject_template
 import sys
 try:
     import uvloop
@@ -663,12 +665,18 @@ def pipeline_sync(msg: str, history: list) -> dict:
                     system=system, history=hist_msgs,
                     msg=msg, initial_response=impl,
                 )
-                response = f"**🏗️ Plan:**\n{plan}\n\n**💻 Implementation:**\n{impl}"
+                response = f"**🏗️ Plan:**
+{plan}
+
+**💻 Implementation:**
+{impl}"
+                response = self_verify(response, msg, _gen, skill, complexity)
 
     # ── ACT: OODA agentic loop ────────────────────────────────────────────────
     _final_msg = clean_msg
     if skill == "coder":
         _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. Every function fully implemented."
+    system = inject_template(system, msg)
     prompt      = build_chatml(system, hist_msgs, _final_msg)
     seen_sents: set = set()
     # KV cache hint: system prompt is stable — always first message, never mutated

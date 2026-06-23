@@ -67,3 +67,7 @@ Rewrite with actual implementations:
         code = generate_fn(prompt, model) or code
 
     return code
+
+def get_max_rounds(skill: str = "coder") -> int:
+    """Return tool round budget by skill type."""
+    return {"researcher": 7, "coder": 5, "general": 3, "calculator": 2}.get(skill, 3)
