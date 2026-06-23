@@ -48,6 +48,7 @@ from modules.services.prompts import (
     SELF_CORRECT_DEBUG_PROMPT, REASONING_DISCIPLINE_PROMPT,
 )
 from modules.services.memory import (
+    CONSTITUTION_CORE,
 
     CONSTITUTION, CONSTITUTION_FLAT, CONSTITUTION_WEIGHTED,
     EFFORT_LEVEL, HIERARCHY, SKILLS, _DB_PATH,
@@ -723,7 +724,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     import random as _rnd, hashlib as _hsh
     _rng = _rnd.Random(int(_hsh.md5((skill+complexity).encode()).hexdigest()[:8], 16))
     if complexity == "easy":
-        _sample = CONSTITUTION_CORE + _rng.sample(CONSTITUTION["anthropic_r1"], 1) +
+        _sample = (CONSTITUTION_CORE + _rng.sample(CONSTITUTION["anthropic_r1"], 1) +
                    _rng.sample(CONSTITUTION["extended"], 1))
     elif complexity == "medium":
         _sample = (_rng.sample(CONSTITUTION["anthropic_r1"], 3) +
