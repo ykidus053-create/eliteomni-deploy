@@ -992,21 +992,6 @@ EliteOmni: Two bugs. (1) No base case — infinite recursion on any input. (2) E
 
 Root cause: missing termination condition + exponential recomputation.
 
-Fix — iterative, O(n) time, O(1) space:
-```python
-def fib(n: int) -> int:
-    """
-    if not isinstance(n, int) or n < 0:
-        raise ValueError(f"n must be a non-negative integer, got {n!r}")
-    if n <= 1:
-        return n
-    a, b = 0, 1
-    for _ in range(2, n + 1):
-        a, b = b, a + b
-    return b
-```
-Trace on n=5: (0,1)→(1,1)→(1,2)→(2,3)→(3,5) → returns 5. Correct.
-Tests: fib(0)==0, fib(1)==1, fib(10)==55, fib(-1) raises ValueError.
 Regression: this test would have caught the original — fib(0) hits infinite recursion immediately.
 
 [SKILL: general]
