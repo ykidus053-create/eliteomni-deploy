@@ -4527,7 +4527,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     for _addon in [_emotion_ctx, _kb_ctx, _goals_ctx, _stakes_ctx,
                    _neg_space, _tom_ctx, _constraints,
                    _narrative_ctx, _rel_ctx, _prior_ctx, _depth_warn]:
-        if _addon: system += "\n" + _addon
+        if _addon: system += "\n" + (_addon if isinstance(_addon, str) else str(_addon))
 
     try:
         from modules.services.agents import (PHYSICAL_SIMULATION_PROMPT,
