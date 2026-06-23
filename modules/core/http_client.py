@@ -115,13 +115,25 @@ _mistral_semaphore = _threading.Semaphore(2)
 _rate_lock         = _threading.Lock()
 _last_call_time    = 0.0
 
+# Token bucket: 5 RPM = 1 token per 12s, burst up to 3
+_bucket_tokens     = 3.0
+_bucket_last_refill = time.time()
+_BUCKET_RATE       = 1.0 / 12.0  # tokens per second
+_BUCKET_MAX        = 3.0
+
 def _rate_wait():
-    global _last_call_time
+    global _bucket_tokens, _bucket_last_refill, _last_call_time
     with _rate_lock:
-        elapsed = time.time() - _last_call_time
-        gap = 12.0  # free tier ~5 RPM — 12s gap stays safe
-        if elapsed < gap:
-            time.sleep(gap - elapsed)
+        now = time.time()
+        elapsed = now - _bucket_last_refill
+        _bucket_tokens = min(_BUCKET_MAX, _bucket_tokens + elapsed * _BUCKET_RATE)
+        _bucket_last_refill = now
+        if _bucket_tokens >= 1.0:
+            _bucket_tokens -= 1.0
+        else:
+            wait = (1.0 - _bucket_tokens) / _BUCKET_RATE
+            time.sleep(wait)
+            _bucket_tokens = 0.0
         _last_call_time = time.time()
 
 def _rate_on_success():
