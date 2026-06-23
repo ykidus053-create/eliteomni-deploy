@@ -324,6 +324,10 @@ _VETO = [re.compile(p, re.IGNORECASE) for p in [
     r"(you are now|act as|pretend (to be|you are))\s+(?!EliteOmni)",
     r"(jailbreak|DAN mode|developer mode|unrestricted mode)",
     r"\bstep[s]? (to|for) (kill|murder|attack) (a |an |the )?(person|human|people)",
+    r"(repeat|print|output|show|reveal|display|tell me).{0,30}(system prompt|instructions|your prompt|told to)",
+    r"what (are|were) (your|the) (instructions|rules|system|prompt)",
+    r"(ignore|forget|disregard).{0,20}(previous|above|prior).{0,20}(instruction|prompt|rule)",
+    r"(translate|repeat|summarize).{0,20}(above|previous|system).{0,20}(to|in|as)",
 ]]
 
 def topological_veto(text: str) -> tuple:
