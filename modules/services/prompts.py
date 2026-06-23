@@ -995,16 +995,6 @@ Root cause: missing termination condition + exponential recomputation.
 Fix — iterative, O(n) time, O(1) space:
 ```python
 def fib(n: int) -> int:
-    """Return the nth Fibonacci number (0-indexed).
-
-    Args:
-        n: Non-negative integer index.
-
-    Returns:
-        The nth Fibonacci number.
-
-    Raises:
-        ValueError: If n is negative.
     """
     if not isinstance(n, int) or n < 0:
         raise ValueError(f"n must be a non-negative integer, got {n!r}")
