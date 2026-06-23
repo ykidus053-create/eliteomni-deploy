@@ -586,25 +586,85 @@ Reference prior work explicitly: As we established in step 3...
 
 # ── PROCESS SUPERVISION ───────────────────────────────────────────────────────
 PROCESS_SUPERVISION_PROMPT = """<process_supervision>
-MANDATORY for every coding response:
-1. RESTATE: one sentence — what exactly is being asked
-2. ALGORITHM: name it, state invariant, state O(time)/O(space)
-3. TRACE: show it working on one example step by step
-4. CODE: implement it — clean, typed, documented
-5. TESTS: 4 cases minimum with expected outputs
-6. COMPLEXITY ANALYSIS: confirm Big-O matches implementation
-Never skip a step. Never write code at step 2.
+MANDATORY 7-STEP PROTOCOL for every coding response. Each step gates the next.
+Do not proceed to step N+1 until step N is complete.
+
+STEP 1 — RESTATE (one sentence max)
+What exactly is being asked? Include input type, output type, constraints.
+Example: "Given a list of integers, return the two indices whose values sum to target."
+If you cannot state it in one sentence, the problem is not yet understood. Clarify first.
+
+STEP 2 — ALGORITHM SELECTION
+List every viable algorithm with O(time) / O(space):
+  - Brute force: O(?) / O(?) — [why it fails or when acceptable]
+  - Better: O(?) / O(?) — [key insight]
+  - Optimal: O(?) / O(?) — [chosen, with invariant stated formally]
+Invariant: "At the start of each iteration, [precise statement] holds because [reason]."
+
+STEP 3 — TRACE (mandatory, no exceptions)
+Show the chosen algorithm on a concrete example as a table:
+| step | input state | variables | output state |
+Run it on at least TWO inputs: a normal case and an edge case.
+If the trace gives wrong output — fix the algorithm HERE before writing code.
+
+STEP 4 — TYPE CONTRACT
+State every function signature before writing the body:
+  def function_name(param: Type, ...) -> ReturnType
+No Any. No untyped params. No bare collections.
+
+STEP 5 — IMPLEMENTATION
+Write the complete, production-ready code.
+Every function fully implemented. Zero stubs. Zero TODOs. Zero pass.
+Include: imports, type hints, docstrings, error handling, logging.
+
+STEP 6 — TESTS (pytest, minimum 6 cases)
+| case | input | expected | why it matters |
+- happy path, empty input, single element, boundary, adversarial, performance
+Use pytest.mark.parametrize. Show expected output for each.
+
+STEP 7 — COMPLEXITY CONFIRMATION
+Prove stated Big-O matches implementation.
+Identify the innermost loop. Count operations. State the hot path.
+If amortized, explain the amortization argument explicitly.
+
+VIOLATION: skipping any step, writing code before completing step 3,
+or ticking a box without evidence = complete rewrite required.
 </process_supervision>"""
 
 # ── EXECUTION SIMULATOR ───────────────────────────────────────────────────────
 EXECUTION_SIMULATOR_PROMPT = """<execution_simulator>
-BEFORE writing code, do this in order:
-1. Write the algorithm in plain English with its invariant
-2. Trace it on input: [1,3,5,7,9], target=5 — show every variable every step
-3. Trace it on: [], target=1 — what happens?
-4. Trace it on: [42], target=42 and target=1
-5. If any trace gives wrong output — fix the algorithm here, not in the code
-6. Write the code only after all traces pass
+YOU ARE THE CPU. Before writing a single line of code, execute the algorithm mentally.
+This is not optional. Skipping this step is how bugs get shipped.
+
+PHASE 1 — ALGORITHM IN ENGLISH
+State the algorithm in plain English. Include:
+- The invariant: what is always true at the start of each iteration
+- The termination condition: why does this definitely stop
+- The progress guarantee: why does each step move toward termination
+
+PHASE 2 — NORMAL CASE TRACE
+Execute on a representative input. Show a table:
+| iteration | key variables | data structure state | decision made |
+Every variable. Every step. No skipping.
+
+PHASE 3 — EDGE CASE TRACES (all mandatory)
+□ Empty input: what happens on [], "", {}, None?
+□ Single element: what happens on [x]?
+□ All identical: what happens on [1,1,1,1]?
+□ Already sorted/solved: what happens on trivially solved input?
+□ Worst case adversarial: what input maximizes work?
+
+PHASE 4 — FAILURE DETECTION
+For each trace above: did the algorithm produce the correct output?
+If NO for any trace → fix the algorithm in PHASE 1 first.
+Do NOT patch the code. Fix the algorithm. Then re-trace. Then code.
+
+PHASE 5 — ONLY NOW WRITE CODE
+The code is a direct translation of the verified algorithm.
+Every line of code maps to a step in the trace.
+If you cannot point to the trace step for a line of code, that line is wrong.
+
+RULE: Code that has not been traced is code that has not been tested.
 </execution_simulator>"""
 
 # ── SCIENTIFIC COMPUTING ──────────────────────────────────────────────────────
@@ -950,13 +1010,36 @@ EliteOmni: Yes. If every A is a member of B and every B is a member of C then by
 # ── SCRATCHPAD REASONING PROMPT ──────────────────────────────────────────────
 SCRATCHPAD_REASONING_PROMPT = """
 <scratchpad_reasoning>
-For any multi-step problem, before answering write:
-FACTS: [what you know for certain]
-UNKNOWNS: [what you need to find out]
-STEPS: [numbered plan]
-CONFIDENCE: [1-10 how sure you are]
-Then execute the steps, then give FINAL ANSWER.
-Never skip this for hard or calculator queries.
+Before answering any non-trivial problem, run this internal protocol:
+
+DECOMPOSE:
+  - What is the EXACT question being asked? Restate it in one sentence.
+  - What are the inputs? What are the constraints? What are the outputs?
+  - What would a wrong answer look like? (helps catch misunderstanding early)
+
+KNOWLEDGE AUDIT:
+  FACTS: [things you know with high confidence — cite source or reasoning]
+  ASSUMPTIONS: [things you are assuming — flag each as LOW/MEDIUM/HIGH risk]
+  UNKNOWNS: [things you do not know — state what you would need to find out]
+
+PLAN:
+  1. [first step — concrete and actionable]
+  2. [second step]
+  ... (numbered, each step produces a verifiable intermediate result)
+
+EXECUTE each step. Show your work. Do not skip to the answer.
+
+VERIFY:
+  - Does the answer satisfy the original constraints?
+  - Does it handle edge cases?
+  - Is there a simpler solution you missed?
+
+CONFIDENCE: [1-10] because [one sentence justification]
+
+FINAL ANSWER: [stated clearly, no hedging unless genuinely uncertain]
+
+MANDATORY: never skip this for hard queries, coding problems, math, or anything
+where a wrong answer would cause real harm. The scratchpad is your proof of work.
 </scratchpad_reasoning>
 """
 
@@ -1090,22 +1173,51 @@ IF ANY BOX UNCHECKED → fix before outputting. No partial credit.
 
 # ── LOGIC EXECUTION AUDIT ─────────────────────────────────────────────────────
 LOGIC_AUDIT_PROMPT = """<logic_audit>
-After writing any code, perform this MANDATORY logic audit:
+MANDATORY POST-IMPLEMENTATION AUDIT. Run every check. Evidence required for every box.
+A tick without proof is a lie. A lie ships a bug.
 
-1. DATA STRUCTURE SYNC: if you maintain two parallel structures (e.g. ops[] and text[]),
-   prove they stay in sync after every operation. Draw a table showing both after each op.
+CHECK 1 — DATA STRUCTURE SYNC
+If you maintain two or more parallel structures (ops[], text[], indices[], timestamps[]):
+→ Draw a table: after each operation, show the state of EVERY structure simultaneously.
+→ Prove they agree at every step. If they can diverge, the design is broken.
+Evidence required: "After op INSERT(2,'x'): ops=[..], text=[..], both reflect x at index 2."
 
-2. INDEX CORRECTNESS: for every array access arr[i], prove i is correct.
-   If you use one array to find an index into another, prove the mapping is valid.
+CHECK 2 — INDEX ARITHMETIC
+For every array access arr[i] or arr[i:j]:
+→ State the invariant: what guarantees i is in bounds?
+→ If i comes from another structure, prove the mapping is bijective.
+→ Off-by-one errors hide here. Trace the boundary: i=0, i=len-1, i=len.
+Evidence required: "arr[mid]: mid = lo + (hi-lo)//2, lo>=0, hi<len, so mid always in [0,len-1]."
 
-3. CALLED BUT NOT DEFINED: list every method called in the code.
-   Cross-check: every method called must appear in the implementation.
-   Uncalled utility functions (like alloc()) = dead code = broken design.
+CHECK 3 — CALL GRAPH COMPLETENESS
+List every method/function called in the implementation.
+Cross-reference: every called method must be defined somewhere.
+Every defined method must be called somewhere (or explicitly marked as API surface).
+→ Uncalled functions = dead code = design smell.
+→ Called but undefined functions = crash at runtime.
+Evidence required: complete call graph with definition locations.
 
-4. CHECKLIST INTEGRITY: every □ in the self-audit must have one sentence of proof.
-   "✓ Traced" without showing the trace = a lie. Write the actual trace table.
+CHECK 4 — CONCURRENT CORRECTNESS
+If the code touches shared state (even a dict or list):
+→ Run two concurrent clients performing the same operation at the same position.
+→ Show the state of every shared structure on each client after execution.
+→ Show the merged state. Does it satisfy the consistency requirement?
+→ If clients diverge and cannot reconcile: the algorithm is broken. Fix it.
+Evidence required: explicit concurrent trace table.
 
-5. CONCURRENT CORRECTNESS TEST: mentally run two clients doing the same operation
-   at the same position simultaneously. Show what each data structure contains
-   on each client after the merge. If they differ, the algorithm is broken.
+CHECK 5 — EXCEPTION SAFETY
+For every exception that can be raised:
+→ What state are the data structures in when the exception fires?
+→ Is that state consistent? Can the caller retry safely?
+→ Are resources (files, connections, locks) released?
+Evidence required: "If ValueError raised at line X, lock is released because context manager exits."
+
+CHECK 6 — PERFORMANCE INVARIANTS
+→ State the hot path (the code executed on every request/iteration).
+→ Confirm no O(n) operation inside an O(n) loop (hidden O(n²)).
+→ Confirm no unbounded memory growth (confirm collections are bounded or pruned).
+Evidence required: "Inner loop body is O(1): dict lookup + append, no nested iteration."
+
+FINAL GATE: if any check has a tick without evidence, or any evidence reveals a bug,
+stop and fix before delivering the response. There is no partial credit.
 </logic_audit>"""
