@@ -2755,6 +2755,7 @@ async def stream_chat(req: Request):
 
     async def _gen():
         import asyncio as _asyncio
+        yield ""
         _loop = _asyncio.get_event_loop()
         try:
             ctx = await _asyncio.wait_for(_loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist)), timeout=30)
