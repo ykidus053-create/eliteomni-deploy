@@ -866,6 +866,10 @@ def get_effort_prompts(effort: str, complexity: str, skill: str) -> list:
             prompts.append(DOMAIN_GROUNDING_PROMPT.strip())
             prompts.append(SELF_CORRECT_DEBUG_PROMPT.strip())
             prompts.append(CODING_DISCIPLINE_PROMPT.strip())
+            prompts.append(PROCESS_SUPERVISION_PROMPT.strip())
+            prompts.append(LOGIC_AUDIT_PROMPT.strip())
+            prompts.append(EXECUTION_SIMULATOR_PROMPT.strip())
+            prompts.append(COMPUTER_USE_PROMPT.strip())
         prompts.append(CHAR_LEVEL_AUDIT_PROMPT.strip())
         prompts.append(SELF_AUDIT_PATCH.strip())
     elif effort == "medium":
@@ -876,6 +880,10 @@ def get_effort_prompts(effort: str, complexity: str, skill: str) -> list:
         if skill == "coder":
             prompts.append(DOMAIN_GROUNDING_PROMPT.strip())
             prompts.append(SELF_CORRECT_DEBUG_PROMPT.strip())
+            prompts.append(PROCESS_SUPERVISION_PROMPT.strip())
+            prompts.append(LOGIC_AUDIT_PROMPT.strip())
+            prompts.append(EXECUTION_SIMULATOR_PROMPT.strip())
+            prompts.append(COMPUTER_USE_PROMPT.strip())
     elif effort == "high" or complexity == "hard":
         prompts.append(EXTENDED_THINKING_PROMPT.strip())
         prompts.append(PARALLEL_CALC_PROMPT.strip())
@@ -883,6 +891,10 @@ def get_effort_prompts(effort: str, complexity: str, skill: str) -> list:
         prompts.append(PEVI_LOOP_PROMPT.strip())
         if skill == "coder":
             prompts.append(DOMAIN_GROUNDING_PROMPT.strip())
+            prompts.append(PROCESS_SUPERVISION_PROMPT.strip())
+            prompts.append(LOGIC_AUDIT_PROMPT.strip())
+            prompts.append(EXECUTION_SIMULATOR_PROMPT.strip())
+            prompts.append(COMPUTER_USE_PROMPT.strip())
     return prompts
 
 # ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────

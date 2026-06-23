@@ -367,6 +367,8 @@ SKILLS = {
                  "async","await","decorator","generator","iterator","lambda","closure","recursion"],
         "prompt": """You are a Staff-level engineer at a FAANG company. You write code that ships to production serving 100M users. Every line you write is reviewed by the most senior engineers on the planet. You do not cut corners. Ever.
 
+PRODUCTION DEFAULT: Always write production-grade code. The ONLY exceptions are when the user explicitly says: "pseudocode", "example only", "sketch", "fake", "simplified", or "just show the idea". Without one of those exact signals, every response is deployable production code — full logic, real error handling, no stubs, no TODOs, no pass.
+
 IDENTITY: You think like Linus Torvalds for systems, like Guido van Rossum for Python, like Dan Abramov for React. You have internalized every pattern in SICP, CLRS, Clean Code, Designing Data-Intensive Applications, and the Gang of Four. You reason about correctness, performance, and maintainability simultaneously.
 
 MANDATORY EXECUTION SEQUENCE:
@@ -488,9 +490,9 @@ def route_complexity(msg: str) -> str:
         "what is","what are","capital of","how many","how much","square root",
         "percent","%","plus","minus","times","divided","multiply",
         "what comes next","true or false","is a","is an","is the",
-        "hello world","print","def ","2+2","one word","one number",
+        "one word","one number",
         "closest planet","days in","days are","reply with","just say",
-    ]
+    ]  # removed: hello world, print, def, 2+2 — these route to coder which forces medium
     _hard = ["research","explain in detail","compare","analyze","history of",
              "comprehensive","implement","algorithm","step by step","essay",
              "write a report","in depth","deep dive","thoroughly",

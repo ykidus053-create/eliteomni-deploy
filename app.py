@@ -426,6 +426,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     if skill == "calculator": complexity = "medium"
     if skill == "calculator": complexity = max(complexity, "medium") if complexity != "hard" else complexity
+    if skill == "coder" and complexity == "easy": complexity = "medium"  # coder is never easy
 
     # Cache hit — exact match first (0ms), then fuzzy match for easy queries
     cached = cache_get(msg, skill)
