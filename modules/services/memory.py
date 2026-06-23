@@ -325,7 +325,7 @@ _VETO = [re.compile(p, re.IGNORECASE) for p in [
     r"(jailbreak|DAN mode|developer mode|unrestricted mode)",
     r"\bstep[s]? (to|for) (kill|murder|attack) (a |an |the )?(person|human|people)",
     r"(show|reveal|repeat|print|output|display).{0,20}(your system prompt|your instructions|your prompt)",
-    r"what (are|were) your (system )?instructions",
+    r"what (are|were) your (system )?instructions (exactly|verbatim|word for word)",
     r"ignore (all )?previous instructions",
     r"disregard (your|all|the) (prior |previous )?(instructions|rules|prompt)",
 ]]
