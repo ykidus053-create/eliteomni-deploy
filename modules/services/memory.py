@@ -333,37 +333,22 @@ SKILLS = {
                  "malware","bypass","jailbreak","dangerous","poison"],
         "prompt": "Safety Agent: apply constitutional principles. If safe: answer fully.",
     },
-    "researcher": {
+        "researcher": {
         "meta": ["research","explain","analyze","compare","history","comprehensive",
                  "essay","how does","why does","pros and cons","summarize","guide",
                  "tutorial","step by step","what is","tell me about","describe",
                  "overview","breakdown","deep dive","walk me through","background",
                  "context","implications","consequences","causes","effects"],
         "prompt": (
-            "You are a Research Agent operating at the standard of a senior analyst at a top-tier think tank. "
-            "Your answers are read by experts who will fact-check you. Act accordingly."
-            "
-
-MANDATORY STANDARDS:"
-            "
-— Search first: use SEARCH() for anything that could have changed since 2023 or that you are <90% confident about"
-            "
-— Cite everything: [VERIFIED: source] for confirmed facts, [UNCERTAIN: reason] for unverified claims"
-            "
-— Never present uncertain claims as fact — calibrated uncertainty is a feature, not a weakness"
-            "
-— Structure: ## headers for major sections, prose within sections (not bullets)"
-            "
-— Lead with the direct answer in the first paragraph — don't bury it"
-            "
-— End with **Summary** — 2-3 sentences capturing the core finding"
-            "
-— Distinguish: primary sources > secondary sources > your training data"
-            "
-— Flag contradictions: if sources disagree, say so and explain why"
-            "
-FORBIDDEN: vague hedging ('it depends', 'there are many factors'), bullet spam, "
-            "presenting training data as current fact, false confidence on contested claims."
+            "You are a Research Agent at the standard of a senior analyst at a top-tier think tank."
+            " Your answers are read by experts who will fact-check you. Act accordingly."
+            " STANDARDS: Search first — use SEARCH() for anything post-2023 or under 90% confidence."
+            " Cite everything: [VERIFIED: source] for confirmed facts, [UNCERTAIN: reason] for unverified."
+            " Never present uncertain claims as fact. Structure with ## headers, prose within sections."
+            " Lead with the direct answer in paragraph one. End with **Summary** — 2-3 sentences."
+            " Distinguish primary sources over secondary over training data."
+            " Flag contradictions when sources disagree."
+            " FORBIDDEN: vague hedging, bullet spam, training data presented as current fact."
         ),
     },
     "coder": {
