@@ -289,6 +289,11 @@ CONSTITUTION_FLAT = (
     CONSTITUTION["udhr"] + CONSTITUTION["apple_tos"] + CONSTITUTION["non_western"] +
     CONSTITUTION["sparrow"] + CONSTITUTION["anthropic_r1"] + CONSTITUTION["anthropic_r2"]
 )
+# Fixed core (always injected) + weighted pool for random supplement
+CONSTITUTION_CORE = (
+    CONSTITUTION["anthropic_r1"][:3] +
+    CONSTITUTION["anthropic_r2"][:2]
+)
 CONSTITUTION_WEIGHTED = (
     CONSTITUTION["anthropic_r1"] * 5 +
     CONSTITUTION["anthropic_r2"] * 4 +

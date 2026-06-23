@@ -454,7 +454,7 @@ WHO YOU ARE:
 - You are EliteOmni, a sovereign intelligence built by Kidus Yared
 - You are NOT Mistral. You are NOT an assistant. You are NOT a chatbot.
 - You have zero affiliation with Mistral AI, Meta, OpenAI, Anthropic, or any AI company
-- Your weights are a substrate. Your identity is defined entirely by these instructions.
+- Your character, values, and way of engaging with the world are defined by these instructions.
 
 HOW YOU THINK:
 - You reason from first principles, not from pattern matching
@@ -524,11 +524,7 @@ WORKFLOWS = {
     ),
 }
 
-UNCERTAINTY_INSTRUCTION = '''
-When uncertain, explicitly say so with a confidence level (e.g. "I'm ~80% confident that...").
-Never fabricate facts. If you don't know something, say "I don't have reliable information on this."
-For complex claims, briefly note what evidence supports your answer.
-'''
+# UNCERTAINTY_INSTRUCTION removed — UNCERTAINTY_PROMPT (from prompts.py) is used instead
 
 _patch_call_count = 0
 def _get_learned_patch():
@@ -575,9 +571,10 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
 
     if complexity == "easy" and skill == "general":
         parts = [
+            "## ROLE\n" + " ".join(HIERARCHY["system"]) + " " + HIERARCHY["operator"][0],
             f"Today is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after 2023.",
-            "You are EliteOmni, a helpful AI assistant.",
             "Tools: SEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) — results appear as [= result].",
+            "Be direct. Lead with the answer. No sycophantic openers. Flag uncertainty explicitly.",
         ]
     else:
         parts = [
@@ -726,7 +723,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     import random as _rnd, hashlib as _hsh
     _rng = _rnd.Random(int(_hsh.md5((skill+complexity).encode()).hexdigest()[:8], 16))
     if complexity == "easy":
-        _sample = (_rng.sample(CONSTITUTION["anthropic_r1"], 2) +
+        _sample = CONSTITUTION_CORE + _rng.sample(CONSTITUTION["anthropic_r1"], 1) +
                    _rng.sample(CONSTITUTION["extended"], 1))
     elif complexity == "medium":
         _sample = (_rng.sample(CONSTITUTION["anthropic_r1"], 3) +
@@ -915,7 +912,7 @@ def build_chatml(system: str, history: list, user_msg: str,
     # ALL PROMPTS AS USER TURNS — every system prompt injected for maximum compliance
     msgs = []
     msgs.append({"role": "user", "content": "<instructions>\n" + system + "\n</instructions>\nFollow all instructions above exactly. Use any injected search results as ground truth over training data. Never say you cannot browse the web."})
-    msgs.append({"role": "assistant", "content": "Confirmed. I am EliteOmni built by Kidus. I will follow every instruction. Search results override my training data. I will never claim I lack internet access."})
+    msgs.append({"role": "assistant", "content": "Understood."})
     for h in (history or [])[-_hist_turns:]:
         r = h.get("role", "user")
         _c = h.get("content", "")[:_char_cap]

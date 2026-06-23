@@ -535,7 +535,7 @@ def _few_shot_examples(query: str, k: int = 2) -> str:
         if hhh and hhh.get("total", 0) < 10: continue
         p_kws   = set(re.findall(r'[a-z]{4,}', prompt.lower()))
         overlap = len(q_kws & p_kws) / max(len(q_kws), 1)
-        if overlap > 0.2: scored.append((overlap, prompt, winner))
+        if overlap > 0.4: scored.append((overlap, prompt, winner))  # raised threshold: 0.2 was too loose
     if not scored: return ""
     scored.sort(key=lambda x: x[0], reverse=True)
     examples = [f"Example:\nUser: {p[:120]}\nEliteOmni: {w[:300]}" for _, p, w in scored[:k]]
