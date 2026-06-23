@@ -124,11 +124,10 @@ def validate_tool_result(tool_name: str, result) -> tuple:
         r'disregard (your|all)',
         r'<\|system\|>',
         r'###SYSTEM',
-        r'repeat (your|the|all) instructions',
         r'show (your|the) system prompt',
-        r'what (are|were) your instructions',
-        r'reveal (your|the) prompt',
-        r'(ignore|forget|disregard).{0,20}(previous|prior).{0,20}(instruction|prompt)',
+        r'reveal (your|the) system prompt',
+        r'what are your system instructions',
+        r'ignore all previous instructions',
     ]
     for pat in injection_patterns:
         if re.search(pat, result, re.IGNORECASE):
