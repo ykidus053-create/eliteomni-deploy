@@ -256,6 +256,12 @@ def _needs_fresh_search(msg: str) -> bool:
     """
     import re
     msg_lower = msg.lower()
+    # Never search for pure coding tasks — model knows syntax/stdlib/algorithms
+    _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
+                     "debug", "refactor", "optimize", "algorithm", "implement",
+                     "write a function", "write a class", "fix this", "bug in"]
+    if any(t in msg_lower for t in _code_signals):
+        return False
 
     # Always search for news/current events queries
     news_triggers = ["news", "latest", "today", "current", "recent", "now",
@@ -4338,6 +4344,12 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         # Skip search for short/conversational messages — saves 1-3s TTFT
         _skip_words = {"hi","hello","hey","thanks","ok","okay","sure","yes","no","bye"}
         if len(msg.split()) <= 3 and msg.lower().strip().rstrip("!?.") in _skip_words:
+            return (msg, "")
+        # Skip search for coding tasks — model knows syntax/algorithms/stdlib
+        _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
+                         "debug", "refactor", "optimize", "algorithm", "implement",
+                         "write a function", "fix this", "bug in"]
+        if any(t in msg.lower() for t in _code_signals):
             return (msg, "")
         return extract_search_context(msg)
 
