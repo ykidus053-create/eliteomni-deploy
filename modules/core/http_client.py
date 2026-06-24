@@ -632,9 +632,8 @@ def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
     """
     if model and str(model).startswith("cerebras/"):
         from groq_client import cerebras_stream
-        from modules.core.rate_limiter import cerebras_limiter
         mdl = model.replace("cerebras/", "")
-        cerebras_limiter.acquire()
+        _cbrs_rate_wait()
         yield from cerebras_stream(msgs, max_tokens=max_tokens, model=mdl)
         return
     import time as _time_tr
