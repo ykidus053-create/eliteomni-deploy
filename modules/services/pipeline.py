@@ -968,7 +968,10 @@ def _token_budget(msg: str, skill: str, complexity: str) -> dict:
 
 def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int, provider: str = "mistral", model: str = None) -> str:
     from modules.core.http_client import mistral_stream
-    mdl = model or "magistral-medium-latest"
+    from modules.core.constants import get_infra_tier
+    if model is None:
+        model = get_infra_tier("medium", skill)["models"][0]
+    mdl = model
     result = "".join(mistral_stream(msgs, max_tokens=max_new, model=mdl))
     # Hassabis: flag uncertain claims before serving
     try:

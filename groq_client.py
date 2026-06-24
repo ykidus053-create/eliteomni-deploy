@@ -900,7 +900,8 @@ CEREBRAS_MODEL   = "zai-glm-4.7"
 import re as _re
 _THINK_RE = _re.compile(r'<think>.*?</think>', _re.DOTALL)
 
-def cerebras_stream(msgs: list, max_tokens: int = 8000, model: str = None):
+def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
+    max_tokens = min(max_tokens, 16000)  # GLM-4.7 hard ceiling
     global CEREBRAS_API_KEY
     if not CEREBRAS_API_KEY:
         import pathlib
@@ -919,9 +920,17 @@ def cerebras_stream(msgs: list, max_tokens: int = 8000, model: str = None):
         yield "[CEREBRAS_API_KEY not set]"; return
     import urllib.request, json as _json
     mdl = model or CEREBRAS_MODEL
+    # Convert injected system-as-user pattern to proper system role
+    # so GLM-4.7 doesn't leak instructions in responses
+    _msgs = list(msgs)
+    if (_msgs and _msgs[0].get("role") == "user" and
+            len(_msgs) > 1 and _msgs[1].get("role") == "assistant" and
+            _msgs[1].get("content", "").startswith("Understood")):
+        _sys_content = _msgs[0]["content"]
+        _msgs = [{"role": "system", "content": _sys_content}] + _msgs[2:]
     payload = _json.dumps({
         "model": mdl,
-        "messages": msgs,
+        "messages": _msgs,
         "max_completion_tokens": max_tokens,
         "temperature": 0.2,
         "stream": True,
