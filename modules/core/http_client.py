@@ -141,10 +141,32 @@ def _rate_on_success():
     with _rate_lock:
         _last_call_time = time.time()
 
+# ── CEREBRAS RATE LIMITER ────────────────────────────────────────────────────
+_cbrs_rate_lock        = _threading.Lock()
+_cbrs_bucket_tokens    = 3.0
+_cbrs_bucket_last      = time.time()
+_CBRS_BUCKET_RATE      = 1.0 / 12.0  # 5 RPM = 1 token per 12s
+_CBRS_BUCKET_MAX       = 3.0
+
+def _cbrs_rate_wait():
+    global _cbrs_bucket_tokens, _cbrs_bucket_last
+    with _cbrs_rate_lock:
+        now = time.time()
+        elapsed = now - _cbrs_bucket_last
+        _cbrs_bucket_tokens = min(_CBRS_BUCKET_MAX, _cbrs_bucket_tokens + elapsed * _CBRS_BUCKET_RATE)
+        _cbrs_bucket_last = now
+        if _cbrs_bucket_tokens >= 1.0:
+            _cbrs_bucket_tokens -= 1.0
+        else:
+            wait = (1.0 - _cbrs_bucket_tokens) / _CBRS_BUCKET_RATE
+            time.sleep(wait)
+            _cbrs_bucket_tokens = 0.0
+
 # ── MISTRAL STREAM ────────────────────────────────────────────────────────────
 def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill: str = None, tools: list = None):
     if model and str(model).startswith("cerebras/"):
         from groq_client import cerebras_stream
+        _cbrs_rate_wait()
         yield from cerebras_stream(msgs, max_tokens=max_tokens, model=model.replace("cerebras/", ""))
         return
     if not MISTRAL_API_KEY:
