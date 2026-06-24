@@ -1360,23 +1360,39 @@ HTML = r"""<!DOCTYPE html>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
 :root{
-  --bg:#1a1a1a;
-  --sidebar-bg:#1a1a1a;
-  --main-bg:#1a1a1a;
-  --input-bg:#2f2f2f;
-  --hover:#2f2f2f;
-  --active:#3a3a3a;
-  --border:#3a3a3a;
-  --border-light:#444;
-  --text:#ececec;
-  --text-2:#9b9b9b;
-  --text-3:#6e6e6e;
-  --accent:#cc785c;
-  --accent-hover:#c96442;
+  /* Backgrounds — from --bg-000/100/200/300 */
+  --bg:hsl(60,2.1%,18.4%);
+  --sidebar-bg:hsl(60,2.7%,14.5%);
+  --main-bg:hsl(60,2.1%,18.4%);
+  --input-bg:hsl(30,3.3%,11.8%);
+  --hover:hsl(60,2.7%,14.5%);
+  --active:hsl(30,3.3%,11.8%);
+
+  /* Borders — from --border-100 */
+  --border:hsl(51,16.5%,84.5%,0.12);
+  --border-light:hsl(51,16.5%,84.5%,0.2);
+
+  /* Text — from --text-000/200/400 */
+  --text:hsl(48,33.3%,97.1%);
+  --text-2:hsl(50,9%,73.7%);
+  --text-3:hsl(48,4.8%,59.2%);
+
+  /* Accent — from --brand-100 (Anthropic coral) */
+  --accent:hsl(15,63.1%,59.6%);
+  --accent-hover:hsl(15,54.2%,51.2%);
+
+  /* Accent blue — from --accent-100 */
+  --accent-blue:hsl(210,70.9%,51.6%);
+
+  /* Success/danger/warning */
+  --success:hsl(97,59.1%,46.1%);
+  --danger:hsl(0,67%,59.6%);
+  --warning:hsl(40,71%,50%);
+
   --sb-width:260px;
   --radius:8px;
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.6}
+body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:24px;-webkit-font-smoothing:antialiased;scrollbar-color:rgba(226,225,218,0.35) rgba(0,0,0,0);scrollbar-width:thin}
 #shell{display:flex;height:100dvh;overflow:hidden}
 
 /* SIDEBAR */
