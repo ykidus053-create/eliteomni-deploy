@@ -2484,7 +2484,11 @@ async function send(){
       }
 
       // Schedule one rAF per frame — never blocks, never per-token
-      if(metaParsed && fullText) scheduleRaf();
+      if(metaParsed && fullText){
+        scheduleRaf();
+        const _m=document.getElementById("msgs");
+        if(_m.scrollHeight-_m.scrollTop-_m.clientHeight<200)_m.scrollTop=_m.scrollHeight;
+      }
     }
 
     // ── Final render: full markdown + hljs + math, exactly once ───
