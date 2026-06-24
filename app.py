@@ -2448,7 +2448,7 @@ async function send(){
         const c=document.createElement('span');c.className='cursor';c.id='cur';
         aiBub.appendChild(c);
       }
-      scr();
+      if((document.getElementById("msgs").scrollHeight-document.getElementById("msgs").scrollTop-document.getElementById("msgs").clientHeight)<80)document.getElementById("msgs").scrollTop=document.getElementById("msgs").scrollHeight;
       rafPending=false;
     }
 
