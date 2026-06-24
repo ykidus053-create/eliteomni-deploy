@@ -978,6 +978,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     _buf = ""
     _in_think = False
     import time as _t, urllib.error as _ue
+    _cbrs_ok = False
     for _attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
@@ -1010,7 +1011,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                                 _buf = _buf[start + 7:]; _in_think = True
                     except Exception:
                         continue
-        else:
+            _cbrs_ok = True
             break
         except _ue.HTTPError as _he:
             if _he.code == 429 and _attempt < 3:
@@ -1019,6 +1020,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                 _t.sleep(_wait)
                 continue
             raise
-    except Exception as e:
-        print(f"[Cerebras stream error] {e}")
-        yield f"[Cerebras error: {e}]"
+        except Exception as e:
+            print(f"[Cerebras stream error] {e}")
+            yield f"[Cerebras error: {e}]"
+            break
