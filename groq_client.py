@@ -562,6 +562,8 @@ def groq_stream(msgs: list, max_tokens: int = 0, model: str = None):
     )
 
 
+    _buf = ""
+    _in_think = False
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
             for raw in r:
@@ -871,8 +873,23 @@ def mistral_stream(msgs: list, max_tokens: int = 4000, model: str = None):
                         chunk = json.loads(line[6:])
                         delta = chunk["choices"][0].get("delta", {})
                         token = delta.get("content", "")
-                        if token:
-                            yield token
+                        if not token:
+                            continue
+                        _buf += token
+                        while True:
+                            if _in_think:
+                                end = _buf.find("</think>")
+                                if end == -1:
+                                    _buf = ""; break
+                                _buf = _buf[end + 8:]; _in_think = False
+                            else:
+                                start = _buf.find("<think>")
+                                if start == -1:
+                                    out, _buf = _buf, ""
+                                    if out: yield out
+                                    break
+                                if start > 0: yield _buf[:start]
+                                _buf = _buf[start + 7:]; _in_think = True
                     except Exception:
                         continue
             _cb_record_success()
@@ -942,6 +959,8 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                  "User-Agent": "curl/7.88.1",
                  }
     )
+    _buf = ""
+    _in_think = False
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
             for raw in r:
