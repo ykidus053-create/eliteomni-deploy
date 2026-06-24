@@ -1348,7 +1348,16 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>EliteOmni</title>
-<link href="https://fonts.googleapis.com/css2?family=Styrene+A:wght@400;500&display=swap" rel="stylesheet">
+<style>
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url(https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/cc27851ad-CFxw3nG7.woff2) format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "dlig" 0;
+}
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -1359,6 +1368,39 @@ HTML = r"""<!DOCTYPE html>
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
+:root{
+  /* ── Typography scale (Claude CDS) ── */
+  --text-xs:.75rem; --text-xs--lh:calc(1/.75);
+  --text-sm:.875rem; --text-sm--lh:calc(1.25/.875);
+  --text-base:1rem; --text-base--lh:1.5;
+  --text-lg:1.125rem; --text-lg--lh:calc(1.75/1.125);
+  --text-xl:1.25rem; --text-xl--lh:calc(1.75/1.25);
+  --text-2xl:1.5rem; --text-2xl--lh:calc(2/1.5);
+  --text-3xl:1.875rem; --text-3xl--lh:1.2;
+  --text-4xl:2.25rem; --text-4xl--lh:calc(2.5/2.25);
+  /* ── Font weights ── */
+  --fw-light:300; --fw-normal:400; --fw-medium:500; --fw-semibold:600; --fw-bold:700; --fw-extrabold:800;
+  /* ── Letter spacing ── */
+  --tracking-tight:-.025em; --tracking-normal:0em; --tracking-wide:.025em; --tracking-wider:.05em; --tracking-widest:.1em;
+  /* ── Line heights ── */
+  --leading-tight:1.25; --leading-snug:1.375; --leading-normal:1.5; --leading-relaxed:1.625;
+  /* ── Border radius ── */
+  --radius-sm:.25rem; --radius-md:.375rem; --radius-lg:.5rem; --radius-xl:.75rem; --radius-2xl:1rem; --radius-3xl:1.5rem;
+  /* ── Shadows ── */
+  --shadow-sm:0 1px 2px #0000000d; --shadow-md:0 4px 6px #0000001a; --shadow-lg:0 10px 15px #0000001a;
+  --drop-shadow-md:0 3px 3px #0000001f; --drop-shadow-lg:0 4px 4px #00000026;
+  /* ── Easing ── */
+  --ease-in:cubic-bezier(.4,0,1,1); --ease-in-out:cubic-bezier(.4,0,.2,1);
+  --default-transition-duration:.15s; --default-transition-timing:cubic-bezier(.4,0,.2,1);
+  /* ── Blur ── */
+  --blur-sm:8px; --blur-md:12px; --blur-lg:16px; --blur-xl:24px; --blur-3xl:64px;
+  /* ── Spacing base ── */
+  --spacing:.25rem;
+  /* ── Containers ── */
+  --container-xs:20rem; --container-sm:24rem; --container-md:28rem; --container-lg:32rem;
+  --container-xl:36rem; --container-2xl:42rem; --container-3xl:48rem; --container-4xl:56rem;
+  --container-5xl:64rem; --container-6xl:72rem; --container-7xl:80rem;
+}
 :root{
   /* Backgrounds — from --bg-000/100/200/300 */
   --bg:hsl(60,2.1%,18.4%);
@@ -1392,7 +1434,7 @@ html,body{height:100%;overflow:hidden}
   --sb-width:260px;
   --radius:8px;
 }
-body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:24px;-webkit-font-smoothing:antialiased;scrollbar-color:rgba(226,225,218,0.35) rgba(0,0,0,0);scrollbar-width:thin}
+body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:var(--text-base);line-height:var(--text-base--lh);font-weight:var(--fw-normal);letter-spacing:var(--tracking-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:"dlig" 0;scrollbar-color:rgba(226,225,218,0.35) rgba(0,0,0,0);scrollbar-width:thin;transition:color var(--default-transition-duration) var(--default-transition-timing)}
 #shell{display:flex;height:100dvh;overflow:hidden}
 
 /* SIDEBAR */
