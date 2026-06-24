@@ -870,7 +870,7 @@ def mistral_stream(msgs: list, max_tokens: int = 4000, model: str = None):
                     try:
                         chunk = json.loads(line[6:])
                         delta = chunk["choices"][0].get("delta", {})
-                        token = delta.get("content") or delta.get("reasoning", "")
+                        token = delta.get("content", "")
                         if token:
                             yield token
                     except Exception:
@@ -896,6 +896,9 @@ def mistral_stream(msgs: list, max_tokens: int = 4000, model: str = None):
 CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 CEREBRAS_URL     = "https://api.cerebras.ai/v1/chat/completions"
 CEREBRAS_MODEL   = "zai-glm-4.7"
+
+import re as _re
+_THINK_RE = _re.compile(r'<think>.*?</think>', _re.DOTALL)
 
 def cerebras_stream(msgs: list, max_tokens: int = 8000, model: str = None):
     global CEREBRAS_API_KEY
