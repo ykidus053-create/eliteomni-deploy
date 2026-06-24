@@ -610,16 +610,17 @@ def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
     """
     if model and str(model).startswith("cerebras/"):
         from groq_client import cerebras_stream
-        mdl = model.replace("cerebras/", "")
         import time as _t, threading as _th
-        _min_gap = 60.0 / 5
-        _lock = getattr(_th.current_thread(), '_cerebras_last_lock', None)
-        if not hasattr(_th.current_thread(), '_cerebras_last'):
-            _th.current_thread()._cerebras_last = 0.0
-        _elapsed = _t.time() - _th.current_thread()._cerebras_last
-        if _elapsed < _min_gap:
-            _t.sleep(_min_gap - _elapsed)
-        _th.current_thread()._cerebras_last = _t.time()
+        mdl = model.replace("cerebras/", "")
+        import modules.core.http_client as _self
+        if not hasattr(_self, '_cbrs_lock'):
+            _self._cbrs_lock = _th.Lock()
+            _self._cbrs_last = 0.0
+        with _self._cbrs_lock:
+            _gap = 12.0 - (_t.time() - _self._cbrs_last)
+            if _gap > 0:
+                _t.sleep(_gap)
+            _self._cbrs_last = _t.time()
         yield from cerebras_stream(msgs, max_tokens=max_tokens, model=mdl)
         return
     import time as _time_tr
