@@ -143,6 +143,10 @@ def _rate_on_success():
 
 # ── MISTRAL STREAM ────────────────────────────────────────────────────────────
 def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill: str = None, tools: list = None):
+    if model and str(model).startswith("cerebras/"):
+        from groq_client import cerebras_stream
+        yield from cerebras_stream(msgs, max_tokens=max_tokens, model=model.replace("cerebras/", ""))
+        return
     if not MISTRAL_API_KEY:
         yield "[MISTRAL_API_KEY not set]"; return
 
