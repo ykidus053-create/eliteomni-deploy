@@ -567,11 +567,10 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if forced_results:
         # Inject search results DIRECTLY into user message so model can't ignore them
         results_block = "\n".join(forced_results)
-        msg = (f"[SEARCH RESULTS — YOU MUST USE ONLY THESE, IGNORE TRAINING DATA]:\n"
+        msg = (f"[SEARCH RESULTS]:\n"
                f"{results_block}\n\n"
                f"[USER QUESTION]: {msg}\n\n"
-               f"Answer using ONLY the search results above. "
-               f"Do not use knowledge from training. Cite sources by number.")
+               f"Use these search results as your primary source. If they are incomplete or missing, supplement with your knowledge and note which parts came from search vs your knowledge.")
         search_ctx += "\n[Pre-executed tools]\n" + results_block
 
     # ── ORIENT ────────────────────────────────────────────────────────────────
@@ -628,10 +627,12 @@ def pipeline_sync(msg: str, history: list) -> dict:
             search_ctx = tool_search_multi(msg)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
-    if search_ctx:
-        search_ctx = "[LIVE SEARCH RESULTS — use ONLY these for current events, ignore training data]:\n" + search_ctx
-        # Append search ctx after system — keeps system prompt intact
-        system += f"\n\n[WEB - REAL SEARCH RESULTS - USE THESE, DO NOT HALLUCINATE]\nToday's date is {__import__('datetime').date.today()}. Use ONLY the following real search results to answer. Do NOT use training data for current events:\n{search_ctx[:3000]}\n[/WEB]"
+    if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
+        # Real search results — inject with strong grounding instruction
+        system += f"\n\n[WEB SEARCH RESULTS — Today is {__import__('datetime').date.today()}. Use these as your primary source. Supplement with knowledge only if results are incomplete.]\n{search_ctx[:3000]}\n[/WEB]"
+    elif not search_ctx or "No results found" in search_ctx:
+        # Search failed or no results — explicitly tell model to use knowledge
+        system += f"\n\n[SEARCH UNAVAILABLE — Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
 
     # Inject MCP tool list if any tools discovered
     mcp_prompt = mcp_tool_list_prompt()
