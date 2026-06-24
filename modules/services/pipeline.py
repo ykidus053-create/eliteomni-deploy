@@ -1033,9 +1033,15 @@ def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int, complexity
     # ── Reflexion only (no voting) for coder tasks ────────────────────────
     if skill == "coder" and reflexion_verify and complexity in ("medium", "hard"):
         print("[ReflexionLoop] activating for coder task")
-        def _gen_fn(m):
+        from model_router import is_cerebras, cerebras_model_name
+        from groq_client import cerebras_stream
+        def _stream(m):
+            if is_cerebras(model):
+                return "".join(cerebras_stream(m, max_tokens=max_new, model=cerebras_model_name(model)))
             return "".join(mistral_stream(m, max_tokens=max_new, model=model))
-        raw = "".join(mistral_stream(msgs, max_tokens=max_new, model=model))
+        def _gen_fn(m):
+            return _stream(m)
+        raw = _stream(msgs)
         result = reflexion_verify(raw, _gen_fn, model=model)
         yield result
         return

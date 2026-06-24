@@ -18,9 +18,9 @@ _ROUTING_TABLE = {
     ("researcher", "easy"):   "mistral-medium-3.5",
     ("researcher", "medium"): "mistral-medium-3.5",
     ("researcher", "hard"):   "mistral-medium-3.5",
-    ("coder",      "easy"):   "mistral-medium-3.5",
-    ("coder",      "medium"): "mistral-medium-3.5",
-    ("coder",      "hard"):   "mistral-medium-3.5",
+    ("coder",      "easy"):   "cerebras/zai-glm-4.7",
+    ("coder",      "medium"): "cerebras/zai-glm-4.7",
+    ("coder",      "hard"):   "cerebras/zai-glm-4.7",
     ("calculator", "easy"):   "mistral-medium-3.5",
     ("calculator", "medium"): "mistral-medium-3.5",
     ("calculator", "hard"):   "mistral-medium-3.5",
@@ -35,7 +35,8 @@ def route_model_v3(skill: str, complexity: str) -> tuple:
         "mistral-medium-3.5" if complexity == "easy" else "mistral-medium-3.5"
     )
     print(f"[route_model_v3] skill={skill} complexity={complexity} -> {model}")
-    return ("mistral", model)
+    provider = "cerebras" if str(model).startswith("cerebras/") else "mistral"
+    return (provider, model)
 
 
 # ── FIX 4: CONTEXT VALIDATION ─────────────────────────────────────────────────
