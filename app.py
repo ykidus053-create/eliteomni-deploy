@@ -972,7 +972,14 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     rlhf_note = get_rlhf_note(skill)
 
     # search / tools
-    clean_msg, search_ctx = extract_search_context(msg)
+    # For vision queries, enrich search with image description
+    _search_msg = msg
+    if '[VISION_CONTEXT:' in msg:
+        _vision_desc = msg.split('[VISION_CONTEXT:')[1].split(']')[0].strip()[:200]
+        _user_q = msg.split('User question:')[-1].strip()
+        if _user_q:
+            _search_msg = f"{_user_q} {_vision_desc}"
+    clean_msg, search_ctx = extract_search_context(_search_msg)
     # agent enrichment runs inside _build_stream_context_fast
 
     msg_lower = msg.lower()
@@ -2770,7 +2777,9 @@ async def stream_chat(req: Request):
         msg = f"[COUNTERFACTUAL REASONING] Think step by step. Identify the causal chain, then simulate the alternative scenario carefully. Consider 2nd and 3rd order effects. Question: {msg}"
 
     # Don't auto-search on vision-only queries
-    _skip_search = msg.startswith('[VISION_CONTEXT:')
+    # Skip auto-search only if THIS message is purely vision with no user question
+    _vision_only = '[VISION_CONTEXT:' in msg and not msg.split('User question:')[-1].strip()
+    _skip_search = _vision_only
     _veto_target = msg.split('User question:')[-1].strip() if '[VISION_CONTEXT:' in msg else msg
     vetoed, veto_reason = topological_veto(_veto_target)
     if vetoed:

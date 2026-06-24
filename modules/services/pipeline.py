@@ -992,6 +992,8 @@ def generate_sync(msgs: list, max_new: int, skill: str, msg_len: int, provider: 
 def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int, complexity: str = "medium"):
     from modules.core.http_client import mistral_stream
     from modules.reliability import route_model_v3
+    import re as _re
+    _tool_echo_re = _re.compile(r'\[=\s*(?:SEARCH|CALC|EXEC|FETCH|TIME)\([^)]*\)\]', _re.IGNORECASE)
     _, model = route_model_v3(skill, complexity)
 
     last_user_msg = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), "")
@@ -1039,6 +1041,7 @@ def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int, complexity
         return
 
     for tok in mistral_stream(msgs, max_tokens=max_new, model=model):
+        tok = _tool_echo_re.sub("", tok)
         yield tok
 
 def tree_search_best(prompt: list, max_t: int, skill: str, msg_len: int) -> str:

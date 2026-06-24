@@ -631,11 +631,16 @@ def extract_search_context(msg: str) -> tuple:
         return msg, ""
 
     auto_triggers = [
-        # Only truly time-sensitive triggers — reduces unnecessary search calls
+        # Time-sensitive
         "latest", "current", "news", "today", "right now", "live",
         "price of", "stock", "crypto", "weather", "forecast",
         "who won", "election", "who is the", "ceo of", "president of",
         "2025", "2026", "real-time", "breaking",
+        # Location/visual queries
+        "where is", "where are", "what city", "what country", "what location",
+        "which city", "which country", "located in", "where was", "what place",
+        "identify this", "what is this", "recognize this", "what building",
+        "what landmark", "what street", "what neighborhood",
     ]
     # Only skip search for pure math/code with no real-world context
     no_search = any(t in msg.lower() for t in [
