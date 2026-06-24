@@ -907,10 +907,11 @@ def cerebras_stream(msgs: list, max_tokens: int = 8000, model: str = None):
             pathlib.Path("/app/.env"),
             pathlib.Path(".env"),
         ]:
-            if _ep.exists():
-                for l in _ep.read_text().splitlines():
-            if l.startswith("CEREBRAS_API_KEY="):
-                CEREBRAS_API_KEY = l.split("=",1)[1].strip(); break
+            if not _ep.exists():
+                continue
+            for l in _ep.read_text().splitlines():
+                if l.startswith("CEREBRAS_API_KEY="):
+                    CEREBRAS_API_KEY = l.split("=",1)[1].strip(); break
     if not CEREBRAS_API_KEY:
         yield "[CEREBRAS_API_KEY not set]"; return
     import urllib.request, json as _json
