@@ -917,6 +917,21 @@ CEREBRAS_MODEL   = "zai-glm-4.7"
 import re as _re
 _THINK_RE = _re.compile(r'<think>.*?</think>', _re.DOTALL)
 
+
+# Global Cerebras rate limiter — 5 RPM max = 1 request per 13s
+import threading as _cbrs_threading, time as _cbrs_time
+_cbrs_lock = _cbrs_threading.Lock()
+_cbrs_last_call = 0.0
+_CBRS_MIN_GAP = 13.0  # seconds between requests
+
+def _cbrs_wait():
+    global _cbrs_last_call
+    with _cbrs_lock:
+        elapsed = _cbrs_time.time() - _cbrs_last_call
+        if elapsed < _CBRS_MIN_GAP:
+            _cbrs_time.sleep(_CBRS_MIN_GAP - elapsed)
+        _cbrs_last_call = _cbrs_time.time()
+
 def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     max_tokens = min(max_tokens, 16000)  # GLM-4.7 hard ceiling
     global CEREBRAS_API_KEY
@@ -959,6 +974,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                  "User-Agent": "curl/7.88.1",
                  }
     )
+    _cbrs_wait()
     _buf = ""
     _in_think = False
     import time as _t, urllib.error as _ue
