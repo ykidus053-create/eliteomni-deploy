@@ -572,7 +572,6 @@ def groq_stream(msgs: list, max_tokens: int = 0, model: str = None):
                     continue
                 try:
                     chunk = _json.loads(line[6:])
-                    delta = chunk["choices"][0].get("delta", {})
                     token = delta.get("content", "")
                     channel = delta.get("channel", "")
                     # skip reasoning/analysis channel, only yield actual content
@@ -870,7 +869,8 @@ def mistral_stream(msgs: list, max_tokens: int = 4000, model: str = None):
                         continue
                     try:
                         chunk = json.loads(line[6:])
-                        token = chunk["choices"][0].get("delta", {}).get("content", "")
+                        delta = chunk["choices"][0].get("delta", {})
+                        token = delta.get("content") or delta.get("reasoning", "")
                         if token:
                             yield token
                     except Exception:
@@ -891,3 +891,53 @@ def mistral_stream(msgs: list, max_tokens: int = 4000, model: str = None):
             yield f"[Stream error: {e}]"
             return
     yield "[Mistral: rate limit — please retry]"
+
+# ── Cerebras (coding only) ────────────────────────────────────────────────────
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
+CEREBRAS_URL     = "https://api.cerebras.ai/v1/chat/completions"
+CEREBRAS_MODEL   = "zai-glm-4.7"
+
+def cerebras_stream(msgs: list, max_tokens: int = 8000, model: str = None):
+    global CEREBRAS_API_KEY
+    if not CEREBRAS_API_KEY:
+        import pathlib
+        for l in pathlib.Path(__file__).parent.parent.joinpath(".env").read_text().splitlines():
+            if l.startswith("CEREBRAS_API_KEY="):
+                CEREBRAS_API_KEY = l.split("=",1)[1].strip(); break
+    if not CEREBRAS_API_KEY:
+        yield "[CEREBRAS_API_KEY not set]"; return
+    import urllib.request, json as _json
+    mdl = model or CEREBRAS_MODEL
+    payload = _json.dumps({
+        "model": mdl,
+        "messages": msgs,
+        "max_completion_tokens": max_tokens,
+        "temperature": 0.2,
+        "stream": True,
+    }).encode()
+    req = urllib.request.Request(
+        CEREBRAS_URL, data=payload,
+        headers={"Authorization": f"Bearer {CEREBRAS_API_KEY}",
+                 "Content-Type": "application/json",
+                 "User-Agent": "curl/7.88.1",
+                 }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            for raw in r:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line or line == "data: [DONE]":
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    chunk = _json.loads(line[6:])
+                    delta = chunk["choices"][0].get("delta", {})
+                    token = delta.get("content") or delta.get("reasoning", "")
+                    if token:
+                        yield token
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"[Cerebras stream error] {e}")
+        yield f"[Cerebras error: {e}]"

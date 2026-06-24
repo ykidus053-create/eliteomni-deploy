@@ -1040,7 +1040,13 @@ def stream_tokens(msgs: list, max_new: int, skill: str, msg_len: int, complexity
         yield result
         return
 
-    for tok in mistral_stream(msgs, max_tokens=max_new, model=model):
+    from model_router import is_cerebras, cerebras_model_name
+    if is_cerebras(model):
+        from groq_client import cerebras_stream
+        _stream_fn = cerebras_stream(msgs, max_tokens=max_new, model=cerebras_model_name(model))
+    else:
+        _stream_fn = mistral_stream(msgs, max_tokens=max_new, model=model)
+    for tok in _stream_fn:
         tok = _tool_echo_re.sub("", tok)
         yield tok
 

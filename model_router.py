@@ -4,8 +4,8 @@ log = logging.getLogger(__name__)
 MISTRAL_SMALL  = "mistral-medium-3.5"
 MISTRAL_MEDIUM = "mistral-medium-3.5"
 MISTRAL_LARGE  = "mistral-medium-3.5"
-CODESTRAL      = "mistral-medium-3.5"
 MAGISTRAL      = "mistral-medium-3.5"
+CODESTRAL      = "cerebras/qwen-3-235b"   # coding → Cerebras
 REASONING_EFFORT = "high"
 
 COMPLEXITY_MAP: dict[str, str] = {
@@ -17,15 +17,21 @@ COMPLEXITY_MAP: dict[str, str] = {
 }
 
 FALLBACK_CHAIN: dict[str, str] = {
-    MISTRAL_LARGE:  MISTRAL_MEDIUM,
-    MISTRAL_MEDIUM: MISTRAL_SMALL,
-    CODESTRAL:      MISTRAL_MEDIUM,
-    MAGISTRAL:      MISTRAL_LARGE,
-    MISTRAL_SMALL:  MISTRAL_SMALL,
+    MISTRAL_LARGE:         MISTRAL_MEDIUM,
+    MISTRAL_MEDIUM:        MISTRAL_SMALL,
+    CODESTRAL:             MISTRAL_MEDIUM,   # if Cerebras down → Mistral
+    MAGISTRAL:             MISTRAL_LARGE,
+    MISTRAL_SMALL:         MISTRAL_SMALL,
 }
 
 CODE_SIGNALS = ["def ", "import ", "class ", "function", "const ", "html", "css",
                 "python", "javascript", "typescript", "rust", "c++", "sql", "```"]
+
+def is_cerebras(model: str) -> bool:
+    return str(model).startswith("cerebras/")
+
+def cerebras_model_name(model: str) -> str:
+    return model.replace("cerebras/", "")
 
 def select_model(complexity: str, messages_payload=None) -> str:
     if complexity in ("coder", "coding", "easy_code"):
@@ -36,11 +42,11 @@ def select_model(complexity: str, messages_payload=None) -> str:
         text_content = str(messages_payload).lower()
         if any(s in text_content for s in CODE_SIGNALS):
             return CODESTRAL
-    return "mistral-medium-3.5"
+    return MISTRAL_MEDIUM
 
 def get_token_budget(model_name: str) -> int:
-    if "codestral" in str(model_name).lower():
-        return 32000
+    if is_cerebras(str(model_name)):
+        return 8000
     if "small" in str(model_name).lower():
         return 32000
     return 128000
@@ -53,7 +59,6 @@ def trim_system(system_prompt: str, max_tokens: int = 4000) -> str:
         return system_prompt[:max_tokens * 4]
     return system_prompt
 
-# ── Circuit Breaker ───────────────────────────────────────────────────────────
 import threading as _th
 class CircuitState:
     _lock  = _th.Lock()
