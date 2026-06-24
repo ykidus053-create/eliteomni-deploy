@@ -961,37 +961,47 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     )
     _buf = ""
     _in_think = False
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            for raw in r:
-                line = raw.decode("utf-8", errors="replace").strip()
-                if not line or line == "data: [DONE]":
-                    continue
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    chunk = _json.loads(line[6:])
-                    delta = chunk["choices"][0].get("delta", {})
-                    token = delta.get("content", "")
-                    if not token:
+    import time as _t, urllib.error as _ue
+    for _attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                for raw in r:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line or line == "data: [DONE]":
                         continue
-                    _buf += token
-                    while True:
-                        if _in_think:
-                            end = _buf.find("</think>")
-                            if end == -1:
-                                _buf = ""; break
-                            _buf = _buf[end + 8:]; _in_think = False
-                        else:
-                            start = _buf.find("<think>")
-                            if start == -1:
-                                out, _buf = _buf, ""
-                                if out: yield out
-                                break
-                            if start > 0: yield _buf[:start]
-                            _buf = _buf[start + 7:]; _in_think = True
-                except Exception:
-                    continue
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        chunk = _json.loads(line[6:])
+                        delta = chunk["choices"][0].get("delta", {})
+                        token = delta.get("content", "")
+                        if not token:
+                            continue
+                        _buf += token
+                        while True:
+                            if _in_think:
+                                end = _buf.find("</think>")
+                                if end == -1:
+                                    _buf = ""; break
+                                _buf = _buf[end + 8:]; _in_think = False
+                            else:
+                                start = _buf.find("<think>")
+                                if start == -1:
+                                    out, _buf = _buf, ""
+                                    if out: yield out
+                                    break
+                                if start > 0: yield _buf[:start]
+                                _buf = _buf[start + 7:]; _in_think = True
+                    except Exception:
+                        continue
+            break
+        except _ue.HTTPError as _he:
+            if _he.code == 429 and _attempt < 3:
+                _wait = 15 * (2 ** _attempt)
+                print(f"[Cerebras] 429 backoff {_wait}s attempt {_attempt+1}/4")
+                _t.sleep(_wait)
+                continue
+            raise
     except Exception as e:
         print(f"[Cerebras stream error] {e}")
         yield f"[Cerebras error: {e}]"
