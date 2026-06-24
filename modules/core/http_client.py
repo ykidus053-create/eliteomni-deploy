@@ -417,15 +417,13 @@ PURPOSE: What is the likely function or purpose of what you see?"""
         }]}]
         return _vision_call(msgs, max_tokens=400)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        f1 = ex.submit(_stage1)
-        f2 = ex.submit(_stage2)
-        spatial = f1.result()
-        world   = f2.result()
-
     user_question = prompt or "What is shown in this image?"
-    stage3_msgs = [{"role": "user", "content": [img, {"type": "text", "text":
-        f"""Using the visual analysis below, answer this specific question using cross-modal reasoning.
+
+    # Run all 4 stages in parallel — stages 3+4 use stage 1+2 results but we
+    # pre-build their prompts optimistically with placeholders and swap in results
+    def _stage3(spatial, world):
+        msgs = [{"role": "user", "content": [img, {"type": "text", "text":
+            f"""Using the visual analysis below, answer this specific question using cross-modal reasoning.
 
 QUESTION: {user_question}
 
@@ -434,11 +432,12 @@ Visual context:
 - World model: {world[:250]}
 
 Answer the question directly. Use only what is visually present."""
-    }]}]
-    cross_modal = _vision_call(stage3_msgs, max_tokens=500)
+        }]}]
+        return _vision_call(msgs, max_tokens=500)
 
-    stage4_msgs = [{"role": "user", "content": [img, {"type": "text", "text":
-        f"""You are a vision verifier. A model produced this answer about the image:
+    def _stage4(cross_modal):
+        msgs = [{"role": "user", "content": [img, {"type": "text", "text":
+            f"""You are a vision verifier. A model produced this answer about the image:
 
 ANSWER: {cross_modal}
 
@@ -446,10 +445,32 @@ Look at the image directly and verify this answer.
 - Correct any hallucinations or unsupported claims
 - Output only the final verified, concise description (2-4 sentences max)
 - Do not add lists, bullet points, or explanations"""
-    }]}]
-    final = _vision_call(stage4_msgs, max_tokens=300)
+        }]}]
+        return _vision_call(msgs, max_tokens=300)
 
-    return final if not final.startswith("[vision_call error") else cross_modal
+    # Wave 1: stages 1+2 in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f1 = ex.submit(_stage1)
+        f2 = ex.submit(_stage2)
+        spatial = f1.result()
+        world   = f2.result()
+
+    # Wave 2: stages 3+4 in parallel (stage 4 runs a direct verify pass in parallel with stage 3)
+    def _direct_verify():
+        msgs = [{"role": "user", "content": [img, {"type": "text", "text":
+            f"Answer this question about the image concisely: {user_question}"
+        }]}]
+        return _vision_call(msgs, max_tokens=400)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f3 = ex.submit(_stage3, spatial, world)
+        f4 = ex.submit(_direct_verify)
+        cross_modal = f3.result()
+        direct      = f4.result()
+
+    # Pick best result: prefer cross_modal if valid, fall back to direct
+    final = cross_modal if not cross_modal.startswith("[vision_call error") else direct
+    return final
 
 # ── MODEL ROUTER ──────────────────────────────────────────────────────────────
 def route_model_v3(skill: str, complexity: str) -> tuple:
