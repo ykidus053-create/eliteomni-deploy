@@ -945,6 +945,15 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     import re as _re3
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
+    # If current message is ambiguous, inherit skill from recent history
+    if skill == "general" and history:
+        _recent_user_msgs = " ".join(
+            h.get("content", "") for h in history[-6:]
+            if h.get("role") == "user"
+        )
+        _hist_skill = classify_skill(_recent_user_msgs)
+        if _hist_skill != "general":
+            skill = _hist_skill
     complexity = route_complexity(msg)
     _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
@@ -1141,6 +1150,15 @@ def pipeline_stream(msg: str, history: list):
     # ── Routing ──────────────────────────────────────────────────────────────
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
+    # If current message is ambiguous, inherit skill from recent history
+    if skill == "general" and history:
+        _recent_user_msgs = " ".join(
+            h.get("content", "") for h in history[-6:]
+            if h.get("role") == "user"
+        )
+        _hist_skill = classify_skill(_recent_user_msgs)
+        if _hist_skill != "general":
+            skill = _hist_skill
     complexity = route_complexity(msg)
     _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
