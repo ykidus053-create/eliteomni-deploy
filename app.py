@@ -2771,7 +2771,8 @@ async def stream_chat(req: Request):
 
     # Don't auto-search on vision-only queries
     _skip_search = msg.startswith('[VISION_CONTEXT:')
-    vetoed, veto_reason = topological_veto(msg)
+    _veto_target = msg.split('User question:')[-1].strip() if '[VISION_CONTEXT:' in msg else msg
+    vetoed, veto_reason = topological_veto(_veto_target)
     if vetoed:
         async def _veto():
             yield json.dumps({"skill": "safety", "mode": "veto"}) + "\n"
