@@ -604,6 +604,11 @@ def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
     to eliteomni.db via modules.langchain_tracing, without changing any
     existing generation behavior. Drop-in replacement: same signature + yields.
     """
+    if model and str(model).startswith("cerebras/"):
+        from groq_client import cerebras_stream
+        mdl = model.replace("cerebras/", "")
+        yield from cerebras_stream(msgs, max_tokens=max_tokens, model=mdl)
+        return
     import time as _time_tr
     try:
         from modules.langchain_tracing import trace_call
@@ -648,6 +653,11 @@ def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
     to eliteomni.db via modules.langchain_tracing, without changing any
     existing generation behavior. Drop-in replacement: same signature + yields.
     """
+    if model and str(model).startswith("cerebras/"):
+        from groq_client import cerebras_stream
+        mdl = model.replace("cerebras/", "")
+        yield from cerebras_stream(msgs, max_tokens=max_tokens, model=mdl)
+        return
     import time as _time_tr
     try:
         from modules.langchain_tracing import trace_call

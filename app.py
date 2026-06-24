@@ -422,7 +422,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
     complexity = route_complexity(msg)
-    _tier = get_infra_tier(complexity)
+    _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     if skill == "calculator": complexity = "medium"
     if skill == "calculator": complexity = max(complexity, "medium") if complexity != "hard" else complexity
@@ -937,7 +937,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
     complexity = route_complexity(msg)
-    _tier = get_infra_tier(complexity)
+    _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     effort     = EFFORT_LEVEL
     if complexity == "hard":   effort = "high"
@@ -1133,7 +1133,7 @@ def pipeline_stream(msg: str, history: list):
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
     complexity = route_complexity(msg)
-    _tier = get_infra_tier(complexity)
+    _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     if skill == "calculator": complexity = "medium"
 
@@ -4427,7 +4427,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     # ── 1. Fast serial (no I/O) ──────────────────────────────────────────────
     skill      = classify_skill(msg)
     complexity = route_complexity(msg)
-    _tier      = get_infra_tier(complexity)
+    _tier      = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     effort = "high" if complexity == "hard" else ("low" if complexity == "easy" else "medium")
 
