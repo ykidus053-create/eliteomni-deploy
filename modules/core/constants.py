@@ -161,7 +161,8 @@ def get_infra_tier(complexity: str, skill: str = "") -> dict:
     Coding skills → devstral-latest. Everything else → mistral-medium-3.5.
     """
     is_code = skill and skill.lower() in CODING_SKILLS
-    if is_code:
+    is_research = skill and skill.lower() in ("researcher", "research")
+    if is_code or is_research:
         return {"models": ["cerebras/zai-glm-4.7"], "complexity": [complexity], "max_tokens": 8192, "label": "code-inference"}
     if complexity == "easy":   return INFRA_TIERS["tier1"]
     if complexity == "hard":   return INFRA_TIERS["tier3"]
