@@ -1010,6 +1010,8 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                                 _buf = _buf[start + 7:]; _in_think = True
                     except Exception:
                         continue
+        else:
+            break
         except _ue.HTTPError as _he:
             if _he.code == 429 and _attempt < 3:
                 _wait = 15 * (2 ** _attempt)
