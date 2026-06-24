@@ -163,7 +163,7 @@ def _cite_results(results: list) -> str:
             parts.append(f"— {domain}")
         header = " ".join(parts)
         # Give model 600 chars per snippet — enough to answer most questions
-        body = snippet[:600]
+        body = snippet[:3000]
         if url:
             entry = f"{header}\n{body}\nSource: {url}"
         else:
@@ -171,7 +171,7 @@ def _cite_results(results: list) -> str:
         chunks.append(entry)
     return "\n\n---\n\n".join(chunks)
 
-def tool_web_fetch(url: str, max_chars: int = 1200) -> str:
+def tool_web_fetch(url: str, max_chars: int = 8000) -> str:
     """
     WebFetch: fetch full page content when snippets are insufficient.
     Strips scripts/styles/nav/footer, extracts main content intelligently.
@@ -308,6 +308,16 @@ def tool_search(query: str, _raw: bool = False) -> str:
             except Exception:
                 pass
 
+        # Enrich top 3 results with full page fetch
+        for _item in results[:3]:
+            _url = _item.get("url", "")
+            if _url:
+                try:
+                    _fetched = tool_web_fetch(_url, max_chars=8000)
+                    if _fetched and len(_fetched) > 200:
+                        _item["content"] = _fetched
+                except Exception:
+                    pass
         cited = _cite_results(results[:6])
         if cited:
             if _rcache: _rcache.setex(_ckey, 300, cited)
@@ -317,7 +327,7 @@ def tool_search(query: str, _raw: bool = False) -> str:
         for item in results[:2]:
             url = item.get('url', '')
             if url:
-                fetched = tool_web_fetch(url, max_chars=600)
+                fetched = tool_web_fetch(url, max_chars=8000)
                 if fetched and len(fetched) > 100:
                     print(f'[search] WebFetch fallback: {url[:60]}')
                     return fetched
