@@ -312,6 +312,7 @@ def tool_search(query: str, _raw: bool = False) -> str:
         # Enrich ALL top results with full page content (Gemini-style)
         from concurrent.futures import ThreadPoolExecutor, as_completed
         def _fetch_item(item):
+            print(f'[fetch debug] fetching: {item.get("url","")[:80]}')
             url = item.get("url", "")
             if not url: return item
             # Skip aggregator/index sites — they just list other articles
