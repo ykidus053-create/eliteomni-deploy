@@ -634,11 +634,15 @@ def pipeline_sync(msg: str, history: list) -> dict:
     import modules.groq_client as _gc; _gc.GROQ_MODEL = _routed_model
     print(f"[Router] provider={_provider} skill={skill} complexity={complexity} model={_routed_model}")
     print(f"[Router] skill={skill} complexity={complexity} model={_routed_model}")
+    _search_future = None
     if _needs_fresh_search(msg) and not search_ctx:
-        print(f'[KnowledgeCutoff] Stale topic detected — auto-triggering search')
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _search_executor = _TPE(max_workers=1)
+        from modules.services.search import tool_search_multi as multi_search
+        _search_future = _search_executor.submit(multi_search, msg)
+    if _search_future:
         try:
-            from modules.services.search import tool_search_multi as multi_search
-            search_ctx = tool_search_multi(msg)
+            search_ctx = _search_future.result(timeout=6)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
@@ -1064,13 +1068,12 @@ def _build_stream_context(msg: str, hist: list) -> dict:
             system = system + "\n" + COUNTERFACTUAL_PROMPT
     except Exception: pass
     if rag_ctx:    system += rag_ctx
+    _search_future = None
     if _needs_fresh_search(msg) and not search_ctx:
-        print(f'[KnowledgeCutoff] Stale topic detected — auto-triggering search')
-        try:
-            from modules.services.search import tool_search_multi as multi_search
-            search_ctx = tool_search_multi(msg)
-        except Exception as _se:
-            print(f'[KnowledgeCutoff] search failed: {_se}')
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _search_executor = _TPE(max_workers=1)
+        from modules.services.search import tool_search_multi as multi_search
+        _search_future = _search_executor.submit(multi_search, msg)
     if search_ctx: system += f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS/CURRENT EVENTS. NEVER USE TRAINING DATA FOR ANYTHING TIME-SENSITIVE. Today is {__import__('datetime').date.today()}]\n{search_ctx[:8000]}\n[/WEB]"
     mcp_p = mcp_tool_list_prompt()
     from modules.services.mcp import mcp_tools_prompt as _mtp
