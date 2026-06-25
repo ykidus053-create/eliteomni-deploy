@@ -432,6 +432,9 @@ def pipeline_sync(msg: str, history: list) -> dict:
         _hist_skill = classify_skill(_recent_user_msgs)
         if _hist_skill != "general":
             skill = _hist_skill
+    # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
     _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
@@ -956,6 +959,9 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         _hist_skill = classify_skill(_recent_user_msgs)
         if _hist_skill != "general":
             skill = _hist_skill
+    # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
     _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
@@ -1161,6 +1167,9 @@ def pipeline_stream(msg: str, history: list):
         _hist_skill = classify_skill(_recent_user_msgs)
         if _hist_skill != "general":
             skill = _hist_skill
+    # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
     _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
