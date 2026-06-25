@@ -268,13 +268,13 @@ def tool_search(query: str, _raw: bool = False) -> str:
                 print("[search] rewrite skipped: " + str(_rwe))
         _rw_thread = _sth.Thread(target=_do_rewrite, daemon=True)
         _rw_thread.start()
-        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "google,bing"}
+        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "google,bing,duckduckgo,brave,wikipedia", "pageno": 1, "time_range": "", "safesearch": 0}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
         _rw_thread.join(timeout=0.1)
         if _rewritten_box[0] != query:
             try:
-                _r2 = requests.get(f"{SEARXNG_URL}/search", params={"q": _rewritten_box[0], "format": "json", "categories": "general", "language": "en", "engines": "google,bing"}, headers=headers, timeout=10)
+                _r2 = requests.get(f"{SEARXNG_URL}/search", params={"q": _rewritten_box[0], "format": "json", "categories": "general", "language": "en", "engines": "google,bing,duckduckgo,brave", "pageno": 1}, headers=headers, timeout=10)
                 _extra = _r2.json().get("results", [])
                 if _extra:
                     r._content = r._content  # keep original, merge below
@@ -283,6 +283,17 @@ def tool_search(query: str, _raw: bool = False) -> str:
                 pass
         r.raise_for_status()
         raw = r.json().get("results", [])
+        # Pre-filter: remove homepages and category pages — only keep actual articles
+        _HOME_PATTERNS = ["/category/", "/tag/", "/topics/", "/section/",
+                          "/artificial-intelligence/", "/technology/", "/news/",
+                          "/search?", "/feed/", "/rss/", "/sitemap"]
+        def _is_article(r):
+            url = r.get("url", "")
+            if url.count("/") <= 3: return False  # homepage
+            if any(p in url for p in _HOME_PATTERNS): return False
+            if len(r.get("content","") or r.get("snippet","")) < 50: return False
+            return True
+        raw = [r for r in raw if _is_article(r)] or raw  # fallback to all if filtered too much
         results = _dynamic_filter_results(raw, query)
         print(f'[search debug] {len(raw)} raw results, first url: {raw[0].get("url","") if raw else "none"}, snippet len: {len(raw[0].get("content","") or raw[0].get("snippet","")) if raw else 0}')
 
