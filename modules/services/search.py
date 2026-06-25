@@ -234,16 +234,23 @@ def tool_search(query: str, _raw: bool = False) -> str:
     - Returns None on failure — never leaks error strings into model context
     _raw=True returns the raw results list for multi-step chaining.
     """
-    if not _ensure_searxng():
-        print("[tool_search] SearXNG unavailable — skipping")
-        return None
-
     _ckey = f"search:{query[:80]}"
     if _rcache:
         _cached = _rcache.get(_ckey)
         if _cached: return _cached
+
+    # Tavily first — always, regardless of SearXNG status
+    _tavily = tavily_search(query, max_results=5)
+    if _tavily:
+        if _rcache: _rcache.setex(_ckey, 300, _tavily)
+        if _raw:
+            return [{"title": "Tavily", "content": _tavily, "url": ""}]
+        return _tavily
+
+    if not _ensure_searxng():
+        print("[tool_search] SearXNG unavailable — skipping")
+        return None
     try:
-        # ── Parallel: rewrite query + fire SearXNG simultaneously ─────
         import threading as _sth
         _rewritten_box = [query]
         def _do_rewrite():
@@ -268,11 +275,6 @@ def tool_search(query: str, _raw: bool = False) -> str:
                 print("[search] rewrite skipped: " + str(_rwe))
         _rw_thread = _sth.Thread(target=_do_rewrite, daemon=True)
         _rw_thread.start()
-        # Try Tavily first — clean content, no homepages, built for LLMs
-        _tavily = tavily_search(query, max_results=5)
-        if _tavily:
-            if _rcache: _rcache.setex(_ckey, 300, _tavily)
-            return _tavily
         params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "google,bing,duckduckgo,brave,wikipedia", "pageno": 1, "time_range": "", "safesearch": 0}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
@@ -1016,12 +1018,13 @@ import os as _os
 TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
 
 def tavily_search(query: str, max_results: int = 5) -> str:
+    print(f"[Tavily DEBUG] called with query={repr(query)} key_set={bool(TAVILY_API_KEY)}")
     """
     Tavily search — returns clean extracted content, not raw snippets.
     Designed for LLM grounding (like Anthropic's internal pipeline).
     """
     import urllib.request, json as _json
-    key = TAVILY_API_KEY
+    key = _os.environ.get("TAVILY_API_KEY", "") or TAVILY_API_KEY
     if not key:
         # Try loading from .env
         import pathlib
@@ -1053,6 +1056,7 @@ def tavily_search(query: str, max_results: int = 5) -> str:
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             data = _json.loads(r.read())
+        print(f"[Tavily RAW] answer={repr(data.get("answer","")[:100])} results_count={len(data.get("results",[]))} first_content={repr((data.get("results",[{}])[0].get("content","") if data.get("results") else "")[:80])}")
         chunks = []
         # Use Tavily's synthesized answer first
         answer = data.get("answer", "")
