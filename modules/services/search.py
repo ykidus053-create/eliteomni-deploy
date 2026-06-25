@@ -283,6 +283,32 @@ def tool_search(query: str, _raw: bool = False) -> str:
                 pass
         r.raise_for_status()
         raw = r.json().get("results", [])
+        # RETRIEVAL-LEVEL FILTER (like Anthropic) — bad URLs never reach the model
+        def _is_real_article(item):
+            url   = item.get("url", "")
+            snip  = item.get("content","") or item.get("snippet","") or ""
+            title = item.get("title","") or ""
+            # Must have meaningful snippet
+            if len(snip.strip()) < 80: return False
+            # Must be article-depth URL (at least one path segment after domain)
+            parts = url.split("/")
+            if len(parts) < 4 or not parts[3]: return False
+            # Skip aggregator homepages and category pages
+            _bad = ["/category/","/tag/","/tags/","/topics/","/topic/",
+                    "/section/","/feed/","/rss/","/sitemap","/search?",
+                    "/news/$","/technology/$","/ai/$","/page/","/author/",
+                    "google.com/search","google.com/news","bing.com/news",
+                    "reddit.com/r/","/collections/","/archive/","/index"]
+            if any(b in url for b in _bad): return False
+            # Skip social/video
+            _social = ["twitter.com","x.com","facebook.com","instagram.com",
+                       "youtube.com","tiktok.com","linkedin.com/feed"]
+            if any(s in url for s in _social): return False
+            # Skip paywalled sites that never return content
+            _paywall = ["wsj.com","ft.com","bloomberg.com/opinion","economist.com"]
+            if any(p in url for p in _paywall): return False
+            return True
+        raw = [r for r in raw if _is_real_article(r)]
         # Pre-filter: remove homepages and category pages — only keep actual articles
         _HOME_PATTERNS = ["/category/", "/tag/", "/topics/", "/section/",
                           "/artificial-intelligence/", "/technology/", "/news/",
