@@ -4472,6 +4472,8 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         _recent_user_msgs = " ".join(h.get("content", "") for h in hist[-6:] if h.get("role") == "user")
         _hist_skill = classify_skill(_recent_user_msgs)
         if _hist_skill != "general": skill = _hist_skill
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
     _tier      = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
