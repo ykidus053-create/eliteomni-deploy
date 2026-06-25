@@ -25,7 +25,14 @@ def classify_skill(msg: str) -> str:
     scores = {s: sum(1 for t in kws if t in m)
               for s, kws in _SKILL_KW.items() if s != "safety"}
     best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "general"
+    skill = best if scores[best] > 0 else "general"
+    # Route search-heavy queries to coder skill → GLM-4.7 on Cerebras
+    _SEARCH_SIGNALS = ["latest","current news","who is the","what is the price",
+                       "today","right now","just released","breaking","stock price",
+                       "weather","search for","look up","find me"]
+    if skill in ("general", "researcher") and any(s in m for s in _SEARCH_SIGNALS):
+        return "coder"
+    return skill
 
 _EASY_RE = re.compile(
     r"^(hi+|hey|hello|thanks|ok|yes|no|what.s the time|"
