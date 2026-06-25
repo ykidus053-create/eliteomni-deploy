@@ -4474,13 +4474,20 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         if _hist_skill != "general": skill = _hist_skill
     if skill == "general" and _needs_fresh_search(msg):
         skill = "researcher"
-    # Follow-up detection: inherit researcher skill if prev turn was a search
+    # Claude-style: inherit skill+context from recent history
+    # If any recent user turn triggered search, treat this as a search follow-up
     _FOLLOWUP = ["go in detail","tell me more","expand","elaborate","more detail",
                  "go deeper","continue","and?","what else","summarize","explain more",
-                 "in depth","break it down","give me more","keep going"]
-    if skill == "general" and any(f in msg.lower() for f in _FOLLOWUP):
-        _prev_msgs = " ".join(h.get("content","") for h in (hist or [])[-4:] if h.get("role")=="user")
-        if _needs_fresh_search(_prev_msgs):
+                 "in depth","break it down","give me more","keep going","more","detail",
+                 "elaborate more","dig deeper","further","specifically"]
+    if skill == "general" and any(f in msg.lower().strip() for f in _FOLLOWUP):
+        _all_prev = " ".join(h.get("content","") for h in (hist or [])[-6:] if h.get("role")=="user")
+        if _needs_fresh_search(_all_prev):
+            skill = "researcher"
+    # Also inherit skill if previous turns used researcher
+    if skill == "general" and hist:
+        _prev_skills = [h.get("_skill","") for h in (hist or [])[-4:]]
+        if "researcher" in _prev_skills:
             skill = "researcher"
     complexity = route_complexity(msg)
     _tier      = get_infra_tier(complexity, skill)
