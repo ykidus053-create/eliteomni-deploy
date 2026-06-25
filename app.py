@@ -4474,6 +4474,14 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         if _hist_skill != "general": skill = _hist_skill
     if skill == "general" and _needs_fresh_search(msg):
         skill = "researcher"
+    # Follow-up detection: inherit researcher skill if prev turn was a search
+    _FOLLOWUP = ["go in detail","tell me more","expand","elaborate","more detail",
+                 "go deeper","continue","and?","what else","summarize","explain more",
+                 "in depth","break it down","give me more","keep going"]
+    if skill == "general" and any(f in msg.lower() for f in _FOLLOWUP):
+        _prev_msgs = " ".join(h.get("content","") for h in (hist or [])[-4:] if h.get("role")=="user")
+        if _needs_fresh_search(_prev_msgs):
+            skill = "researcher"
     complexity = route_complexity(msg)
     _tier      = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
