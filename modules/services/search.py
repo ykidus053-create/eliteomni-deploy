@@ -268,6 +268,11 @@ def tool_search(query: str, _raw: bool = False) -> str:
                 print("[search] rewrite skipped: " + str(_rwe))
         _rw_thread = _sth.Thread(target=_do_rewrite, daemon=True)
         _rw_thread.start()
+        # Try Tavily first — clean content, no homepages, built for LLMs
+        _tavily = tavily_search(query, max_results=5)
+        if _tavily:
+            if _rcache: _rcache.setex(_ckey, 300, _tavily)
+            return _tavily
         params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "google,bing,duckduckgo,brave,wikipedia", "pageno": 1, "time_range": "", "safesearch": 0}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
@@ -1006,3 +1011,61 @@ FINAL ANSWER: [verified answer]"""
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── 1. ADAPTIVE THINKING (Opus 4.6: auto-activates for complex problems) ──────
+# ── Tavily Search (primary — clean content, no homepages) ─────────────────────
+import os as _os
+TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
+
+def tavily_search(query: str, max_results: int = 5) -> str:
+    """
+    Tavily search — returns clean extracted content, not raw snippets.
+    Designed for LLM grounding (like Anthropic's internal pipeline).
+    """
+    import urllib.request, json as _json
+    key = TAVILY_API_KEY
+    if not key:
+        # Try loading from .env
+        import pathlib
+        for _ep in [pathlib.Path(__file__).parent.parent.parent / ".env",
+                    pathlib.Path(__file__).parent.parent / ".env",
+                    pathlib.Path(".env")]:
+            if _ep.exists():
+                for l in _ep.read_text().splitlines():
+                    if l.startswith("TAVILY_API_KEY="):
+                        key = l.split("=",1)[1].strip(); break
+            if key: break
+    if not key:
+        return None
+    payload = _json.dumps({
+        "api_key": key,
+        "query": query,
+        "search_depth": "advanced",
+        "include_answer": True,
+        "include_raw_content": True,
+        "max_results": max_results,
+        "include_domains": [],
+        "exclude_domains": ["reddit.com", "twitter.com", "x.com", "facebook.com"]
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.tavily.com/search",
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "EliteOmni/1.0"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = _json.loads(r.read())
+        chunks = []
+        # Use Tavily's synthesized answer first
+        answer = data.get("answer", "")
+        if answer:
+            chunks.append(f"[Summary]\n{answer}")
+        # Then individual results with full content
+        for i, item in enumerate(data.get("results", []), 1):
+            title   = item.get("title", "")
+            url     = item.get("url", "")
+            content = item.get("raw_content") or item.get("content", "")
+            if content:
+                chunks.append(f"[{i}] {title}\n{content[:3000]}\nSource: {url}")
+        return "\n\n---\n\n".join(chunks) if chunks else None
+    except Exception as e:
+        print(f"[Tavily] error: {e}")
+        return None
