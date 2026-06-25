@@ -277,7 +277,9 @@ def _needs_fresh_search(msg: str) -> bool:
     # Always search for news/current events queries
     news_triggers = ["news", "latest", "today", "current", "recent", "now",
                      "this week", "this month", "2025", "2026", "just released",
-                     "announced", "update", "new model", "what happened"]
+                     "announced", "update", "new model", "what happened",
+                     "what is happening", "ai developments", "ai news",
+                     "tell me about", "what's new", "whats new", "developments"]
     if any(t in msg_lower for t in news_triggers):
         return True
 
@@ -638,7 +640,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
         # Real search results — inject with strong grounding instruction
-        system += f"\n\n[WEB SEARCH RESULTS — Today is {__import__('datetime').date.today()}. Use these as your primary source. Supplement with knowledge only if results are incomplete.]\n{search_ctx[:3000]}\n[/WEB]"
+        system += f"\n\n[WEB SEARCH RESULTS — Today is {__import__('datetime').date.today()}. CRITICAL: You MUST answer using ONLY these search results. Do NOT use training data for any factual claims. If the results don't cover something, say you don't have that information rather than guessing.]\n{search_ctx[:8000]}\n[/WEB]"
     elif not search_ctx or "No results found" in search_ctx:
         # Search failed or no results — explicitly tell model to use knowledge
         system += f"\n\n[SEARCH UNAVAILABLE — Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
@@ -1063,7 +1065,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
             search_ctx = tool_search_multi(msg)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
-    if search_ctx: system += f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS, IGNORE TRAINING DATA. Today is {__import__('datetime').date.today()}]\n{search_ctx[:3000]}\n[/WEB]"
+    if search_ctx: system += f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS/CURRENT EVENTS. NEVER USE TRAINING DATA FOR ANYTHING TIME-SENSITIVE. Today is {__import__('datetime').date.today()}]\n{search_ctx[:8000]}\n[/WEB]"
     mcp_p = mcp_tool_list_prompt()
     from modules.services.mcp import mcp_tools_prompt as _mtp
     system += "\n" + _mtp()
@@ -1085,7 +1087,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
-        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:2000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above."
+        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:6000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above. Do not use training data."
     else:
         user_msg = clean_msg
     msgs  = build_chatml(system, hist_msgs, user_msg)
@@ -4747,7 +4749,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
-        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:2000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above."
+        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:6000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above. Do not use training data."
     else:
         user_msg = clean_msg
     msgs  = build_chatml(system, hist_msgs, user_msg)
