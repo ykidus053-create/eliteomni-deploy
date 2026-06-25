@@ -284,6 +284,7 @@ def tool_search(query: str, _raw: bool = False) -> str:
         r.raise_for_status()
         raw = r.json().get("results", [])
         results = _dynamic_filter_results(raw, query)
+        print(f'[search debug] {len(raw)} raw results, first url: {raw[0].get("url","") if raw else "none"}, snippet len: {len(raw[0].get("content","") or raw[0].get("snippet","")) if raw else 0}')
 
         if _raw:
             return results  # caller handles formatting
