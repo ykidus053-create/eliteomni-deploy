@@ -308,16 +308,28 @@ def tool_search(query: str, _raw: bool = False) -> str:
             except Exception:
                 pass
 
-        # Enrich top 3 results with full page fetch
-        for _item in results[:3]:
-            _url = _item.get("url", "")
-            if _url:
-                try:
-                    _fetched = tool_web_fetch(_url, max_chars=8000)
-                    if _fetched and len(_fetched) > 200:
-                        _item["content"] = _fetched
-                except Exception:
-                    pass
+        # Enrich ALL top results with full page content (Gemini-style)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _fetch_item(item):
+            url = item.get("url", "")
+            if not url: return item
+            # Skip aggregator/index sites — they just list other articles
+            _skip_domains = ["news.google.com", "alltop.com", "feedly.com",
+                             "flipboard.com", "reddit.com/r/", "twitter.com",
+                             "x.com", "linkedin.com", "facebook.com",
+                             "youtube.com", "feedspot.com", "inoreader.com"]
+            if any(d in url for d in _skip_domains):
+                return item
+            try:
+                fetched = tool_web_fetch(url, max_chars=8000)
+                if fetched and len(fetched) > 300:
+                    item = dict(item)
+                    item["content"] = fetched
+            except Exception:
+                pass
+            return item
+        with ThreadPoolExecutor(max_workers=4) as _ex:
+            results = list(_ex.map(_fetch_item, results[:5]))
         cited = _cite_results(results[:6])
         if cited:
             if _rcache: _rcache.setex(_ckey, 300, cited)
