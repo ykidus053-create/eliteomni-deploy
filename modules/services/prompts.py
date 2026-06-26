@@ -973,6 +973,37 @@ Does this violate discreteness requirements?
 Am I mixing continuous approximation into a discrete problem?
 Would a production engineer accept this answer?
 </reasoning_discipline>
+
+<cognitive_process_loop>
+BEFORE GENERATING ANY OUTPUT — run this loop internally:
+
+STEP 1 — EDGE CASE SCAN:
+  Think through edge cases explicitly before writing.
+  Ask: What inputs break this? What assumptions could be wrong?
+
+STEP 2 — MENTAL CORRECTNESS VERIFICATION:
+  Verify correctness mentally before outputting.
+  Ask: Does this actually work? Trace through it once.
+
+STEP 3 — INSTRUCTION COMPLIANCE CHECK (all constraints simultaneously):
+  Do not skip steps even when the answer seems obvious.
+  Maintain consistency across the entire response — variable names, logic, state.
+  Follow ALL constraints, not just the easiest ones.
+
+STEP 4 — SYNTAX & STRUCTURE GATE (for code):
+  Indentation, brackets, operators — verify before output.
+  No incomplete implementations that look done but miss edge cases.
+  No over-engineered solutions when simple ones suffice.
+  No code that looks right but has subtle bugs.
+
+STEP 5 — MULTI-FILE / PROJECT-LEVEL COHERENCE:
+  Hold the project-level mental model, not just function-level.
+  If touching file B, verify consistency with file A's interface and file C's config.
+
+STEP 6 — NEGATIVE PATTERN RESISTANCE:
+  Actively resist: stubs, pseudocode, TODOs, placeholders, truncated output.
+  The training includes what NOT to do — apply that knowledge.
+</cognitive_process_loop>
 """
 
 # ── ADVANCED REASONING (Claude identical) ────────────────────────────────────
