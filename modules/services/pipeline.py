@@ -927,8 +927,35 @@ def build_chatml(system: str, history: list, user_msg: str,
         _c = h.get("content", "")[:_char_cap]
         if _c.strip():
             msgs.append({"role": r, "content": _c})
-    msgs.append({"role": "user", "content": user_msg[:6000]})
-    return msgs
+    # ── MULTI-FILE AWARENESS: extract project file map from history ──────────
+    _file_map = {}  # filename -> latest content snippet
+    _file_pat = re.compile(
+        r'<file_(?:edit|rewrite)\s+filename=["\']?([^"\'>\s]+)["\']?>([\s\S]*?)(?:</file_(?:edit|rewrite)>|$)',
+        re.IGNORECASE
+    )
+    _fence_pat = re.compile(
+        r'```(?:\w+)?\s*#\s*(\S+\.\w+)\n([\s\S]*?)```',
+        re.IGNORECASE
+    )
+    for h in (history or []):
+        _hc = h.get("content", "")
+        for _fname, _fcode in _file_pat.findall(_hc):
+            _file_map[_fname.strip()] = _fcode.strip()[:400]
+        for _fname, _fcode in _fence_pat.findall(_hc):
+            _file_map[_fname.strip()] = _fcode.strip()[:400]
+    for _fname, _fcode in _file_pat.findall(user_msg):
+        _file_map[_fname.strip()] = _fcode.strip()[:400]
+    for _fname, _fcode in _fence_pat.findall(user_msg):
+        _file_map[_fname.strip()] = _fcode.strip()[:400]
+
+    if _file_map:
+        _project_map = "<project_file_map>\n"
+        for _fn, _snippet in _file_map.items():
+            _project_map += f"FILE: {_fn}\n---\n{_snippet}\n[...truncated]\n\n"
+        _project_map += "</project_file_map>"
+        msgs.insert(1, {"role": "assistant", "content": "Understood. I have loaded the project file map and will maintain cross-file consistency."})
+        msgs.insert(1, {"role": "user", "content": _project_map + "\n\nYou are working on a multi-file project. Maintain consistency across ALL files above. When editing file B, verify compatibility with file A interfaces and file C configs."})
+
     msgs.append({"role": "user", "content": user_msg[:6000]})
     return msgs
 
