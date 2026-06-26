@@ -497,6 +497,12 @@ def tool_search_multi(user_msg: str) -> str:
     """
     import re as _re
     user_msg = _re.sub(r"SEARCH\\([^)]*\\)", lambda m: m.group(0)[7:-1], user_msg).strip()
+
+    # Tavily once — skip multi-query loop if it succeeds
+    _t = tavily_search(user_msg, max_results=5)
+    if _t:
+        return _t
+
     queries = _formulate_queries(user_msg)
     all_results = []
     seen_urls   = set()
