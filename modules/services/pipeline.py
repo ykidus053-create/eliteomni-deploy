@@ -1162,11 +1162,15 @@ def enhanced_generate(msg: str, skill: str, complexity: str,
     return response
 
 CODER_SUFFIX = """
-Production requirements — non-negotiable:
-- Every import explicit
-- Input validation on every public function
-- Typed exceptions, never bare except
-- Logging on every error path
-- No pass, no TODO, no placeholder
-- Code runs as-is with python3
+MANDATORY FULL-APP GENERATION RULES — STRICTLY FOLLOW ALL:
+1. MUST write EVERY file in full — no truncation, no ellipsis, no "rest of file here"
+2. MUST implement EVERY function completely — zero stubs, zero pass, zero TODO
+3. MUST include ALL files needed to run: main file, config, requirements.txt, README
+4. MUST write frontend AND backend AND database schema if the app needs them
+5. MUST use real imports, real logic, real error handling on every path
+6. STRICTLY FORBIDDEN: "..." as placeholder, "# implement this", "pass", incomplete classes
+7. If the app has a UI — MUST generate the full HTML/CSS/JS or React components
+8. Generate files in order: schema → models → services → routes → frontend → config
+9. Each file MUST be complete and runnable as-is with no edits required
+10. Output ALL code even if response is very long — never stop early
 """
