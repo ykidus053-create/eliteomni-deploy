@@ -2716,8 +2716,11 @@ import io, base64
 # PDF inline drag-and-drop support
 SUPPORTED_EXTS = {
     ".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json",
-    ".csv", ".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".webp"
+    ".csv", ".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".webp",
+    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".mp3", ".wav", ".m4a"
 }
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg"}
 
 def _extract_text_from_file(filename: str, data: bytes) -> str:
     """Extract text from uploaded file — supports txt/md/code/PDF/DOCX."""
@@ -2787,6 +2790,121 @@ async def upload_file(file: UploadFile = FastAPIFile(...)):
         "preview": text[:300],
         "status": "indexed in RAG — AI can now reference this file"
     }
+
+@app.post("/video/edit")
+async def video_edit_endpoint(req: Request):
+    """
+    Video editing endpoint. Accepts JSON with:
+    - file_id: previously uploaded video file path
+    - operation: transcribe | trim | remove_silences | extract_audio | generate_srt | burn_subtitles | info
+    - params: operation-specific parameters
+    """
+    try:
+        data = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    operation = data.get("operation", "transcribe")
+    file_path  = data.get("file_path", "")
+    params     = data.get("params", {})
+
+    if not file_path or not os.path.exists(file_path):
+        return JSONResponse({"error": f"File not found: {file_path}"}, status_code=400)
+
+    try:
+        from modules.video_editor import (
+            transcribe, trim_clip, remove_silences,
+            extract_audio, generate_srt, burn_subtitles,
+            merge_clips, video_info
+        )
+        import tempfile, os as _os
+
+        out_dir = _os.path.expanduser("~/eliteomni_outputs")
+        _os.makedirs(out_dir, exist_ok=True)
+
+        if operation == "info":
+            result = video_info(file_path)
+            return JSONResponse({"operation": "info", "result": result})
+
+        elif operation == "transcribe":
+            model = params.get("model", "base")
+            transcript = transcribe(file_path, model_size=model)
+            # Also generate SRT
+            srt_path = _os.path.join(out_dir, _os.path.basename(file_path) + ".srt")
+            if transcript.get("segments"):
+                generate_srt(transcript, srt_path)
+            return JSONResponse({
+                "operation": "transcribe",
+                "text": transcript.get("text", ""),
+                "segments": len(transcript.get("segments", [])),
+                "srt_path": srt_path if _os.path.exists(srt_path) else None,
+                "language": transcript.get("language", "unknown")
+            })
+
+        elif operation == "trim":
+            start = float(params.get("start", 0))
+            end   = float(params.get("end", 60))
+            out   = _os.path.join(out_dir, f"trim_{_os.path.basename(file_path)}")
+            result = trim_clip(file_path, start, end, out)
+            return JSONResponse({"operation": "trim", "output": result, "start": start, "end": end})
+
+        elif operation == "remove_silences":
+            threshold = float(params.get("threshold", -35))
+            min_sil   = float(params.get("min_silence", 0.5))
+            out = _os.path.join(out_dir, f"nosilence_{_os.path.basename(file_path)}")
+            result = remove_silences(file_path, threshold, min_sil)
+            return JSONResponse({"operation": "remove_silences", "output": result})
+
+        elif operation == "extract_audio":
+            out = _os.path.join(out_dir, _os.path.basename(file_path).rsplit(".", 1)[0] + ".mp3")
+            result = extract_audio(file_path, out)
+            return JSONResponse({"operation": "extract_audio", "output": result})
+
+        elif operation == "generate_srt":
+            model = params.get("model", "base")
+            transcript = transcribe(file_path, model_size=model)
+            srt_path = _os.path.join(out_dir, _os.path.basename(file_path) + ".srt")
+            generate_srt(transcript, srt_path)
+            return JSONResponse({"operation": "generate_srt", "srt_path": srt_path,
+                                 "segments": len(transcript.get("segments", []))})
+
+        elif operation == "burn_subtitles":
+            srt_path = params.get("srt_path", "")
+            if not srt_path or not _os.path.exists(srt_path):
+                return JSONResponse({"error": "srt_path required and must exist"}, status_code=400)
+            out = _os.path.join(out_dir, f"subtitled_{_os.path.basename(file_path)}")
+            result = burn_subtitles(file_path, srt_path, out)
+            return JSONResponse({"operation": "burn_subtitles", "output": result})
+
+        else:
+            return JSONResponse({"error": f"Unknown operation: {operation}"}, status_code=400)
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/video/upload")
+async def video_upload(file: UploadFile = FastAPIFile(...)):
+    """Upload a video/audio file for editing."""
+    filename = file.filename or "video.mp4"
+    ext = os.path.splitext(filename.lower())[1]
+    if ext not in VIDEO_EXTS and ext not in AUDIO_EXTS:
+        return JSONResponse({"error": f"Unsupported video/audio type: {ext}"}, status_code=400)
+    data = await file.read()
+    if len(data) > 500 * 1024 * 1024:  # 500MB limit
+        return JSONResponse({"error": "File too large (max 500MB)"}, status_code=400)
+    save_dir = os.path.expanduser("~/eliteomni_uploads")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, filename)
+    with open(save_path, "wb") as f:
+        f.write(data)
+    return JSONResponse({
+        "filename": filename,
+        "file_path": save_path,
+        "size_mb": round(len(data) / 1024 / 1024, 2),
+        "status": "uploaded — use /video/edit to process"
+    })
+
 
 @app.post("/upload/chat")
 async def upload_and_chat(file: UploadFile = FastAPIFile(...), message: str = "Summarize this file."):
