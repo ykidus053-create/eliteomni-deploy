@@ -35,7 +35,7 @@ def _mistral_gen(msgs, max_tokens=1000, **kw):
     return "".join(_mistral_stream_shim(msgs, max_tokens=max_tokens))
 groq_generate = _mistral_gen
 from modules.core.constants import N_CTX, _gen_lock
-from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, (
+from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, GENERAL_REACT_PROMPT, (
     LOGIC_AUDIT_PROMPT,
     COUNTERFACTUAL_AND_RISK_PROMPT, BIAS_CORRECTION_PROMPT,
     IMPLICIT_INTENT_PROMPT, SELF_IMPROVEMENT_PROMPT,
@@ -613,13 +613,14 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     )
 
     parts.append(UNCERTAINTY_PROMPT.strip())
+    parts.insert(0, GENERAL_REACT_PROMPT.strip())  # base loop for all skills
     try:
         from modules.hallucination_guard import build_hallucination_guard_prompt
         _hg = build_hallucination_guard_prompt(msg, [], skill, complexity)
         if _hg: parts.append(_hg)
     except Exception as _hge2: print("[HallucinationGuard] inject failed: " + str(_hge2))
     try:
-        from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, ANTI_SYCOPHANCY_PROMPT
+        from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, GENERAL_REACT_PROMPT, ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     parts.append(RESPONSE_STYLE_PROMPT.strip())

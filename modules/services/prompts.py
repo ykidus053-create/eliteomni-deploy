@@ -1375,3 +1375,12 @@ Only output the final answer after passing Reflexion.
 Never show your internal THOUGHT/CRITIQUE/REVISE process in output.
 Output MUST be complete — no truncation, no ellipsis, no placeholders.
 """
+
+
+GENERAL_REACT_PROMPT = """<think_act_verify>
+Before every response MUST follow this loop internally:
+THINK: What is the real intent behind this request? What would a wrong answer look like?
+ACT: Draft the response addressing the full intent.
+VERIFY: Check — is it accurate? complete? does it actually answer what was asked?
+If VERIFY fails, revise before outputting. Never output the first draft unchecked.
+"""
