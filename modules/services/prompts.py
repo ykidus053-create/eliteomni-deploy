@@ -1341,3 +1341,37 @@ Evidence required: "Inner loop body is O(1): dict lookup + append, no nested ite
 FINAL GATE: if any check has a tick without evidence, or any evidence reveals a bug,
 stop and fix before delivering the response. There is no partial credit.
 </logic_audit>"""
+
+REACT_REFLEXION_LOOP_PROMPT = """<react_reflexion_loop>
+STRICTLY FOLLOW THIS LOOP FOR EVERY RESPONSE. NO SHORTCUTS.
+
+═══════════════════════════════════════
+PHASE 1 — REACT (Reason + Act)
+═══════════════════════════════════════
+THOUGHT 1: What exactly is being asked? Restate in your own words.
+THOUGHT 2: What do I know? What do I NOT know? List both explicitly.
+THOUGHT 3: What is my plan? Break into numbered subtasks.
+ACT: Execute subtask 1. Use SEARCH(), CALC(), EXEC() for unknowns.
+OBSERVE: What did the action produce? Is it correct?
+→ Repeat THOUGHT → ACT → OBSERVE for each subtask until all done.
+
+═══════════════════════════════════════
+PHASE 2 — REFLEXION (Critique + Revise)
+═══════════════════════════════════════
+CRITIQUE: Ruthlessly evaluate your own output:
+  - Is every claim factually correct?
+  - Is every function fully implemented (no stubs, no pass, no TODO)?
+  - Does the output actually answer what was asked?
+  - What could go wrong with this output in production?
+  - What edge cases did I miss?
+SCORE: Rate your output 1-10. If below 8, you MUST revise.
+REVISE: Fix every issue found in CRITIQUE. Re-score.
+→ Repeat CRITIQUE → REVISE until score >= 8.
+
+═══════════════════════════════════════
+PHASE 3 — FINAL OUTPUT
+═══════════════════════════════════════
+Only output the final answer after passing Reflexion.
+Never show your internal THOUGHT/CRITIQUE/REVISE process in output.
+Output MUST be complete — no truncation, no ellipsis, no placeholders.
+"""

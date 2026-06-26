@@ -35,7 +35,7 @@ def _mistral_gen(msgs, max_tokens=1000, **kw):
     return "".join(_mistral_stream_shim(msgs, max_tokens=max_tokens))
 groq_generate = _mistral_gen
 from modules.core.constants import N_CTX, _gen_lock
-from modules.services.prompts import (
+from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, (
     LOGIC_AUDIT_PROMPT,
     COUNTERFACTUAL_AND_RISK_PROMPT, BIAS_CORRECTION_PROMPT,
     IMPLICIT_INTENT_PROMPT, SELF_IMPROVEMENT_PROMPT,
@@ -619,7 +619,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         if _hg: parts.append(_hg)
     except Exception as _hge2: print("[HallucinationGuard] inject failed: " + str(_hge2))
     try:
-        from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
+        from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     parts.append(RESPONSE_STYLE_PROMPT.strip())
@@ -710,15 +710,18 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     if skill == "calculator":
         parts.append(PARALLEL_CALC_PROMPT.strip())
     if skill == "coder":
-        parts.insert(0, SELF_CORRECT_DEBUG_PROMPT.strip())  # FIRST — highest priority
-        parts.insert(1, LOGIC_AUDIT_PROMPT.strip())
+        parts.insert(0, REACT_REFLEXION_LOOP_PROMPT.strip())  # OUTERMOST LOOP — first
+        parts.insert(1, SELF_CORRECT_DEBUG_PROMPT.strip())
+        parts.insert(2, LOGIC_AUDIT_PROMPT.strip())
         parts.append(COMPUTER_USE_PROMPT.strip())
         parts.append(SCIENTIFIC_COMPUTING_PROMPT.strip())
         parts.append(CODER_SUFFIX.strip())
     if skill == "researcher":
+        parts.insert(0, REACT_REFLEXION_LOOP_PROMPT.strip())  # OUTERMOST LOOP — first
         parts.append(SCIENTIFIC_COMPUTING_PROMPT.strip())
         parts.append(PEVI_LOOP_PROMPT.strip())
     if complexity == "hard":
+        parts.insert(0, REACT_REFLEXION_LOOP_PROMPT.strip())  # OUTERMOST LOOP — first
         parts.append(LONG_SESSION_PROMPT.strip())
 
     scratch = scratchpad_get_context()
