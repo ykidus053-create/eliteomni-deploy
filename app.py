@@ -4518,15 +4518,19 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
             _row = _db.execute("SELECT value FROM kv WHERE key='last_skill' LIMIT 1").fetchone()
             _db.close()
             if _row and _row[0] and _row[0] != "general":
-                skill = _row[0]
-                print(f"[SkillPersist] restored skill={skill}")
+                _parts = _row[0].split("|")
+                _saved_skill = _parts[0]
+                _saved_ts = float(_parts[1]) if len(_parts) > 1 else 0
+                if time.time() - _saved_ts < 600:  # 10 min TTL
+                    skill = _saved_skill
+                    print(f"[SkillPersist] restored skill={skill}")
         except Exception: pass
     # Save skill to DB
     if skill != "general":
         try:
             import sqlite3 as _sq3, os as _os3
             _db = _sq3.connect(_os3.path.expanduser("~/eliteomni_memory.db"), check_same_thread=False)
-            _db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('last_skill', ?)", (skill,))
+            _db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('last_skill', ?)", (f"{skill}|{time.time()}",))
             _db.commit(); _db.close()
         except Exception: pass
     if skill == "general" and _needs_fresh_search(msg):
