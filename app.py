@@ -2905,7 +2905,7 @@ async def stream_chat(req: Request):
         _loop = _asyncio.get_event_loop()
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist))
         try:
-            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=20)
+            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=6)
         except _asyncio.TimeoutError:
             print("[stream_chat] ctx timeout — fast first token with minimal ctx")
             from modules.core.constants import get_infra_tier
@@ -4551,7 +4551,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     f_rag     = _bsc_ex.submit(_do_rag)
     f_rlhf    = _bsc_ex.submit(_do_rlhf)
     def _sr(f, default, name):
-        try: return f.result(timeout=18)
+        try: return f.result(timeout=4)
         except Exception as _e: print("[bsc] " + name + " failed: " + str(_e)); return default
     clean_msg, search_ctx = _sr(f_search, (msg, ""), "search")
     recent, ctx_sum  = _sr(f_hist,  ([], ""),  "hist")

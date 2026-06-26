@@ -1042,7 +1042,7 @@ def tavily_search(query: str, max_results: int = 5) -> str:
     payload = _json.dumps({
         "api_key": key,
         "query": query,
-        "search_depth": "advanced",
+        "search_depth": "basic",
         "include_answer": True,
         "include_raw_content": True,
         "max_results": max_results,
@@ -1055,7 +1055,7 @@ def tavily_search(query: str, max_results: int = 5) -> str:
         headers={"Content-Type": "application/json", "User-Agent": "EliteOmni/1.0"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=4) as r:
             data = _json.loads(r.read())
         print(f"[Tavily RAW] answer={repr(data.get("answer","")[:100])} results_count={len(data.get("results",[]))} first_content={repr((data.get("results",[{}])[0].get("content","") if data.get("results") else "")[:80])}")
         chunks = []
