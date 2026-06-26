@@ -430,7 +430,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
             if h.get("role") == "user"
         )
         _hist_skill = classify_skill(_recent_user_msgs)
-        if _hist_skill != "general":
+        # Only inherit history skill if current msg is ambiguous (general + short)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8:
             skill = _hist_skill
     # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
     if skill == "general" and _needs_fresh_search(msg):
@@ -993,7 +994,8 @@ def _build_stream_context(msg: str, hist: list) -> dict:
             if h.get("role") == "user"
         )
         _hist_skill = classify_skill(_recent_user_msgs)
-        if _hist_skill != "general":
+        # Only inherit history skill if current msg is ambiguous (general + short)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8:
             skill = _hist_skill
     # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
     if skill == "general" and _needs_fresh_search(msg):
@@ -1200,7 +1202,8 @@ def pipeline_stream(msg: str, history: list):
             if h.get("role") == "user"
         )
         _hist_skill = classify_skill(_recent_user_msgs)
-        if _hist_skill != "general":
+        # Only inherit history skill if current msg is ambiguous (general + short)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8:
             skill = _hist_skill
     # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
     if skill == "general" and _needs_fresh_search(msg):
@@ -4506,7 +4509,26 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     if skill == "general" and hist:
         _recent_user_msgs = " ".join(h.get("content", "") for h in hist[-6:] if h.get("role") == "user")
         _hist_skill = classify_skill(_recent_user_msgs)
-        if _hist_skill != "general": skill = _hist_skill
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8: skill = _hist_skill
+    # Persistent skill — restore from DB if still general
+    if skill == "general":
+        try:
+            import sqlite3 as _sq3, os as _os3
+            _db = _sq3.connect(_os3.path.expanduser("~/eliteomni_memory.db"), check_same_thread=False)
+            _row = _db.execute("SELECT value FROM kv WHERE key='last_skill' LIMIT 1").fetchone()
+            _db.close()
+            if _row and _row[0] and _row[0] != "general":
+                skill = _row[0]
+                print(f"[SkillPersist] restored skill={skill}")
+        except Exception: pass
+    # Save skill to DB
+    if skill != "general":
+        try:
+            import sqlite3 as _sq3, os as _os3
+            _db = _sq3.connect(_os3.path.expanduser("~/eliteomni_memory.db"), check_same_thread=False)
+            _db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('last_skill', ?)", (skill,))
+            _db.commit(); _db.close()
+        except Exception: pass
     if skill == "general" and _needs_fresh_search(msg):
         skill = "researcher"
     # Claude-style: inherit skill+context from recent history
