@@ -243,8 +243,6 @@ def tool_search(query: str, _raw: bool = False) -> str:
     _tavily = tavily_search(query, max_results=5)
     if _tavily:
         if _rcache: _rcache.setex(_ckey, 300, _tavily)
-        if _raw:
-            return [{"title": "Tavily", "content": _tavily, "url": ""}]
         return _tavily
 
     if not _ensure_searxng():
@@ -516,10 +514,13 @@ def tool_search_multi(user_msg: str) -> str:
             except Exception as _fe:
                 print("[multi-search] future failed: " + str(_fe))
                 continue
-            if isinstance(raw, list):
+            if isinstance(raw, str) and raw.strip():
+                # Tavily returned pre-formatted string — use directly
+                all_results.append({"title": "Tavily", "content": raw, "url": "tavily"})
+            elif isinstance(raw, list):
                 for item in raw:
-                    url = item.get("url", "")
-                    if url and url not in seen_urls:
+                    url = item.get("url", "") or "tavily"
+                    if url not in seen_urls:
                         seen_urls.add(url)
                         all_results.append(item)
     except TimeoutError:
