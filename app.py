@@ -8,14 +8,10 @@ try:
 except ImportError:
     pass
 from modules.services.pipeline import _budget, stream_tokens, build_system_prompt, build_chatml, generate_sync
-from modules.deep_think_math import deep_think_math
-from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
 from modules.claude_code import enrich_system_prompt, agentic_self_correct, detect_style_rule, update_claude_md
 from modules.core.http_client import groq_stream, groq_generate, vision_describe
 _vision_loaded = True
 import os, re, time, math, json, asyncio, random, ast, subprocess, sys, tempfile
-import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import groq_client_patch  # speed patch
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import debug_patch
 from threading import Lock
@@ -82,8 +78,6 @@ except Exception as _e:
 app = FastAPI(title="EliteOmni v17")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-from modules.deep_think_math import deep_think_math
-from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
 from modules.core.http_client import *
 from modules.core.constants import *
 from modules.services.memory import *

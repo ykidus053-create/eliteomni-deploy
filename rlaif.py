@@ -15,13 +15,20 @@ _threads = [_th.Thread(target=_load, args=(m,), daemon=True)
 for t in _threads: t.start()
 for t in _threads: t.join()
 
-def _inject(mod_name: str, symbols: list, *, msg: str, skill: str, complexity: str, history: list, image_b64: str = ""):
+def _inject(mod_name: str, symbols: list, *, msg: str, skill: str, complexity: str, history: list, image_b64: str = "") -> dict:
+    """
+    Bug Fix: Previously generated _rc_injection but discarded it.
+    Now properly returns the injection payload dictionary so it can be utilized upstream.
+    """
     mod = _mod_results.get(mod_name)
     if mod is None:
         log.error("[%s] not loaded: %s", mod_name, _mod_errors.get(mod_name))
-        return False
+        return {"success": False, "injection": ""}
+    
     _session_id = "default"
     _rc_injection = ""
+    _rc_meta = {}
+    
     try:
         from modules.intelligence.reasoning_core import build_reasoning_core_context
         import hashlib as _hlib
@@ -30,7 +37,14 @@ def _inject(mod_name: str, symbols: list, *, msg: str, skill: str, complexity: s
         log.debug("[ReasoningCore] %d chars | %s", len(_rc_injection), _rc_meta.get("injection_sources", []))
     except Exception as e:
         log.debug("[ReasoningCore] skipped: %s", e)
-    return True
+        
+    return {
+        "success": True,
+        "module": mod_name,
+        "session_id": _session_id,
+        "injection": _rc_injection,
+        "meta": _rc_meta
+    }
 
 def critique(response: str, skill: str = "general") -> str:
     try:
