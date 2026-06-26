@@ -861,6 +861,38 @@ def pipeline_sync(msg: str, history: list) -> dict:
             except Exception as _pe:
                 print(f"[AntiPseudo rewrite] {_pe}")
         final = _lint_feedback_loop(final, msg, system, max_t, skill)
+
+        # ── Loop Engine (Plan+Search+ReAct+CAI+Reflexion) ─────────────────────
+        if complexity in ("medium", "hard") or skill == "researcher":
+            try:
+                from modules.loop_engine import run_loops
+                def _gen_fn(messages):
+                    _sys  = next((m["content"] for m in messages if m["role"] == "system"), system)
+                    _msgs = [m for m in messages if m["role"] != "system"]
+                    return "".join(mistral_stream(_msgs, max_tokens=1200, model=_tier["models"][0]))
+                _looped = run_loops(msg, system, _gen_fn, skill, complexity, search_ctx, final)
+                if _looped and len(_looped) > 80:
+                    final = _looped
+                    print(f"[LoopEngine] applied len={len(final)}")
+            except Exception as _le:
+                print(f"[LoopEngine] error: {_le}")
+
+        # ── Loop Engineering (ReAct + Reflexion + Agentic + Search) ──────────
+        if complexity in ("medium", "hard") or skill == "researcher":
+            try:
+                from modules.loop_engine import run_loops
+                from modules.services.pipeline import generate_sync as _gsync
+                def _gen_fn(messages):
+                    from modules.core.http_client import mistral_stream
+                    _sys = next((m["content"] for m in messages if m["role"]=="system"), system)
+                    _msgs = [m for m in messages if m["role"] != "system"]
+                    return "".join(mistral_stream(_msgs, max_tokens=1500, model=_tier["models"][0]))
+                _looped = run_loops(msg, system, _gen_fn, skill, complexity, search_ctx, final)
+                if _looped and len(_looped) > len(final) * 0.5:
+                    final = _looped
+                    print(f"[LoopEngine] result applied len={len(final)}")
+            except Exception as _le:
+                print(f"[LoopEngine] skipped: {_le}")
         # ── Auto-execute code blocks and append results ──────────────────────
         try:
             from modules.code_executor import extract_code_blocks, run_code_safe
