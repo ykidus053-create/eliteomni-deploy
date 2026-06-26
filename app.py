@@ -4514,6 +4514,21 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
                          "write a function", "fix this", "bug in"]
         if any(t in msg.lower() for t in _code_signals):
             return (msg, "")
+        # Check Tavily cache first — avoids duplicate HTTP call
+        from modules.services.search import _tavily_cache, tavily_search
+        _ck = msg.strip().lower()[:120]
+        if _ck in _tavily_cache:
+            print("[_do_search] Tavily cache hit — reusing result")
+            import datetime as _dt
+            _ctx = ("MANDATORY: LIVE search results fetched " + str(_dt.date.today()) + ". "
+                    "You MUST use these. FORBIDDEN from saying no internet access.
+"
+                    "[LIVE RESULTS]
+" + _tavily_cache[_ck][:4000] + "
+[END RESULTS]
+"
+                    "Answer using ONLY the above results.")
+            return (msg, _ctx)
         return extract_search_context(msg)
 
     def _do_history():
