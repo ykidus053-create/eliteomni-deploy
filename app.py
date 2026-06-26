@@ -1133,7 +1133,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
     )
     _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
-    max_t = 64000 if (skill == "coder" or _is_large_scope) else 16000
+    max_t = 640000 if (skill == "coder" or _is_large_scope) else 16000
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
@@ -1287,7 +1287,7 @@ def pipeline_stream(msg: str, history: list):
     if skill == "coder":
         _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. ZERO TODO. Every function fully implemented with real logic. Ships to prod as-is."
     prompt   = build_chatml(system, hist_msgs, _final_msg)
-    max_t    = 64000 if skill == "coder" else 16000  # coder gets full budget
+    max_t    = 640000 if skill == "coder" else 16000  # coder gets full budget
 
     yield {"_meta": True, "skill": skill, "mode": "agentic", "vetoed": False, "complexity": complexity}
 
@@ -4974,7 +4974,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
     )
     _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
-    max_t = 64000 if (skill == "coder" or _is_large_scope) else 16000
+    max_t = 640000 if (skill == "coder" or _is_large_scope) else 16000
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
