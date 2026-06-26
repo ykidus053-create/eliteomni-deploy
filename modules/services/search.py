@@ -1023,9 +1023,14 @@ FINAL ANSWER: [verified answer]"""
 # ── Tavily Search (primary — clean content, no homepages) ─────────────────────
 import os as _os
 TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
+_tavily_cache = {}
 
 def tavily_search(query: str, max_results: int = 5) -> str:
     print(f"[Tavily DEBUG] called with query={repr(query)} key_set={bool(TAVILY_API_KEY)}")
+    _cache_key = query.strip().lower()[:120]
+    if _cache_key in _tavily_cache:
+        print("[Tavily] cache hit")
+        return _tavily_cache[_cache_key]
     """
     Tavily search — returns clean extracted content, not raw snippets.
     Designed for LLM grounding (like Anthropic's internal pipeline).
@@ -1076,7 +1081,10 @@ def tavily_search(query: str, max_results: int = 5) -> str:
             content = item.get("raw_content") or item.get("content", "")
             if content:
                 chunks.append(f"[{i}] {title}\n{content[:3000]}\nSource: {url}")
-        return "\n\n---\n\n".join(chunks) if chunks else None
+        result = "\n\n---\n\n".join(chunks) if chunks else None
+        if result:
+            _tavily_cache[_cache_key] = result
+        return result
     except Exception as e:
         print(f"[Tavily] error: {e}")
         return None
