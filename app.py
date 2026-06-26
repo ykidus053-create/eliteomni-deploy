@@ -946,6 +946,13 @@ def pipeline_sync(msg: str, history: list) -> dict:
     final_clean = _re2.sub(r"<think>.*?</think>", "", final, flags=_re2.DOTALL).strip()
     mem_save(f"Q:{msg[:80]} A:{final_clean[:160]}")
     semantic_mem_save(f"Q: {msg[:200]} A: {final[:300]}", {"skill": skill, "ts": str(time.time())})
+    # Persistent cross-session memory
+    try:
+        from modules.services.memory import db_mem_save, db_episodic_save
+        db_mem_save(f"Q: {msg[:200]} A: {final_clean[:400]}", source="conversation")
+        if skill in ("researcher", "coder") or complexity == "hard":
+            db_episodic_save(f"[{skill}] {msg[:100]} → {final_clean[:200]}")
+    except Exception as _me: print(f"[MemPersist] {_me}")
     # Save to fine-tune DB — every conversation becomes training data
     finetune_save(skill, complexity, system, msg, final)
     # ── Claude Code: persist coding-style rules to CLAUDE.md ──────────────
@@ -1385,6 +1392,18 @@ def pipeline_stream(msg: str, history: list):
         cache_set(msg, skill, final)
         mem_save(f"Q:{msg[:80]} A:{final[:160]}")
         semantic_mem_save(f"Q: {msg[:200]} A: {final[:300]}", {"skill": skill, "ts": str(time.time())})
+        try:
+            from modules.services.memory import db_mem_save, db_episodic_save
+            db_mem_save(f"Q: {msg[:200]}\nA: {final[:400]}", source="conversation")
+            if skill in ("researcher", "coder") or complexity == "hard":
+                db_episodic_save(f"[{skill}] {msg[:100]} -> {final[:200]}")
+        except Exception as _me: print(f"[MemPersist] {_me}")
+        try:
+            from modules.services.memory import db_mem_save, db_episodic_save
+            db_mem_save(f"Q: {msg[:200]}\nA: {final[:400]}", source="conversation")
+            if skill in ("researcher", "coder") or complexity == "hard":
+                db_episodic_save(f"[{skill}] {msg[:100]} -> {final[:200]}")
+        except Exception as _me: print(f"[MemPersist] {_me}")
         finetune_save(skill, complexity, system, msg, final)
 
 

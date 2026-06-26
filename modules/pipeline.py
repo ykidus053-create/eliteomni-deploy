@@ -30,8 +30,8 @@ def classify_skill(msg: str) -> str:
     _SEARCH_SIGNALS = ["latest","current news","who is the","what is the price",
                        "today","right now","just released","breaking","stock price",
                        "weather","search for","look up","find me"]
-    if skill in ("general", "researcher") and any(s in m for s in _SEARCH_SIGNALS):
-        return "coder"
+    if skill in ("general",) and any(s in m for s in _SEARCH_SIGNALS):
+        return "researcher"
     return skill
 
 _EASY_RE = re.compile(
