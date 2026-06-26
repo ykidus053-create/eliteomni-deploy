@@ -35,7 +35,7 @@ def _mistral_gen(msgs, max_tokens=1000, **kw):
     return "".join(_mistral_stream_shim(msgs, max_tokens=max_tokens))
 groq_generate = _mistral_gen
 from modules.core.constants import N_CTX, _gen_lock
-from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, GENERAL_REACT_PROMPT, (
+from modules.services.prompts import (REACT_REFLEXION_LOOP_PROMPT, GENERAL_REACT_PROMPT,
     LOGIC_AUDIT_PROMPT,
     COUNTERFACTUAL_AND_RISK_PROMPT, BIAS_CORRECTION_PROMPT,
     IMPLICIT_INTENT_PROMPT, SELF_IMPROVEMENT_PROMPT,
