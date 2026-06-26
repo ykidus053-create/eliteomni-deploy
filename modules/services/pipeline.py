@@ -620,7 +620,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         if _hg: parts.append(_hg)
     except Exception as _hge2: print("[HallucinationGuard] inject failed: " + str(_hge2))
     try:
-        from modules.services.prompts import REACT_REFLEXION_LOOP_PROMPT, GENERAL_REACT_PROMPT, ANTI_SYCOPHANCY_PROMPT
+        from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     parts.append(RESPONSE_STYLE_PROMPT.strip())
