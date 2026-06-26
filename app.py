@@ -4521,12 +4521,8 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
             print("[_do_search] Tavily cache hit — reusing result")
             import datetime as _dt
             _ctx = ("MANDATORY: LIVE search results fetched " + str(_dt.date.today()) + ". "
-                    "You MUST use these. FORBIDDEN from saying no internet access.
-"
-                    "[LIVE RESULTS]
-" + _tavily_cache[_ck][:4000] + "
-[END RESULTS]
-"
+                    "You MUST use these. FORBIDDEN from saying no internet access.\n"
+                    "[LIVE RESULTS]\n" + _tavily_cache[_ck][:4000] + "\n[END RESULTS]\n"
                     "Answer using ONLY the above results.")
             return (msg, _ctx)
         return extract_search_context(msg)
