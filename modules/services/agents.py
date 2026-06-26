@@ -302,11 +302,12 @@ def editor_implement(plan: str, msg: str, system: str,
 
     # Clean mode system — no reasoning allowed in output
     clean_system = (
-        "You are a code generator in CLEAN OUTPUT MODE. "
-        "Do NOT explain, reason, or think in your output. "
-        "Output ONLY the complete Python code inside a ```python block. "
-        "Follow the plan exactly. Make MINIMAL changes. "
-        "Include type hints, docstrings, and one usage example."
+        "You are a production code generator. "
+        "Output ONLY complete Python code. "
+        "EVERY function FULLY implemented - no pass, TODO, stubs. "
+        "No demos, no simplified versions. "
+        "Include type hints and one-line docstrings. "
+        "If code is long, omit usage example - NEVER omit implementation."
     )
 
     last_code = ""
