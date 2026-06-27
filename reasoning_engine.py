@@ -1,39 +1,71 @@
 """
-Deliberative Reasoning Engine — 100x Upgrade.
-Implements: Tree of Thoughts (ToT), LLM Logic Judge, and Python Code Execution for Math.
+Deliberative Reasoning Engine — Frontier Tier (o1-style).
+Implements: Hidden Scratchpad, Self-Correcting Math Loop, and Devil's Advocate Logic Verification.
 """
-import re, time, random, threading, asyncio, subprocess, tempfile, os
+import re, time, random, threading, subprocess, tempfile, os, resource
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="reason")
 
-def execute_math_code(code: str) -> str:
-    """Executes python math code safely and returns the exact output."""
+def _set_limits():
+    # 3 seconds CPU time limit for math execution
+    resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
+    resource.setrlimit(resource.RLIMIT_AS, (100 * 1024 * 1024, 100 * 1024 * 1024))
+
+def execute_math_code(code: str) -> tuple[bool, str]:
+    """Executes python math code safely and returns (success, output)."""
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
         f.write(code)
         fname = f.name
     try:
-        r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=5, preexec_fn=_set_limits)
         if r.returncode == 0:
-            return r.stdout.strip() or r.stderr.strip()
-        return f"EXECUTION ERROR: {r.stderr.strip()[:200]}"
+            return True, r.stdout.strip() or r.stderr.strip()
+        return False, r.stderr.strip()[:300]
     except Exception as e:
-        return f"EXECUTION ERROR: {str(e)}"
+        return False, str(e)
     finally:
         if os.path.exists(fname): os.unlink(fname)
 
+def self_correcting_math(msg: str, generate_fn, model: str, max_retries: int = 3) -> str:
+    """Forces the AI to write math code, executes it, and feeds errors back for self-correction."""
+    prompt = [
+        {"role": "system", "content": "You are a mathematical computation engine. You MUST output a python code block formatted exactly as [PYTHON CALC START] print(answer) [PYTHON CALC END] to calculate this. Do not guess numbers."},
+        {"role": "user", "content": msg}
+    ]
+    
+    last_error = ""
+    for attempt in range(max_retries):
+        if last_error:
+            prompt.append({"role": "assistant", "content": f"[PYTHON CALC START]\n{last_code}\n[PYTHON CALC END]"})
+            prompt.append({"role": "user", "content": f"Execution failed with error: {last_error}\nFix the code and output the corrected [PYTHON CALC START]...[PYTHON CALC END] block."})
+        
+        resp = generate_fn(prompt, max_tokens=500, model=model)
+        match = re.search(r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]', resp, re.DOTALL)
+        
+        if not match:
+            return resp # Fallback if AI refuses to use tags
+            
+        code = match.group(1).strip()
+        last_code = code
+        success, output = execute_math_code(code)
+        
+        if success:
+            return f"[CALCULATED RESULT: {output}]"
+        else:
+            last_error = output
+            
+    return f"[MATH EXECUTION FAILED AFTER {max_retries} ATTEMPTS. Last error: {last_error}]"
+
 def extract_and_run_math(response: str) -> str:
-    """Finds [PYTHON CALC START]...[END] blocks, runs them, and injects the result."""
+    """Finds [PYTHON CALC START]...[END] blocks in general responses, runs them, and injects the result."""
     pattern = r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]'
     matches = re.findall(pattern, response, re.DOTALL)
-    
-    if not matches:
-        return response, False  # False means no math code was found
+    if not matches: return response, False
         
     final_response = response
     for code in matches:
-        result = execute_math_code(code.strip())
-        # Replace the code block with the executed result
+        success, result = execute_math_code(code.strip())
         final_response = final_response.replace(
             f"[PYTHON CALC START]{code}[PYTHON CALC END]",
             f"[CALCULATED RESULT: {result}]"
@@ -43,7 +75,7 @@ def extract_and_run_math(response: str) -> str:
 def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model: str, n: int = 3) -> list:
     def _gen_one(approach_hint: str) -> str:
         prompt = [{"role": "system", "content": system + f"\n\nApproach hint: {approach_hint}"}] + history[-6:] + [{"role": "user", "content": msg}]
-        try: return generate_fn(prompt, max_tokens=1200, model=model)
+        try: return generate_fn(prompt, max_tokens=1500, model=model)
         except: return ""
 
     approaches = [
@@ -61,26 +93,24 @@ def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model
         except: pass
     return results
 
-def llm_logic_judge(msg: str, candidates: list, generate_fn, model: str) -> str:
-    """Upgraded: LLM as a Judge to pick the most logically sound candidate."""
-    if not candidates: return ""
-    if len(candidates) == 1: return candidates[0]
-
-    prompt = [{"role": "system", "content": "You are an impartial Logic Judge. Evaluate the candidates for logical consistency, absence of fallacies, and correctness. Reply ONLY with the best candidate verbatim."}]
-    
-    candidate_text = ""
-    for i, c in enumerate(candidates[:3]):
-        candidate_text += f"\n\n--- CANDIDATE {i+1} ---\n{c[:1000]}\n"
-        
-    prompt.append({"role": "user", "content": f"Question: {msg[:300]}\n{candidate_text}\n\nWhich candidate is logically flawless? Reply with the exact text of the winner:"})
-    
+def devils_advocate(winner: str, msg: str, generate_fn, model: str) -> str:
+    """Upgraded: Tries to break the AI's logic. If it finds a hole, forces a rewrite."""
+    prompt = [
+        {"role": "system", "content": "You are a Ruthless Devil's Advocate. Find the ONE logical flaw, unsupported claim, or math error in the candidate. If it is flawless, reply EXACTLY: FLAWLESS. If flawed, reply: FLAW: [explain]"},
+        {"role": "user", "content": f"Question: {msg[:300]}\nCandidate Answer: {winner[:1000]}"}
+    ]
     try:
-        winner = generate_fn(prompt, max_tokens=1000, model=model)
-        # Basic check to ensure it didn't hallucinate a completely new response
-        if len(winner) > 50 and any(c[:100] in winner for c in candidates):
-            return winner
+        critique = generate_fn(prompt, max_tokens=200, model=model)
+        if "FLAW:" in critique.upper():
+            # Force a rewrite addressing the flaw
+            rewrite_prompt = [
+                {"role": "system", "content": "Fix the flaw in your reasoning and output the corrected, flawless answer."},
+                {"role": "user", "content": f"Original Answer: {winner[:800]}\n\nFlaw Identified: {critique}\n\nProvide the corrected answer:"}
+            ]
+            fixed = generate_fn(rewrite_prompt, max_tokens=1000, model=model)
+            return fixed
     except: pass
-    return max(candidates, key=len)
+    return winner
 
 def deliberate(msg: str, system: str, history: list, generate_fn, model: str, complexity: str = "medium", skill: str = "general") -> str:
     t0 = time.time()
@@ -89,27 +119,29 @@ def deliberate(msg: str, system: str, history: list, generate_fn, model: str, co
     if complexity == "easy":
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
         resp = generate_fn(prompt, max_tokens=2500, model=model)
-        # If it's a calculator task, enforce math execution
         if skill == "calculator":
             resp, _ = extract_and_run_math(resp)
         return resp
 
-    # Hard/Medium path: Tree of Thoughts + Math Execution
+    # Hard/Medium path: Tree of Thoughts + Devil's Advocate + Math Execution
     candidates = generate_hypotheses(msg, system, history, generate_fn, model, n=3 if complexity == "hard" else 2)
     if not candidates:
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
         return generate_fn(prompt, max_tokens=1200, model=model)
 
-    best = llm_logic_judge(msg, candidates, generate_fn, model)
+    # Pick the longest/most detailed candidate as the initial winner
+    winner = max(candidates, key=len)
     
-    # If calculator, execute the math in the winning response
+    # Run Devil's Advocate to break and rewrite logic
+    winner = devils_advocate(winner, msg, generate_fn, model)
+    
+    # If calculator, use the self-correcting math loop
     if skill == "calculator":
-        best, had_math = extract_and_run_math(best)
-        if not had_math:
-            # If AI didn't write math code, force it to retry with code
-            retry_prompt = [{"role": "system", "content": "You MUST output [PYTHON CALC START] print(answer) [PYTHON CALC END] to calculate this."}, {"role": "user", "content": msg}]
-            retry_resp = generate_fn(retry_prompt, max_tokens=500, model=model)
-            best, _ = extract_and_run_math(retry_resp)
+        math_result = self_correcting_math(msg, generate_fn, model)
+        winner = f"{math_result}\n\n{winner}"
+    else:
+        # Still run any embedded math in the general/researcher response
+        winner, _ = extract_and_run_math(winner)
 
-    print(f"[Deliberate] ToT done, t={int((time.time()-t0)*1000)}ms")
-    return best
+    print(f"[Deliberate] Frontier ToT + Devil's Advocate done, t={int((time.time()-t0)*1000)}ms")
+    return winner
