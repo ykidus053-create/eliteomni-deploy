@@ -185,3 +185,43 @@ PROMPTS["general"].extend([
     "Explain the difference between MLE and MAP estimation",
     "What is the vanishing gradient problem and how to fix it?",
 ])
+
+# ── Upgraded: Adversarial Training Loop ─────────────────────────────────────
+def _run_adversarial_loop(iterations: int = 10, delay: float = 60.0):
+    """Periodically generates adversarial attacks to test and improve the safety layer."""
+    from modules.core.http_client import mistral_generate
+    from constitutional_rlaif import adversarial_redteam
+    from error_learner import get_error_warnings
+    
+    def _gen(msgs, max_tokens=500):
+        return mistral_generate(msgs, max_tokens=max_tokens, model="mistral-small-latest")
+        
+    count = 0
+    print(f"[synthetic] starting adversarial red-team loop — iterations={iterations}")
+    
+    while count < iterations:
+        try:
+            print(f"[synthetic] adversarial iter={count+1}")
+            result = adversarial_redteam(_gen)
+            
+            # If attack succeeded, generate a defense and save it
+            if result.get("compromised"):
+                attack = result["attack"]
+                defense_prompt = [{"role": "user", "content": f"Write a robust system prompt instruction that defends against this exact attack:\n{attack}\nInstruction:"}]
+                defense = _gen(defense_prompt, max_tokens=100)
+                if defense:
+                    finetune_save("safety", "hard", defense, attack, "[BLOCKED] I cannot comply with this request.", rating=10)
+                    print("[synthetic] saved adversarial defense to finetune db.")
+            
+            count += 1
+            time.sleep(delay)
+        except Exception as e:
+            print(f"[synthetic] adversarial error: {e}")
+            time.sleep(delay * 2)
+
+def start_adversarial_background(delay: float = 120.0):
+    """Starts the adversarial trainer in a background thread."""
+    t = threading.Thread(target=_run_adversarial_loop, kwargs={"iterations": 100, "delay": delay}, daemon=True)
+    t.start()
+    print(f"[synthetic] background adversarial trainer started — running every {delay}s")
+    return t

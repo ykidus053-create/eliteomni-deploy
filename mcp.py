@@ -268,3 +268,50 @@ def mcp_tool_list_prompt() -> str:
     return "\n".join(lines)
 
 # ── REST API for runtime server management ────────────────────────────────────
+
+# ── Upgraded: Background Health Checker ──────────────────────────────────────
+def _mcp_health_check_loop():
+    """Periodically pings MCP servers to add new tools and remove dead ones."""
+    while True:
+        time.sleep(60)  # Check every 60 seconds
+        # print("[MCP] Running background health check...")
+        with _MCP_LOCK:
+            current_tools = dict(_MCP_TOOLS)
+            active_servers = set()
+            
+        # Re-discover all servers
+        for srv in _MCP_SERVERS:
+            try:
+                url = srv["url"].rstrip("/") + "/rpc"
+                auth = srv.get("auth", "")
+                result = _mcp_rpc(url, "tools/list", {}, auth)
+                tools = result.get("tools", [])
+                active_servers.add(srv["name"])
+                
+                # Add/update tools
+                with _MCP_LOCK:
+                    for t in tools:
+                        name = t.get("name", "")
+                        if name:
+                            _MCP_TOOLS[name] = {
+                                "server": srv,
+                                "description": t.get("description", ""),
+                                "schema": t.get("inputSchema", {})
+                            }
+            except Exception:
+                pass # Server is dead or unresponsive
+                
+        # Remove tools from dead servers
+        with _MCP_LOCK:
+            dead_tools = [name for name, meta in _MCP_TOOLS.items() if meta["server"]["name"] not in active_servers]
+            for name in dead_tools:
+                _MCP_TOOLS.pop(name, None)
+
+def start_mcp_health_checker():
+    """Starts the background health check thread."""
+    t = threading.Thread(target=_mcp_health_check_loop, daemon=True, name="mcp_health_check")
+    t.start()
+    print("[MCP] Background health checker started.")
+
+# Start the health checker when this module is loaded
+start_mcp_health_checker()
