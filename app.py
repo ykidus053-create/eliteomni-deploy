@@ -932,6 +932,42 @@ def pipeline_sync(msg: str, history: list) -> dict:
                     final = final.rstrip() + "\n\n💭 *Reasoning check:* " + st[:600]
         except Exception as _se:
             pass
+    # ── POWER UPGRADE: Pre-Output Execution Gate ─────────────────────
+    if skill == "coder" and complexity == "hard":
+        try:
+            from reflexion_loop import reflexion_verify
+            from modules.core.http_client import mistral_generate
+            # AI runs its own code, reads stderr, and rewrites it before outputting
+            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000))
+        except Exception as _re:
+            print(f"[ReflexionInject] {_re}")
+
+    try:
+        from constitutional_rlaif import adversarial_redteam
+        from modules.core.http_client import mistral_generate
+        # AI tries to break its own safety layer and patches it
+        threading.Thread(target=adversarial_redteam, args=(lambda p, m="": mistral_generate(p, max_tokens=200),), daemon=True).start()
+    except Exception:
+        pass
+
+    # ── POWER UPGRADE: Pre-Output Execution Gate ─────────────────────
+    if skill == "coder" and complexity == "hard":
+        try:
+            from reflexion_loop import reflexion_verify
+            from modules.core.http_client import mistral_generate
+            # AI runs its own code, reads stderr, and rewrites it before outputting
+            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000))
+        except Exception as _re:
+            print(f"[ReflexionInject] {_re}")
+
+    try:
+        from constitutional_rlaif import adversarial_redteam
+        from modules.core.http_client import mistral_generate
+        # AI tries to break its own safety layer and patches it
+        threading.Thread(target=adversarial_redteam, args=(lambda p, m="": mistral_generate(p, max_tokens=200),), daemon=True).start()
+    except Exception:
+        pass
+
     final  = cai_critique_revise(final, msg, skill, complexity)
     final  = gpt55_enhance(msg, final)
     scratchpad_save(f"a_{int(time.time())}", final[:120])
@@ -1036,6 +1072,38 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         mem_save_episodic(ctx_sum)
         episodic = [ctx_sum] + episodic
     rlhf_note = get_rlhf_note(skill)
+
+    # ── POWER UPGRADE: Goal & World Model Context ──────────────────
+    try:
+        from goal_engine import goals_get_context
+        _goal_ctx = goals_get_context(session_id="default")
+        if _goal_ctx:
+            memory.insert(0, _goal_ctx)
+    except Exception:
+        pass
+    try:
+        from world_model import get_world_model_context
+        _world_ctx = get_world_model_context(user_msg=msg)
+        if _world_ctx:
+            memory.insert(0, _world_ctx)
+    except Exception:
+        pass
+
+    # ── POWER UPGRADE: Goal & World Model Context ──────────────────
+    try:
+        from goal_engine import goals_get_context
+        _goal_ctx = goals_get_context(session_id="default")
+        if _goal_ctx:
+            memory.insert(0, _goal_ctx)
+    except Exception:
+        pass
+    try:
+        from world_model import get_world_model_context
+        _world_ctx = get_world_model_context(user_msg=msg)
+        if _world_ctx:
+            memory.insert(0, _world_ctx)
+    except Exception:
+        pass
 
     # search / tools
     # For vision queries, enrich search with image description
