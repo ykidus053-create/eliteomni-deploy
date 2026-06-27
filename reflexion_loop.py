@@ -6,6 +6,7 @@ import ast
 import resource
 import sys
 from io import StringIO
+from code_rag import get_relevant_code_context
 
 PROTOTYPE_PHRASES = [
     "for simplicity", "for educational purposes", "basic version", "simplified",
@@ -145,26 +146,18 @@ def extract_code_blocks(text: str) -> dict:
     return {"implementation": impl_code, "tests": test_code}
 
 def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str]:
-    """Upgraded: Persistent Execution Sandbox. Runs tests in-memory like a Jupyter kernel."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     sys.stdout = StringIO()
     sys.stderr = StringIO()
-    
     sandbox_globals = {}
     success = False
     output = ""
-    
     try:
-        # 1. Load implementation into sandbox
         exec(impl_code, sandbox_globals)
-        
-        # 2. Run tests in the SAME sandbox
         if test_code:
-            # Inject pytest assert runner
             sandbox_globals['pytest'] = __import__('pytest')
             exec(test_code, sandbox_globals)
-            # If we reach here, no exceptions were raised
             success = True
         else:
             success = True
@@ -179,7 +172,6 @@ def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str
         output += sys.stdout.getvalue() + sys.stderr.getvalue()
         sys.stdout = old_stdout
         sys.stderr = old_stderr
-        
     return success, output[:1000]
 
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
@@ -214,21 +206,23 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
+        # Upgraded: Persistent Goal Tracker & Cross-File Codebase RAG
+        codebase_ctx = get_relevant_code_context(task, top_k=3)
+        goal_reminder = f"\n[GOAL REMINDER] Do not forget the original user request: '{task}'\n"
+        
         if is_cutoff:
-            prompt = "\n".join(memory) + f"\n\nThe previous code was cut off. Here is the incomplete code:\n\n{impl_code}\n\nContinue the code EXACTLY from the last line. Output ONLY the remaining code inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+            prompt = "\n".join(memory) + f"\n{goal_reminder}\nThe previous code was cut off. Here is the incomplete code:\n\n{impl_code}\n\nContinue the code EXACTLY from the last line. Output ONLY the remaining code inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
             msgs = [{"role": "user", "content": prompt}]
             cont_output = generate_fn(msgs, max_tokens=8000)
             new_blocks = extract_code_blocks(cont_output)
             if new_blocks["implementation"]:
                 impl_code = impl_code + "\n" + new_blocks["implementation"]
         else:
-            # Upgraded: Ask the AI to redefine only the broken functions
-            prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags. You only need to output the functions that need fixing, but they must be complete."
+            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags. You only need to output the functions that need fixing, but they must be complete."
             msgs = [{"role": "user", "content": prompt}]
             new_output = generate_fn(msgs, max_tokens=4000)
             new_blocks = extract_code_blocks(new_output)
             if new_blocks["implementation"]:
-                # Merge the new code into the sandbox (Python exec naturally overwrites old definitions)
                 impl_code = impl_code + "\n" + new_blocks["implementation"]
             if new_blocks["tests"]:
                 test_code = new_blocks["tests"]
