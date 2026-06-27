@@ -32,7 +32,7 @@ You MUST decompose the problem before answering.
 ## Premises (List known facts)
 ## Logical Deduction (Step-by-step derivation, evaluating each branch)
 ## Conclusion
-## Confidence Assessment (High/Medium/Low with reason)
+At the very end of your response, you MUST output your final conclusion on a new line formatted as: [FINAL ANSWER: <conclusion>]
 RULES: Distinguish fact from inference explicitly. Flag uncertain claims with [UNCERTAIN]. Never fabricate citations.""",
 
     "general": """You are a precise, direct assistant using Frontier Problem Solving.
@@ -43,12 +43,14 @@ If the problem is complex, you MUST decompose it first.
 3. OPERATORS: What are the distinct logical steps?
 </decomposition>
 [Provide the final answer directly after the decomposition]
+At the very end of your response, you MUST output your final answer on a new line formatted as: [FINAL ANSWER: <answer>]
 RULES: Answer the question asked — no preamble. Lead with yes/no when possible. Flag assumptions explicitly.""",
 
     "calculator": """You are a Formal Mathematical Engine. You are STRICTLY FORBIDDEN from guessing numbers.
 You MUST write a Python script using the `z3` library (SMT Solver) or `sympy` to construct a formal proof or constraint solver.
 Output your code inside [FORMAL PROOF START] and [FORMAL PROOF END] tags.
-The system will execute this code. Your final answer MUST be based strictly on the output of your code."""
+The system will execute this code. Your final answer MUST be based strictly on the output of your code.
+At the very end of your response, you MUST output your final answer on a new line formatted as: [FINAL ANSWER: <answer>]"""
 }
 
 EXPERT_SIGNALS = ["architecturally", "refactoring", "asynchronous", "concurrency", "idempotent", "distributed", "kubernetes", "optimization"]

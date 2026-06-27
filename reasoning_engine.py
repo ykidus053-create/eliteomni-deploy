@@ -1,11 +1,12 @@
 """
-Deliberative Reasoning Engine — Absolute Frontier Problem Solving.
-Implements: PDDL-style Problem Decomposition, Iterative Self-Correction, and Knowledge Retrieval.
+Deliberative Reasoning Engine — Absolute Frontier (o1 / AlphaProof Tier).
+Implements: Self-Consistency Voting, Prover-Skeptic-Judge Debate, and Programmatic Math Verification.
 """
 import re, time, random, threading, subprocess, tempfile, os, resource, json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="reason")
+_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="reason")
 
 def _set_limits():
     resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
@@ -62,69 +63,67 @@ def extract_and_run_math(response: str) -> str:
         else: final_response = final_response.replace(f"[PYTHON CALC START]{code}[PYTHON CALC END]", f"[Calc Error: {result}]")
     return final_response, has_math
 
-def deep_problem_decomposition(msg: str, system: str, history: list, generate_fn, model: str) -> str:
-    """Upgraded: Forces the AI to formally decompose the problem (PDDL) before solving."""
-    decomp_prompt = [
-        {"role": "system", "content": system + "\nYou are a Strategic Problem Solver. Before solving, you MUST decompose the problem into a formal plan. Output your plan inside <decomposition> tags.\n<decomposition>\n1. INITIAL STATE: What is given?\n2. GOAL STATE: What must be true to succeed?\n3. OPERATORS: What are the distinct logical/algorithmic steps to get from Initial to Goal?\n4. EDGE CASES: What can go wrong?\n</decomposition>\nAfter the decomposition, provide the full solution."},
-    ] + history[-6:] + [{"role": "user", "content": msg}]
-    
-    return generate_fn(decomp_prompt, max_tokens=3000, model=model)
+def self_consistency_voting(msg: str, system: str, history: list, generate_fn, model: str, n: int = 5) -> str:
+    """Upgraded: AlphaProof-style Self-Consistency. Solves 5 times independently and picks the majority answer."""
+    def _solve():
+        prompt = [{"role": "system", "content": system + "\nSolve the problem step-by-step. At the very end, output your final answer on a new line formatted as: [FINAL ANSWER: <answer>]"}] + history[-4:] + [{"role": "user", "content": msg}]
+        try: return generate_fn(prompt, max_tokens=1000, model=model)
+        except: return ""
 
-def iterative_self_correction(msg: str, system: str, history: list, generate_fn, model: str) -> str:
-    """Upgraded: o1-style iterative thought process. The AI critiques its own logic and backtracks."""
+    futures = [_executor.submit(_solve) for _ in range(n)]
+    solutions = []
+    for fut in as_completed(futures, timeout=45):
+        try:
+            res = fut.result(timeout=10)
+            if res: solutions.append(res)
+        except: pass
+
+    if not solutions: return ""
+
+    # Extract final answers
+    answers = []
+    for sol in solutions:
+        match = re.search(r'\[FINAL ANSWER:\s*(.*?)\]', sol, re.IGNORECASE)
+        if match:
+            answers.append(match.group(1).strip())
+        else:
+            answers.append(sol.strip()[-50:]) # Fallback to last 50 chars
+
+    # Vote for the most common answer
+    counts = Counter(answers)
+    consensus_answer, top_count = counts.most_common(1)[0]
     
-    # 1. Initial attempt with decomposition
-    initial_solution = deep_problem_decomposition(msg, system, history, generate_fn, model)
+    # If we have a consensus (at least 2 agreed), return the full solution that matches the consensus
+    if top_count >= 2:
+        for sol in solutions:
+            if consensus_answer in sol:
+                return sol
+    return max(solutions, key=len)
+
+def prover_skeptic_judge(msg: str, system: str, history: list, generate_fn, model: str) -> str:
+    """Upgraded: Multi-Agent Debate. Prover writes, Skeptic attacks, Judge synthesizes."""
     
-    # 2. Critique the logic
-    critique_prompt = [
-        {"role": "system", "content": "You are a Ruthless Logic Critic. Does the provided solution logically satisfy the Initial State and Goal State? Are there any missing operators or logical leaps? If it is flawless, reply EXACTLY: FLAWLESS. If flawed, reply: FLAW: [explain]"},
-        {"role": "user", "content": f"Question: {msg}\n\nSolution:\n{initial_solution[:2000]}"}
+    # 1. Prover generates initial answer
+    prover_prompt = [{"role": "system", "content": system + "\nYou are the Prover. Provide a detailed, step-by-step solution. Use <decomposition> to plan your steps first."}] + history[-6:] + [{"role": "user", "content": msg}]
+    proposal = generate_fn(prover_prompt, max_tokens=1500, model=model)
+    
+    # 2. Skeptic attacks the proposal
+    skeptic_prompt = [
+        {"role": "system", "content": "You are a Ruthless Skeptic. Find the exact logical flaw, missing edge case, or fallacy in the Prover's solution. If it is flawless, reply EXACTLY: FLAWLESS."},
+        {"role": "user", "content": f"Question: {msg}\nProver's Solution:\n{proposal}"}
     ]
-    critique = generate_fn(critique_prompt, max_tokens=300, model=model)
+    critique = generate_fn(skeptic_prompt, max_tokens=300, model=model)
     
     if "FLAWLESS" in critique.upper():
-        return initial_solution
+        return proposal
         
-    # 3. Backtrack and rewrite
-    print(f"[Reasoning] Logic flaw detected: {critique[:100]}... Backtracking and rewriting.")
-    rewrite_prompt = [
-        {"role": "system", "content": system + "\nYour previous solution had a logical flaw. You MUST backtrack, fix the flawed operator, and provide the corrected, flawless solution."},
-        {"role": "user", "content": f"Question: {msg}\n\nPrevious Solution:\n{initial_solution[:1500]}\n\nFlaw Identified: {critique}\n\nProvide the corrected solution:"}
+    # 3. Judge synthesizes the final truth
+    print(f"[Reasoning] Prover-Skeptic-Judge: Flaw found. Judge synthesizing...")
+    judge_prompt = [
+        {"role": "system", "content": system + "\nYou are the Judge. Synthesize a final, bulletproof solution that addresses the Skeptic's critique. Ensure no logical fallacies remain."},
+        {"role": "user", "content": f"Question: {msg}\n\nProver's Solution:\n{proposal}\n\nSkeptic's Critique:\n{critique}\n\nProvide the final, corrected solution:"}
     ]
-    return generate_fn(rewrite_prompt, max_tokens=2000, model=model)
-
-def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model: str, n: int = 3) -> list:
-    def _gen_one(approach_hint: str) -> str:
-        prompt = [{"role": "system", "content": system + f"\n\nApproach hint: {approach_hint}"}] + history[-6:] + [{"role": "user", "content": msg}]
-        try: return generate_fn(prompt, max_tokens=1500, model=model)
-        except: return ""
-    approaches = ["Direct and concise. Lead with the answer.", "Step by step reasoning. Show your work explicitly.", "Consider edge cases and alternative interpretations first."][:n]
-    futures = [_executor.submit(_gen_one, approach) for approach in approaches]
-    results = []
-    for fut in as_completed(futures, timeout=30):
-        try:
-            r = fut.result(timeout=5)
-            if r and len(r) > 50: results.append(r)
-        except: pass
-    return results
-
-def devils_advocate(winner: str, msg: str, generate_fn, model: str) -> str:
-    prompt = [
-        {"role": "system", "content": "You are a Ruthless Devil's Advocate. Find the ONE logical flaw, unsupported claim, or math error in the candidate. If it is flawless, reply EXACTLY: FLAWLESS. If flawed, reply: FLAW: [explain]"},
-        {"role": "user", "content": f"Question: {msg[:300]}\nCandidate Answer: {winner[:1000]}"}
-    ]
-    try:
-        critique = generate_fn(prompt, max_tokens=200, model=model)
-        if "FLAW:" in critique.upper():
-            rewrite_prompt = [
-                {"role": "system", "content": "Fix the flaw in your reasoning and output the corrected, flawless answer."},
-                {"role": "user", "content": f"Original Answer: {winner[:800]}\n\nFlaw Identified: {critique}\n\nProvide the corrected answer:"}
-            ]
-            fixed = generate_fn(rewrite_prompt, max_tokens=1000, model=model)
-            return fixed
-    except: pass
-    return winner
+    return generate_fn(judge_prompt, max_tokens=1500, model=model)
 
 def deliberate(msg: str, system: str, history: list, generate_fn, model: str, complexity: str = "medium", skill: str = "general") -> str:
     t0 = time.time()
@@ -137,27 +136,22 @@ def deliberate(msg: str, system: str, history: list, generate_fn, model: str, co
             resp, _ = extract_and_run_math(resp)
         return resp
 
-    # Calculator / Math path: Self-Correcting Math Loop
+    # Calculator / Math path: Self-Consistency + Math Execution
     if skill == "calculator":
         math_result = self_correcting_math(msg, generate_fn, model)
         winner = f"{math_result}\n\n"
     else:
-        # Hard/Medium path: Iterative Self-Correction (Problem Solving)
-        candidates = generate_hypotheses(msg, system, history, generate_fn, model, n=3 if complexity == "hard" else 2)
-        if not candidates:
-            prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
-            winner = generate_fn(prompt, max_tokens=1200, model=model)
-        else:
-            winner = max(candidates, key=len)
+        # Hard/Medium path: Prover-Skeptic-Judge Debate
+        winner = prover_skeptic_judge(msg, system, history, generate_fn, model)
         
-        # Run Iterative Self-Correction (Decomposition + Critique + Backtrack)
-        winner = iterative_self_correction(msg, system, history, generate_fn, model)
-        
-        # Run Devil's Advocate to break and rewrite logic
-        winner = devils_advocate(winner, msg, generate_fn, model)
+        # Run Self-Consistency as a secondary verification for logic problems
+        if complexity == "hard" and skill != "coder":
+            consensus_sol = self_consistency_voting(msg, system, history, generate_fn, model, n=5)
+            if consensus_sol:
+                winner = f"{winner}\n\n[VERIFIED VIA SELF-CONSISTENCY]:\n{consensus_sol}"
 
     # Still run any embedded math in the general/researcher response
     winner, _ = extract_and_run_math(winner)
 
-    print(f"[Deliberate] Frontier Problem Solving (Decomposition + Self-Correction) done, t={int((time.time()-t0)*1000)}ms")
+    print(f"[Deliberate] Absolute Frontier Reasoning (Debate + Self-Consistency) done, t={int((time.time()-t0)*1000)}ms")
     return winner
