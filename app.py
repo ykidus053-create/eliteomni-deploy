@@ -7,6 +7,7 @@ try:
     print("[TTFT] uvloop event loop installed -- async 2-4x faster")
 except ImportError:
     pass
+from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
 from modules.services.pipeline import _budget, stream_tokens, build_system_prompt, build_chatml, generate_sync
 from modules.claude_code import enrich_system_prompt, agentic_self_correct, detect_style_rule, update_claude_md
 from modules.core.http_client import groq_stream, groq_generate, vision_describe
@@ -2346,7 +2347,39 @@ function applyArtifactEdit() {
     }
     closeModal();
 }
-</script></body></html>""")
+</script>
+<script>
+(function() {
+    if (window._eliteOmniSanitized) return;
+    window._eliteOmniSanitized = true;
+    
+    // Wait for marked.js to load, then wrap its parse function
+    const interval = setInterval(() => {
+        if (typeof marked !== 'undefined' && marked.parse) {
+            const originalParse = marked.parse;
+            marked.parse = function(text) {
+                let t = text;
+                try {
+                    if (t.trim().startsWith('{')) {
+                        const j = JSON.parse(t);
+                        if (j.response) t = j.response;
+                    }
+                } catch (e) {}
+                
+                // Remove internal reasoning artifacts
+                t = t.replace(/\*\*?-?\s*(Intent|Wrong answer|Draft|Accuracy|Completeness|Relevance|Final Output|THINK|ACT|VERIFY|INTENT|AMBIGUITY):[\s\S]*?(?=(\*\*?-?\s*(Intent|Wrong answer|Draft|Accuracy|Completeness|Relevance|Final Output|RESPONSE):)|$)/gi, '');
+                t = t.replace(/RESPONSE:\s*/gi, '');
+                t = t.replace(/^\*\*\s*/gm, ''); // Clean up leftover bold markers
+                
+                return originalParse(t);
+            };
+            clearInterval(interval);
+        }
+    }, 50);
+})();
+</script>
+
+</body></html>""")
 
 @app.get("/finetune/stats")
 async def finetune_stats():
