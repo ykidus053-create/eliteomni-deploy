@@ -1,4 +1,3 @@
-
 import re
 
 _OVERCONFIDENT = re.compile(
@@ -22,6 +21,22 @@ _REPLACEMENTS = [
     ("undeniably", "arguably"),
     ("obviously", "apparently"),
 ]
+
+# Upgraded: Ambiguity detection patterns
+_AMBIGUOUS_PRONOUNS = ["it", "they", "them", "this", "that", "these", "those"]
+_AMBIGUOUS_NOUNS = ["the issue", "the problem", "the document", "the code", "the text", "the treaty", "the law"]
+
+def detect_ambiguity(msg: str) -> bool:
+    """Upgraded: Scans for pronouns without referents or highly generic nouns."""
+    msg_lower = msg.lower().strip()
+    if len(msg_lower.split()) < 4:
+        # Very short sentences starting with a pronoun are usually ambiguous
+        if any(msg_lower.startswith(p + " ") for p in _AMBIGUOUS_PRONOUNS):
+            return True
+    if any(noun in msg_lower for noun in _AMBIGUOUS_NOUNS):
+        # If they say "fix the issue" but provided no previous context
+        return True
+    return False
 
 def score_response_confidence(text, skill="general"):
     oc = len(_OVERCONFIDENT.findall(text))
