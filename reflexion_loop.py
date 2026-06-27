@@ -198,6 +198,11 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         
         if not stubs and not enterprise_violations and ok:
             print(f"[Reflexion] SOTA Agentic Loop: Pytests 100% passed on round {round_num}")
+            # Upgraded: Save successful code to Voyager Skill Library
+            try:
+                from skill_library import save_skill
+                save_skill(task, impl_code, generate_fn)
+            except: pass
             break
             
         failures = []
