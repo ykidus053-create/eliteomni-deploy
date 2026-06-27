@@ -10,10 +10,13 @@ ZERO TOLERANCE FOR TOYS/PROTOTYPES:
 
 ENTERPRISE ARCHITECTURE RULES (MANDATORY):
 - PEP-484 type hints on ALL function arguments and return types.
+- Docstrings on ALL public classes and functions.
 - Use the `logging` module for ALL output. NEVER use `print()`.
 - NO bare `except:` blocks. Catch specific exceptions (e.g., `except ValueError:`).
+- NEVER use `except: pass` or `except Exception: pass`. You MUST log the error or re-raise it. Silent failures are strictly forbidden.
 - NO hardcoded configuration. Use environment variables or config classes.
 - Thread-safe operations for any shared state (use `threading.Lock`).
+- SECURITY: NEVER use `eval()`, `exec()`, `os.system()`, or `subprocess.call()`.
 
 STRICT TDD WORKFLOW (MANDATORY):
 You MUST output EXACTLY TWO python code blocks.

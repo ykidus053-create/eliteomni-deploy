@@ -13,7 +13,6 @@ PROTOTYPE_PHRASES = [
 ]
 
 def has_stub(code: str) -> bool:
-    """Uses AST to detect empty function bodies and prototype phrases."""
     try:
         tree = ast.parse(code)
         for node in ast.walk(tree):
@@ -32,9 +31,7 @@ def has_stub(code: str) -> bool:
                         continue
                     is_stub = False
                     break
-                if is_stub:
-                    print(f"[Reflexion] AST detected empty function body: {node.name}")
-                    return True
+                if is_stub: return True
     except SyntaxError:
         pass
 
@@ -50,37 +47,56 @@ def has_stub(code: str) -> bool:
     return False
 
 def check_enterprise_compliance(code: str) -> list:
-    """Upgraded: AST audit for enterprise standards (typing, logging, exceptions)."""
+    """Upgraded: AST audit for strict enterprise standards, security, and docs."""
     violations = []
     try:
         tree = ast.parse(code)
         has_logging = False
+        banned_calls = {'eval', 'exec', 'compile', '__import__', 'os.system', 'subprocess.call'}
         
         for node in ast.walk(tree):
-            # 1. Enforce Type Hints on all function arguments and returns
+            # 1. Enforce Type Hints
             if isinstance(node, ast.FunctionDef):
-                # Ignore __init__ or private test methods, but enforce on public API
                 if not node.name.startswith("test_") and node.name != "__init__":
                     for arg in node.args.args:
-                        if arg.annotation is None and arg.arg != 'self':
+                        if arg.annotation is None and arg.arg not in ('self', 'cls'):
                             violations.append(f"Function '{node.name}' missing type hint for argument '{arg.arg}'.")
-                    if node.returns is None and not isinstance(node.body[-1], ast.Return) if node.body else True:
-                        # Allow implicit None but flag explicit missing hints if needed, keeping it simple for now
-                        pass 
-
-            # 2. Ban bare 'except:'
-            if isinstance(node, ast.ExceptHandler) and node.type is None:
-                violations.append("Bare 'except:' block found. Use specific exceptions (e.g., 'except ValueError:').")
+                    if node.returns is None:
+                        violations.append(f"Function '{node.name}' missing return type hint.")
                 
-            # 3. Ban 'print(' and enforce 'logging'
+                # 2. Enforce Docstrings on public methods
+                if not node.name.startswith("_") and not node.name.startswith("test_"):
+                    if not ast.get_docstring(node):
+                        violations.append(f"Function '{node.name}' missing a docstring.")
+
+            # 3. Ban bare 'except:' and silent 'pass' in except blocks
+            if isinstance(node, ast.ExceptHandler):
+                if node.type is None:
+                    violations.append("Bare 'except:' block found. Use specific exceptions.")
+                # Check if the except block just passes (hides bugs)
+                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                    violations.append("Silent 'except: pass' block found. Enterprise code must log or re-raise exceptions.")
+                        
+            # 4. Ban 'print(' and enforce 'logging'
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print':
                 violations.append("Use of print() found. Enterprise code must use the 'logging' module.")
-            if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
+                
+            # 5. Security Audit: Ban dangerous calls
+            if isinstance(node, ast.Call):
+                func_name = ""
+                if isinstance(node.func, ast.Name):
+                    func_name = node.func.id
+                elif isinstance(node.func, ast.Attribute):
+                    func_name = node.func.attr
+                if func_name in banned_calls:
+                    violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned in enterprise code.")
+                    
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     if 'logging' in alias.name:
                         has_logging = True
                         
-        if not has_logging and len(code.split('\n')) > 30:
+        if not has_logging and len(code.split('\n')) > 20:
             violations.append("Missing 'import logging'. Enterprise systems must use structured logging.")
             
     except SyntaxError as e:
@@ -89,16 +105,13 @@ def check_enterprise_compliance(code: str) -> list:
     return violations
 
 def extract_code_blocks(text: str) -> dict:
-    """Extracts implementation and test blocks from LLM output."""
     tests_match = re.search(r'\[PYTHON TESTS START\](.*?)\[PYTHON TESTS END\]', text, re.DOTALL)
     impl_match = re.search(r'\[PYTHON IMPL START\](.*?)\[PYTHON IMPL END\]', text, re.DOTALL)
-    
     if tests_match and impl_match:
         return {"implementation": impl_match.group(1).strip(), "tests": tests_match.group(1).strip()}
 
     matches = re.findall(r'```(?:python|py)?\n(.*?)```', text, re.DOTALL)
-    impl_code = ""
-    test_code = ""
+    impl_code, test_code = "", ""
     for match in matches:
         if "import pytest" in match or "def test_" in match:
             test_code = match.strip()
@@ -109,11 +122,9 @@ def extract_code_blocks(text: str) -> dict:
     return {"implementation": impl_code, "tests": test_code}
 
 def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
-    if not test_code:
-        return run_code(impl_code)
+    if not test_code: return run_code(impl_code)
     with tempfile.TemporaryDirectory() as tmpdir:
-        impl_path = os.path.join(tmpdir, "module.py")
-        test_path = os.path.join(tmpdir, "test_module.py")
+        impl_path, test_path = os.path.join(tmpdir, "module.py"), os.path.join(tmpdir, "test_module.py")
         with open(impl_path, "w") as f: f.write(impl_code)
         with open(test_path, "w") as f: f.write(test_code)
         try:
@@ -137,10 +148,8 @@ def run_code(code: str) -> tuple[bool, str]:
         if os.path.exists(fname): os.unlink(fname)
 
 def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: Enterprise Code Auditor. Enforces typing, logging, and strict exception handling."""
     blocks = extract_code_blocks(raw_output)
-    impl_code = blocks["implementation"]
-    test_code = blocks["tests"]
+    impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
     
     for round_num in range(1, max_rounds + 1):
@@ -156,7 +165,7 @@ def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: 
         if stubs:
             failures.append("CRITICAL FAILURE: AST analysis detected empty function bodies (pass, ...) OR forbidden prototype phrases (e.g., 'toy', 'basic').")
         if enterprise_violations:
-            failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
+            failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:6]))
         if not ok:
             failures.append(f"Test/Execution Failures:\n{output[:800]}")
         if not test_code:
@@ -164,7 +173,7 @@ def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: 
             
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - ENTERPRISE SYSTEM AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
+        reflection = f"[REFLEXION ROUND {round_num} - STRICT ENTERPRISE AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
