@@ -1017,6 +1017,15 @@ def pipeline_sync(msg: str, history: list) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _build_stream_context(msg: str, hist: list) -> dict:
+    # ── AGI EMULATION: Meta-Skill Synthesis ──────────────────────────
+    try:
+        from agi_emulation_layer import prompt_evolver
+        _evolved_ctx = prompt_evolver.get_evolved_context()
+        if _evolved_ctx:
+            # Append evolved behaviors to memory
+            memory.insert(0, _evolved_ctx)
+    except: pass
+
     """
     All pre-processing from pipeline_sync — memory, search, prompt build.
     Returns everything groq_stream needs. No model call made here.
@@ -5086,3 +5095,15 @@ async def startup_event():
         start_proactive_daemon()
     except Exception as e:
         print(f"[Startup] Proactive Daemon failed: {e}")
+
+
+
+from agi_emulation_layer import start_agi_emulation, prompt_evolver, synthesize_meta_skill
+
+@app.on_event("startup")
+async def agi_startup():
+    try:
+        from modules.core.http_client import mistral_generate
+        start_agi_emulation(lambda p, m="": mistral_generate(p, max_tokens=200, model="mistral-small-latest"))
+    except Exception as e:
+        print(f"[Startup] AGI Emulation failed: {e}")
