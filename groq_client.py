@@ -8,6 +8,25 @@ import urllib.request, urllib.parse
 
 # Single API key — key rotation is prohibited by Groq ToS
 import threading as _threading
+import time
+
+def retry_with_backoff(max_retries=3):
+    """Upgraded: Exponential backoff for Groq API 429/503 errors."""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if ("429" in err_str or "503" in err_str or "overloaded" in err_str) and attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        print(f"[Groq] Rate limited. Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                    else:
+                        raise
+        return wrapper
+    return decorator
 
 # Load .env file
 import pathlib
