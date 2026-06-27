@@ -1114,6 +1114,28 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         if _user_q:
             _search_msg = f"{_user_q} {_vision_desc}"
     clean_msg, search_ctx = extract_search_context(_search_msg)
+
+    # ── POWER UPGRADE: Real-Time RAG & Knowledge Graph ──────────────
+    try:
+        from knowledge_rag import get_knowledge_context
+        _rag_ctx = get_knowledge_context(clean_msg, max_tokens=1000)
+        if _rag_ctx:
+            memory.insert(0, _rag_ctx)
+    except Exception:
+        pass
+        
+    try:
+        from knowledge_graph import extract_and_store, get_graph_context
+        # Learn relationships from the user's message in real-time
+        extract_and_store(msg)
+        # Extract capitalized entities to query the graph
+        _entities = [w.strip('.,!?') for w in msg.split() if w[0].isupper()]
+        _graph_ctx = get_graph_context(_entities[:3])
+        if _graph_ctx:
+            memory.insert(0, _graph_ctx)
+    except Exception:
+        pass
+
     # agent enrichment runs inside _build_stream_context_fast
 
     msg_lower = msg.lower()
