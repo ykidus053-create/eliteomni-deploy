@@ -11,7 +11,8 @@ PROTOTYPE_PHRASES = [
     "in real implementation", "extend as needed", "similarly for others",
     "production implementation", "actual implementation", "full implementation",
     "for demonstration", "quick script", "minimal viable", "extensible",
-    "future-proof", "base class", "abstract"
+    "future-proof", "base class", "abstract", "architectural foundation",
+    "interface", "scaffolding"
 ]
 
 def has_stub(code: str) -> bool:
@@ -74,12 +75,14 @@ def check_enterprise_compliance(code: str) -> list:
                     base_name = ""
                     if isinstance(base, ast.Name): base_name = base.id
                     elif isinstance(base, ast.Attribute): base_name = base.attr
-                    if base_name in ('ABC', 'ABCMeta'): violations.append(f"OVER-ENGINEERING: Class '{node.name}' inherits from ABC. Write concrete implementations.")
+                    # Upgraded: Aggressively ban ABC and Protocol
+                    if base_name in ('ABC', 'ABCMeta', 'Protocol'):
+                        violations.append(f"SCAFFOLDING BAN: Class '{node.name}' inherits from {base_name}. Write a concrete implementation, not an abstract interface.")
                 for stmt in node.body:
                     if isinstance(stmt, ast.FunctionDef):
                         for decorator in stmt.decorator_list:
                             if isinstance(decorator, ast.Name) and decorator.id == 'abstractmethod':
-                                violations.append(f"OVER-ENGINEERING: Abstract method '{stmt.name}' found. Implement it completely.")
+                                violations.append(f"SCAFFOLDING BAN: Abstract method '{stmt.name}' found. Implement it completely.")
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     if 'logging' in alias.name: has_logging = True
@@ -90,26 +93,29 @@ def check_enterprise_compliance(code: str) -> list:
         violations.append(f"Syntax Error preventing AST audit: {e}")
     return violations
 
-def map_repository_context() -> str:
-    """Upgraded: SOTA Repo Mapping. Scans the codebase to give the AI full context."""
+def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
+    prompt = [
+        {"role": "system", "content": "You are a Ruthless Staff Engineer reviewing a PR. Does this code represent a COMPLETE, CONCRETE, MONOLITHIC implementation, or is it an over-engineered 'extensible foundation' / abstract base class? Does it implement the hardest algorithmic part, or just wrappers? Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
+        {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
+    ]
     try:
-        files = [f for f in os.listdir('.') if f.endswith('.py') and os.path.isfile(f)][:15]
-        repo_map = []
-        for file in files:
-            with open(file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            try:
-                tree = ast.parse(content)
-                funcs = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
-                classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-                repo_map.append(f"File: {file} | Classes: {', '.join(classes)} | Funcs: {', '.join(funcs)}")
-            except:
-                pass
-        if repo_map:
-            return "\n[REPO CONTEXT MAP]\n" + "\n".join(repo_map) + "\n[/REPO CONTEXT MAP]\n"
-    except:
-        pass
-    return ""
+        raw = generate_fn(prompt, max_tokens=200)
+        if "VETO" in raw.upper(): return raw.strip()
+    except: pass
+    return "APPROVED"
+
+def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
+    prompt = [
+        {"role": "system", "content": "You are a Chaos Engineer. Does this code have real-world failure modes? (e.g., missing circuit breakers, retry storms, deadlocks, unhandled JSON decode errors). Reply ONLY with a JSON list of strings. If perfect, reply []."},
+        {"role": "user", "content": f"Implementation:\n{impl_code[:1500]}\n\nTests:\n{test_code[:800]}"}
+    ]
+    try:
+        raw = generate_fn(prompt, max_tokens=300)
+        import json
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if match: return json.loads(match.group())
+    except: pass
+    return []
 
 def extract_code_blocks(text: str) -> dict:
     tests_match = re.search(r'\[PYTHON TESTS START\](.*?)\[PYTHON TESTS END\]', text, re.DOTALL)
@@ -152,11 +158,9 @@ def run_code(code: str) -> tuple[bool, str]:
 def apply_surgical_patch(original_code: str, patch_output: str) -> str:
     match = re.search(r'\[PATCH START\](.*?)\[PATCH END\]', patch_output, re.DOTALL)
     if not match: return original_code
-    
     patch_text = match.group(1).strip()
     lines = original_code.split('\n')
     patch_lines = patch_text.split('\n')
-    
     i = 0
     while i < len(patch_lines):
         line = patch_lines[i]
@@ -171,7 +175,6 @@ def apply_surgical_patch(original_code: str, patch_output: str) -> str:
             while i < len(patch_lines) and patch_lines[i].strip() != ">>>> PATCHED":
                 patched_block.append(patch_lines[i])
                 i += 1
-            
             try:
                 start_idx = lines.index(original_block[0])
                 end_idx = start_idx + len(original_block)
@@ -180,43 +183,38 @@ def apply_surgical_patch(original_code: str, patch_output: str) -> str:
             except ValueError:
                 pass
         i += 1
-        
     return '\n'.join(lines)
 
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: SOTA Repo-Aware Agentic Loop."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
     
-    repo_map = map_repository_context()
-    
     for round_num in range(1, max_rounds + 1):
         stubs = has_stub(impl_code)
         enterprise_violations = check_enterprise_compliance(impl_code)
+        veto = principal_engineer_veto(impl_code, task, generate_fn)
+        logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn)
         ok, output = run_pytest(impl_code, test_code)
         
-        if not stubs and not enterprise_violations and ok:
+        if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
             print(f"[Reflexion] SOTA Agentic Loop: Pytests 100% passed on round {round_num}")
-            # Upgraded: Save successful code to Voyager Skill Library
-            try:
-                from skill_library import save_skill
-                save_skill(task, impl_code, generate_fn)
-            except: pass
             break
             
         failures = []
-        if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or prototype phrases.")
+        if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies, prototype phrases, or architectural scaffolding.")
         if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
-        if not ok: failures.append(f"Test/Execution Failures:\n{output[:800]}")
+        if "APPROVED" not in veto: failures.append(f"STAFF ENGINEER VETO:\n{veto}")
+        if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
+        if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
         if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}"
+        reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed or used scaffolding. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
-        prompt = "\n".join(memory) + f"\n{repo_map}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide a SURGICAL PATCH in this exact format:\n[PATCH START]\n<<<< ORIGINAL\n[exact lines from current implementation that are broken]\n====\n[corrected lines]\n>>>> PATCHED\n[PATCH END]"
+        prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide a SURGICAL PATCH in this exact format:\n[PATCH START]\n<<<< ORIGINAL\n[exact lines from current implementation that are broken]\n====\n[corrected lines]\n>>>> PATCHED\n[PATCH END]"
         msgs = [{"role": "user", "content": prompt}]
         patch_output = generate_fn(msgs, max_tokens=2000)
         
