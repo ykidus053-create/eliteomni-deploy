@@ -10,7 +10,8 @@ PROTOTYPE_PHRASES = [
     "example implementation", "skeleton", "stub", "placeholder", "demo", "toy",
     "in real implementation", "extend as needed", "similarly for others",
     "production implementation", "actual implementation", "full implementation",
-    "for demonstration", "quick script", "minimal viable"
+    "for demonstration", "quick script", "minimal viable", "extensible",
+    "future-proof", "base class", "abstract"
 ]
 
 def has_stub(code: str) -> bool:
@@ -47,6 +48,7 @@ def check_enterprise_compliance(code: str) -> list:
         has_logging = False
         banned_calls = {'eval', 'exec', 'compile', '__import__', 'os.system', 'subprocess.call'}
         for node in ast.walk(tree):
+            # 1. Enforce Type Hints
             if isinstance(node, ast.FunctionDef):
                 if not node.name.startswith("test_") and node.name != "__init__":
                     for arg in node.args.args:
@@ -54,15 +56,32 @@ def check_enterprise_compliance(code: str) -> list:
                     if node.returns is None: violations.append(f"Function '{node.name}' missing return type hint.")
                 if not node.name.startswith("_") and not node.name.startswith("test_"):
                     if not ast.get_docstring(node): violations.append(f"Function '{node.name}' missing a docstring.")
+            # 2. Ban bare 'except:' and silent 'pass'
             if isinstance(node, ast.ExceptHandler):
                 if node.type is None: violations.append("Bare 'except:' block found. Use specific exceptions.")
                 if len(node.body) == 1 and isinstance(node.body[0], ast.Pass): violations.append("Silent 'except: pass' block found. Enterprise code must log or re-raise.")
+            # 3. Ban 'print('
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print': violations.append("Use of print() found. Enterprise code must use the 'logging' module.")
+            # 4. Security Audit
             if isinstance(node, ast.Call):
                 func_name = ""
                 if isinstance(node.func, ast.Name): func_name = node.func.id
                 elif isinstance(node.func, ast.Attribute): func_name = node.func.attr
                 if func_name in banned_calls: violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned.")
+            # 5. Upgraded: Ban Abstract Base Classes (Force Monolithic Concrete Code)
+            if isinstance(node, ast.ClassDef):
+                for base in node.bases:
+                    base_name = ""
+                    if isinstance(base, ast.Name): base_name = base.id
+                    elif isinstance(base, ast.Attribute): base_name = base.attr
+                    if base_name in ('ABC', 'ABCMeta'):
+                        violations.append(f"OVER-ENGINEERING: Class '{node.name}' inherits from ABC. Write concrete implementations, not abstract base classes.")
+                for stmt in node.body:
+                    if isinstance(stmt, ast.FunctionDef):
+                        for decorator in stmt.decorator_list:
+                            if isinstance(decorator, ast.Name) and decorator.id == 'abstractmethod':
+                                violations.append(f"OVER-ENGINEERING: Abstract method '{stmt.name}' found. Implement it completely.")
+                                
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     if 'logging' in alias.name: has_logging = True
@@ -72,17 +91,14 @@ def check_enterprise_compliance(code: str) -> list:
     return violations
 
 def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
-    """Upgraded: Ruthless LLM Veto. Forces complete rewrite if it looks like a toy."""
     prompt = [
-        {"role": "system", "content": "You are a Ruthless Principal Engineer. Does this code represent a COMPLETE, ENTERPRISE-GRADE implementation, or is it a TOY/DEMO/PROTOTYPE? Look for missing error handling, hardcoded values, missing concurrency control, or shallow logic. Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
+        {"role": "system", "content": "You are a Ruthless Principal Engineer. Does this code represent a COMPLETE, CONCRETE, MONOLITHIC implementation, or is it an over-engineered 'extensible foundation' / abstract base class? Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
         {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
     ]
     try:
         raw = generate_fn(prompt, max_tokens=200)
-        if "VETO" in raw.upper():
-            return raw.strip()
-    except:
-        pass
+        if "VETO" in raw.upper(): return raw.strip()
+    except: pass
     return "APPROVED"
 
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
@@ -94,10 +110,8 @@ def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
         raw = generate_fn(prompt, max_tokens=300)
         import json
         match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-    except:
-        pass
+        if match: return json.loads(match.group())
+    except: pass
     return []
 
 def extract_code_blocks(text: str) -> dict:
@@ -123,11 +137,7 @@ def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
         with open(impl_path, "w") as f: f.write(impl_code)
         with open(test_path, "w") as f: f.write(test_code)
         try:
-            r = subprocess.run(
-                ["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error", "--no-header"],
-                capture_output=True, text=True, timeout=15, cwd=tmpdir,
-                preexec_fn=_set_limits
-            )
+            r = subprocess.run(["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error", "--no-header"], capture_output=True, text=True, timeout=15, cwd=tmpdir, preexec_fn=_set_limits)
             return r.returncode == 0, r.stdout + r.stderr
         except subprocess.TimeoutExpired: return False, "Pytest execution timed out (15s) or hit CPU limit."
         except Exception as e: return False, str(e)
@@ -143,7 +153,6 @@ def run_code(code: str) -> tuple[bool, str]:
         if os.path.exists(fname): os.unlink(fname)
 
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: Principal Engineer Veto forces complete rewrites for toy code."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -174,7 +183,7 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         
         prompt = "\n".join(memory) + f"\n\nFailed Implementation:\n{impl_code}\n\nFailed Tests:\n{test_code}\n\nCorrected Enterprise Code:"
         msgs = [{"role": "user", "content": prompt}]
-        new_output = generate_fn(msgs, max_tokens=8000) or raw_output  # Upgraded to 8000 tokens
+        new_output = generate_fn(msgs, max_tokens=8000) or raw_output
         
         new_blocks = extract_code_blocks(new_output)
         if new_blocks["implementation"]: impl_code = new_blocks["implementation"]
