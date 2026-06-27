@@ -4,7 +4,7 @@ import sys
 try:
     import uvloop
     uvloop.install()
-    print("[TTFT] uvloop event loop installed — async 2-4x faster")
+    print("[TTFT] uvloop event loop installed -- async 2-4x faster")
 except ImportError:
     pass
 from modules.services.pipeline import _budget, stream_tokens, build_system_prompt, build_chatml, generate_sync
@@ -256,12 +256,12 @@ _agent_team_exec = ThreadPoolExecutor(max_workers=6, thread_name_prefix="agent_t
 
 def _needs_fresh_search(msg: str) -> bool:
     """
-    Detect when model knowledge is likely stale — auto-trigger search.
+    Detect when model knowledge is likely stale -- auto-trigger search.
     Covers post-2023 tech, recent research, current events.
     """
     import re
     msg_lower = msg.lower()
-    # Never search for pure coding tasks — model knows syntax/stdlib/algorithms
+    # Never search for pure coding tasks -- model knows syntax/stdlib/algorithms
     _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
                      "debug", "refactor", "optimize", "algorithm", "implement",
                      "write a function", "write a class", "fix this", "bug in"]
@@ -315,7 +315,7 @@ def _needs_fresh_search(msg: str) -> bool:
 _system_prompt_cache = {}
 
 def _get_cached_system(skill, memory, episodic, rlhf_note, ctx_sum, complexity):
-    """Cache system prompt — avoids rebuilding every request."""
+    """Cache system prompt -- avoids rebuilding every request."""
     key = f"{skill}:{complexity}:{len(memory)}:{len(episodic)}"
     if key not in _system_prompt_cache:
         from modules.services.pipeline import build_system_prompt
@@ -360,7 +360,7 @@ def _warn_prompt_size(system: str):
     chars = len(system)
     approx_tokens = chars // 4
     if approx_tokens > 4000:
-        print(f"[TTFT WARNING] System prompt ~{approx_tokens} tokens — consider trimming")
+        print(f"[TTFT WARNING] System prompt ~{approx_tokens} tokens -- consider trimming")
     return approx_tokens
 
 
@@ -398,7 +398,7 @@ def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, s
 def pipeline_sync(msg: str, history: list) -> dict:
     from modules.core.http_client import mistral_stream
     """
-    v17 OODA Agentic Loop — 62-component engine.
+    v17 OODA Agentic Loop -- 62-component engine.
 
     OBSERVE  : gather memory, FIFO-compressed history, search context
     ORIENT   : adaptive complexity routing, effort parameter, system prompt
@@ -437,7 +437,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if skill == "calculator": complexity = max(complexity, "medium") if complexity != "hard" else complexity
     if skill == "coder" and complexity == "easy": complexity = "medium"  # coder is never easy
 
-    # Cache hit — exact match first (0ms), then fuzzy match for easy queries
+    # Cache hit -- exact match first (0ms), then fuzzy match for easy queries
     cached = cache_get(msg, skill)
     if cached and complexity == "easy":
         return {"response": cached, "skill": skill, "mode": "cached",
@@ -467,7 +467,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
     recent, ctx_sum = compress_history(_strip_thinking_from_history(history))
-    # Feature 15: hierarchical memory — query each store separately then merge
+    # Feature 15: hierarchical memory -- query each store separately then merge
     _mem_working  = mem_get(msg, k=3)
     _mem_episodic = mem_get_episodic(msg)
     sem_memory    = semantic_mem_get(msg, k=4)
@@ -543,7 +543,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
                 print(f"[Prefetch] injected {len(_prefetch_ctx)} results")
         except Exception as _pfe: print(f"[Prefetch] {_pfe}")
 
-    # FORCE TOOL PRE-EXECUTION — run obvious tools before model sees message
+    # FORCE TOOL PRE-EXECUTION -- run obvious tools before model sees message
     forced_results = []
     msg_lower = msg.lower()
     # Skip forced tool execution for vision-only queries
@@ -594,7 +594,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     rag_ctx = "\n[KNOWLEDGE BASE]\n" + "\n".join(f"- {r["text"][:200]}" for r in rag_hits) + "\n[END KNOWLEDGE BASE]" if rag_hits else ""
     _pgd_inject = None  # stubbed: pgd not loaded
     _pgd_using_new = bool(_pgd_inject) and _pgd_ab_active
-    _wm_ctx = {}  # world_model stubbed — not implemented
+    _wm_ctx = {}  # world_model stubbed -- not implemented
     _fs_examples = ""  # fewshot_get stubbed
     _fs_ctx = ""
     if _fs_examples:
@@ -641,11 +641,11 @@ def pipeline_sync(msg: str, history: list) -> dict:
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
-        # Real search results — inject with strong grounding instruction
-        system += f"\n\n[WEB SEARCH RESULTS — Today is {__import__('datetime').date.today()}. CRITICAL: You MUST answer using ONLY these search results. Do NOT use training data for any factual claims. If the results don't cover something, say you don't have that information rather than guessing.]\n{search_ctx[:8000]}\n[/WEB]"
+        # Real search results -- inject with strong grounding instruction
+        system += f"\n\n[WEB SEARCH RESULTS -- Today is {__import__('datetime').date.today()}. CRITICAL: You MUST answer using ONLY these search results. Do NOT use training data for any factual claims. If the results don't cover something, say you don't have that information rather than guessing.]\n{search_ctx[:8000]}\n[/WEB]"
     elif not search_ctx or "No results found" in search_ctx:
-        # Search failed or no results — explicitly tell model to use knowledge
-        system += f"\n\n[SEARCH UNAVAILABLE — Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
+        # Search failed or no results -- explicitly tell model to use knowledge
+        system += f"\n\n[SEARCH UNAVAILABLE -- Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
 
     # Inject MCP tool list if any tools discovered
     mcp_prompt = mcp_tool_list_prompt()
@@ -677,7 +677,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         plan = plan_fut.result(timeout=45) or ""
         team_result = team_fut.result(timeout=90)
         if plan: scratchpad_save(f"plan_{int(time.time())}", plan[:200])
-        # Plan used internally only — never shown to user. Output must be
+        # Plan used internally only -- never shown to user. Output must be
         # production-grade implementation only, no design doc preamble.
         if team_result:
             response = team_result
@@ -708,12 +708,12 @@ def pipeline_sync(msg: str, history: list) -> dict:
     system = inject_template(system, msg)
     prompt      = build_chatml(system, hist_msgs, _final_msg)
     seen_sents: set = set()
-    # KV cache hint: system prompt is stable — always first message, never mutated
+    # KV cache hint: system prompt is stable -- always first message, never mutated
 
-    # FAST PATH — skip agentic loop for easy/general queries
+    # FAST PATH -- skip agentic loop for easy/general queries
     if complexity == "easy" and skill not in ("coder", "calculator", "researcher"):
         from modules.core.http_client import mistral_stream
-        # 1. Trim history — only last 2 turns for easy queries
+        # 1. Trim history -- only last 2 turns for easy queries
         #    KV cache: keep system msg identical across requests for prefix cache hits
         fast_msgs = [m for m in prompt if m.get("role") == "system"][:1]
         fast_msgs += [m for m in prompt if m.get("role") != "system"][-4:]
@@ -779,7 +779,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     # ── FINALIZE (GPT-5.5 style: verify + trim + continue if incomplete) ─────
     final = response or ""
 
-    # 1. SELF-VERIFICATION — check own work before outputting
+    # 1. SELF-VERIFICATION -- check own work before outputting
     if final and complexity == "hard":
         try:
             vcheck = "".join(mistral_stream(
@@ -815,7 +815,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         except Exception as ve:
             print(f"[SelfVerify] {ve}")
 
-    # 2. TOKEN EFFICIENCY — strip sycophantic openers and filler (saves ~35% tokens)
+    # 2. TOKEN EFFICIENCY -- strip sycophantic openers and filler (saves ~35% tokens)
     import re as _re3
     filler = re.compile(
         r"^(Certainly!?|Absolutely!?|Great question!?|Sure!?|Of course!?|"
@@ -827,7 +827,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     from modules.services.agents import strip_tool_syntax
     final  = strip_tool_syntax(final)
     if skill == "coder":
-        # ── Anti-pseudocode gate — reject and rewrite if detected ────────────
+        # ── Anti-pseudocode gate -- reject and rewrite if detected ────────────
         _PSEUDO_SIGNALS = [
             "# TODO", "# FIXME", "# implement", "# add logic", "# your code here",
             "pass  #", "raise NotImplementedError", "fake_", "mock_", "stub_",
@@ -838,7 +838,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         ]
         _pseudo_hits = [s for s in _PSEUDO_SIGNALS if s.lower() in final.lower()]
         if _pseudo_hits:
-            print(f"[AntiPseudo] detected pseudocode signals: {_pseudo_hits} — forcing rewrite")
+            print(f"[AntiPseudo] detected pseudocode signals: {_pseudo_hits} -- forcing rewrite")
             try:
                 final = generate_sync(
                     build_chatml(
@@ -947,7 +947,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         if skill in ("researcher", "coder") or complexity == "hard":
             db_episodic_save(f"[{skill}] {msg[:100]} → {final_clean[:200]}")
     except Exception as _me: print(f"[MemPersist] {_me}")
-    # Save to fine-tune DB — every conversation becomes training data
+    # Save to fine-tune DB -- every conversation becomes training data
     finetune_save(skill, complexity, system, msg, final)
     # ── Claude Code: persist coding-style rules to CLAUDE.md ──────────────
     _rule = detect_style_rule(msg, final)
@@ -982,7 +982,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
 
 def _build_stream_context(msg: str, hist: list) -> dict:
     """
-    All pre-processing from pipeline_sync — memory, search, prompt build.
+    All pre-processing from pipeline_sync -- memory, search, prompt build.
     Returns everything groq_stream needs. No model call made here.
     """
     import re as _re3
@@ -1080,7 +1080,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
                 "\n[END KNOWLEDGE BASE]") if rag_hits else ""
     _pgd_inject = None  # stubbed: pgd not loaded
     _pgd_using_new = bool(_pgd_inject) and _pgd_ab_active
-    _wm_ctx = {}  # world_model stubbed — not implemented
+    _wm_ctx = {}  # world_model stubbed -- not implemented
     _fs_examples = ""  # fewshot_get stubbed
     _fs_ctx = ""
     if _fs_examples:
@@ -1146,7 +1146,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
 
 def _stream_post_process(msg: str, final: str, skill: str,
                           complexity: str, effort: str, system: str):
-    """Run all post-pipeline saves in a background thread — never blocks streaming."""
+    """Run all post-pipeline saves in a background thread -- never blocks streaming."""
     import re as _re4, threading as _tpp
     def _run():
         try:
@@ -1169,7 +1169,7 @@ def _stream_post_process(msg: str, final: str, skill: str,
 
 
 def pipeline_stream(msg: str, history: list):
-    # ── Safety gate — runs before anything else ──────────────────────
+    # ── Safety gate -- runs before anything else ──────────────────────
     if _SAFETY_LOADED:
         _safe, _reason = safety_check(msg, "general")
         if not _safe:
@@ -1244,7 +1244,7 @@ def pipeline_stream(msg: str, history: list):
         except Exception:
             pass
 
-    # ── Build prompt — FULLY PARALLEL I/O ───────────────────────────────────
+    # ── Build prompt -- FULLY PARALLEL I/O ───────────────────────────────────
     from concurrent.futures import ThreadPoolExecutor
     history = clean_history(history or [])
     if _count_tokens(history) > 150000:
@@ -1275,7 +1275,7 @@ def pipeline_stream(msg: str, history: list):
     hist_msgs       = [{"role": h.get("role","user"), "content": str(h.get("content",""))} for h in (recent or [])]
 
 
-    # ── Full agentic path — stream from generate ──────────────────────────────
+    # ── Full agentic path -- stream from generate ──────────────────────────────
     # ── Anti-pseudocode injection for coder skill ─────────────────────
     _final_msg = clean_msg
     if skill == "coder":
@@ -1368,9 +1368,9 @@ def pipeline_stream(msg: str, history: list):
             from modules.services.code_enforcer import enforce_production_code, build_rewrite_prompt
             _clean, _violations, _rewrite_prompt = enforce_production_code(final, msg)
             if not _clean:
-                print(f"[AntiPseudo] AST+regex violations={_violations} — streaming rewrite")
+                print(f"[AntiPseudo] AST+regex violations={_violations} -- streaming rewrite")
                 rewrite_msgs = build_chatml(system, hist_msgs, _rewrite_prompt)
-                yield "\n\n---\n⚡ *Violations detected: " + ", ".join(_violations[:3]) + " — rewriting with real production code...*\n\n"
+                yield "\n\n---\n⚡ *Violations detected: " + ", ".join(_violations[:3]) + " -- rewriting with real production code...*\n\n"
                 rewrite_chunks = []
                 for tok in mistral_stream(rewrite_msgs, max_tokens=max_t, model=_tier["models"][0]):
                     yield tok
@@ -1432,7 +1432,6 @@ BENCHMARK_SUITE = [
     {"id":"t4","type":"tools","prompt":"Check LINT(def f(x):\\n  return x*2) for issues.","expected_contains":["OK"]},
 ]
 
-HTML = r"""<!DOCTYPE html>
 
 @app.get("/oldui", response_class=HTMLResponse)
 async def root_ui():
@@ -1478,7 +1477,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg"}
 
 def _extract_text_from_file(filename: str, data: bytes) -> str:
-    """Extract text from uploaded file — supports txt/md/code/PDF/DOCX."""
+    """Extract text from uploaded file -- supports txt/md/code/PDF/DOCX."""
     ext = os.path.splitext(filename.lower())[1]
     try:
         if ext in (".txt", ".md", ".py", ".js", ".ts", ".html",
@@ -1543,7 +1542,7 @@ async def upload_file(file: UploadFile = FastAPIFile(...)):
         "extracted_chars": len(text),
         "chunks_indexed": len(chunks[:5000]),
         "preview": text[:300],
-        "status": "indexed in RAG — AI can now reference this file"
+        "status": "indexed in RAG -- AI can now reference this file"
     }
 
 @app.post("/video/edit")
@@ -1657,7 +1656,7 @@ async def video_upload(file: UploadFile = FastAPIFile(...)):
         "filename": filename,
         "file_path": save_path,
         "size_mb": round(len(data) / 1024 / 1024, 2),
-        "status": "uploaded — use /video/edit to process"
+        "status": "uploaded -- use /video/edit to process"
     })
 
 
@@ -1712,7 +1711,7 @@ async def memory_clear():
 
 @app.get("/search/status")
 async def search_status():
-    """Live SearXNG status — use this to diagnose web-search issues."""
+    """Live SearXNG status -- use this to diagnose web-search issues."""
     loop = asyncio.get_event_loop()
     live_probe = await loop.run_in_executor(None, lambda: _probe_searxng(timeout=4))
     return {
@@ -1752,7 +1751,7 @@ async def feedback(req: Request):
 
 @app.post("/stream")
 async def stream_chat(req: Request):
-    """Main streaming endpoint — parses request then streams via generator."""
+    """Main streaming endpoint -- parses request then streams via generator."""
     try:
         data = await req.json()
     except Exception:
@@ -1834,7 +1833,7 @@ async def stream_chat(req: Request):
         try:
             ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=6)
         except _asyncio.TimeoutError:
-            print("[stream_chat] ctx timeout — fast first token with minimal ctx")
+            print("[stream_chat] ctx timeout -- fast first token with minimal ctx")
             from modules.core.constants import get_infra_tier
             _infra_t = get_infra_tier("medium")
             ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
@@ -1858,7 +1857,7 @@ async def stream_chat(req: Request):
 
         yield json.dumps({"skill": ctx["skill"], "mode": ctx["mode"]}) + "\n"
 
-        # asyncio.Queue — no run_in_executor overhead per token
+        # asyncio.Queue -- no run_in_executor overhead per token
         tok_q  = asyncio.Queue()
         chunks = []
         in_think = [False]
@@ -1934,7 +1933,7 @@ async def stream_chat(req: Request):
                 # or until enough has accumulated that this looks like a
                 # false positive (e.g. the word appears mid-sentence).
                 if "\n\n" in buf:
-                    # Drop everything up to and including the blank line —
+                    # Drop everything up to and including the blank line --
                     # that was the reasoning block.
                     buf = buf.split("\n\n", 1)[-1]
                 else:
@@ -2387,7 +2386,7 @@ async def vision_status():
         "loaded": _vision_loaded,
         "model": GROQ_MODEL_VISION,
         "provider": "Groq API",
-        "tip": "Vision powered by Groq llama-4-scout — no local model needed"
+        "tip": "Vision powered by Groq llama-4-scout -- no local model needed"
     }
 
 import sqlite3 as _psql
@@ -2453,8 +2452,8 @@ async def token_stats():
     return {
         "prompt_cache_entries": len(_prompt_cache),
         "prompt_cache_hits": _prompt_cache_hits,
-        "compaction": "auto — triggers when history > 1500 tokens",
-        "thinking_strip": "enabled — thinking tokens stripped before context",
+        "compaction": "auto -- triggers when history > 1500 tokens",
+        "thinking_strip": "enabled -- thinking tokens stripped before context",
         "tool_output_cap": "15 lines max per tool call",
         "anthropic_mechanisms": ["prompt_caching","auto_compaction","thinking_strip","tool_result_only"]
     }
@@ -2476,8 +2475,8 @@ async def cache_clear():
 async def get_effort():
     """Get current effort level (low | medium | high)."""
     return {"effort": EFFORT_LEVEL, "description": {
-        "low":    "Fast responses, minimal reasoning — greetings/simple facts",
-        "medium": "Balanced — adaptive thinking, tool use, dual-path calc (default)",
+        "low":    "Fast responses, minimal reasoning -- greetings/simple facts",
+        "medium": "Balanced -- adaptive thinking, tool use, dual-path calc (default)",
         "high":   "Extended thinking, full PEVI loop, all deliberation prompts",
     }}
 
@@ -2558,7 +2557,7 @@ async def generate_title(req: Request):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONVERSATIONS API — persistent server-side conversation storage
+# CONVERSATIONS API -- persistent server-side conversation storage
 # ══════════════════════════════════════════════════════════════════════════════
 import sqlite3 as _csql, secrets as _secrets
 
@@ -2671,7 +2670,7 @@ b{{color:#7c8cff}}p{{margin:8px 0;white-space:pre-wrap}}</style></head>
 <body><h2>{title}</h2>{html_msgs}</body></html>""")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODELS endpoint — switch model at runtime
+# MODELS endpoint -- switch model at runtime
 # ══════════════════════════════════════════════════════════════════════════════
 @app.get("/models")
 async def list_models():
@@ -2776,7 +2775,7 @@ async def get_task_endpoint(task_id: str):
 
 @app.post("/research")
 async def deep_research(req: Request):
-    """Feature 29: deep research mode — 5+ searches, synthesized report."""
+    """Feature 29: deep research mode -- 5+ searches, synthesized report."""
     d = await req.json()
     query = d.get("query","")[:500]
     if not query: return {"error":"query required"}
@@ -2873,7 +2872,7 @@ async def computer_use_endpoint(req: Request):
 
 @app.post("/tts")
 async def tts(req: Request):
-    """Returns SSML hint — actual TTS done client-side via Web Speech API."""
+    """Returns SSML hint -- actual TTS done client-side via Web Speech API."""
     d = await req.json()
     return {"text": d.get("text",""), "engine": "browser"}
 
@@ -3358,9 +3357,9 @@ def pgd_ab_score(used_new: bool, score: int):
             old_avg = sum(_pgd_ab_scores["old"]) / old_n
             if new_avg > old_avg:
                 _pgd_save_prompt(_pgd_ab_variant)
-                print(f"[PGD] ✅ Challenger WON ({new_avg:.1f} vs {old_avg:.1f}) — prompt evolved")
+                print(f"[PGD] ✅ Challenger WON ({new_avg:.1f} vs {old_avg:.1f}) -- prompt evolved")
             else:
-                print(f"[PGD] ❌ Challenger lost ({new_avg:.1f} vs {old_avg:.1f}) — kept original")
+                print(f"[PGD] ❌ Challenger lost ({new_avg:.1f} vs {old_avg:.1f}) -- kept original")
             _pgd_ab_active = False
 
 def _pgd_load_prompt() -> str:
@@ -3402,7 +3401,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         _recent_user_msgs = " ".join(h.get("content", "") for h in hist[-6:] if h.get("role") == "user")
         _hist_skill = classify_skill(_recent_user_msgs)
         if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8: skill = _hist_skill
-    # Persistent skill — restore from DB if still general
+    # Persistent skill -- restore from DB if still general
     if skill == "general":
         try:
             import sqlite3 as _sq3, os as _os3
@@ -3454,21 +3453,21 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
     # ── 2. Parallel I/O tasks (all I/O runs concurrently) ───────────────────
     def _do_search():
-        # Skip search for short/conversational messages — saves 1-3s TTFT
+        # Skip search for short/conversational messages -- saves 1-3s TTFT
         _skip_words = {"hi","hello","hey","thanks","ok","okay","sure","yes","no","bye"}
         if len(msg.split()) <= 3 and msg.lower().strip().rstrip("!?.") in _skip_words:
             return (msg, "")
-        # Skip search for coding tasks — model knows syntax/algorithms/stdlib
+        # Skip search for coding tasks -- model knows syntax/algorithms/stdlib
         _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
                          "debug", "refactor", "optimize", "algorithm", "implement",
                          "write a function", "fix this", "bug in"]
         if any(t in msg.lower() for t in _code_signals):
             return (msg, "")
-        # Check Tavily cache first — avoids duplicate HTTP call
+        # Check Tavily cache first -- avoids duplicate HTTP call
         from modules.services.search import _tavily_cache, tavily_search
         _ck = msg.strip().lower()[:120]
         if _ck in _tavily_cache:
-            print("[_do_search] Tavily cache hit — reusing result")
+            print("[_do_search] Tavily cache hit -- reusing result")
             import datetime as _dt
             _ctx = ("MANDATORY: LIVE search results fetched " + str(_dt.date.today()) + ". "
                     "You MUST use these. FORBIDDEN from saying no internet access.\n"
@@ -3691,7 +3690,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
     if rag_ctx: system += rag_ctx
 
-    # search already ran in _do_search above — skip double search
+    # search already ran in _do_search above -- skip double search
 
     if search_ctx:
         import datetime
