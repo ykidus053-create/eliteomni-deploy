@@ -46,9 +46,11 @@ def check_enterprise_compliance(code: str) -> list:
     try:
         tree = ast.parse(code)
         has_logging = False
+        has_metrics = False
         banned_calls = {'eval', 'exec', 'compile', '__import__', 'os.system', 'subprocess.call'}
+        
         for node in ast.walk(tree):
-            # 1. Enforce Type Hints
+            # 1. Enforce Type Hints & Docstrings
             if isinstance(node, ast.FunctionDef):
                 if not node.name.startswith("test_") and node.name != "__init__":
                     for arg in node.args.args:
@@ -68,31 +70,37 @@ def check_enterprise_compliance(code: str) -> list:
                 if isinstance(node.func, ast.Name): func_name = node.func.id
                 elif isinstance(node.func, ast.Attribute): func_name = node.func.attr
                 if func_name in banned_calls: violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned.")
-            # 5. Upgraded: Ban Abstract Base Classes (Force Monolithic Concrete Code)
+            # 5. Ban Abstract Base Classes
             if isinstance(node, ast.ClassDef):
                 for base in node.bases:
                     base_name = ""
                     if isinstance(base, ast.Name): base_name = base.id
                     elif isinstance(base, ast.Attribute): base_name = base.attr
                     if base_name in ('ABC', 'ABCMeta'):
-                        violations.append(f"OVER-ENGINEERING: Class '{node.name}' inherits from ABC. Write concrete implementations, not abstract base classes.")
+                        violations.append(f"OVER-ENGINEERING: Class '{node.name}' inherits from ABC. Write concrete implementations.")
                 for stmt in node.body:
                     if isinstance(stmt, ast.FunctionDef):
                         for decorator in stmt.decorator_list:
                             if isinstance(decorator, ast.Name) and decorator.id == 'abstractmethod':
                                 violations.append(f"OVER-ENGINEERING: Abstract method '{stmt.name}' found. Implement it completely.")
                                 
+            # 6. Upgraded: Enforce Observability (Metrics/Tracing)
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     if 'logging' in alias.name: has_logging = True
+                    if 'prometheus_client' in alias.name or 'opentelemetry' in alias.name or 'datadog' in alias.name:
+                        has_metrics = True
+                        
         if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'. Enterprise systems must use structured logging.")
+        if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing (e.g., prometheus_client or opentelemetry). Enterprise code must be observable.")
+            
     except SyntaxError as e:
         violations.append(f"Syntax Error preventing AST audit: {e}")
     return violations
 
 def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
     prompt = [
-        {"role": "system", "content": "You are a Ruthless Principal Engineer. Does this code represent a COMPLETE, CONCRETE, MONOLITHIC implementation, or is it an over-engineered 'extensible foundation' / abstract base class? Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
+        {"role": "system", "content": "You are a Ruthless Site Reliability Engineer (SRE). Does this code represent a COMPLETE, CONCRETE, OBSERVABLE implementation? Or is it missing distributed systems guarantees (idempotency, locks, retries, circuit breakers)? Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
         {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
     ]
     try:
@@ -103,7 +111,7 @@ def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
 
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
     prompt = [
-        {"role": "system", "content": "You are a ruthless Staff Engineer reviewing a PR. Does this code have real-world logic flaws? (e.g., missing timeouts on network calls, memory leaks on large files, race conditions, unhandled nulls). Reply ONLY with a JSON list of strings. If perfect, reply []."},
+        {"role": "system", "content": "You are a ruthless Distributed Systems Engineer reviewing a PR. Does this code have real-world logic flaws? (e.g., race conditions, missing idempotency keys, split-brain states, missing timeouts, network partitions). Reply ONLY with a JSON list of strings. If perfect, reply []."},
         {"role": "user", "content": f"Implementation:\n{impl_code[:1500]}\n\nTests:\n{test_code[:800]}"}
     ]
     try:
@@ -165,19 +173,19 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         ok, output = run_pytest(impl_code, test_code)
         
         if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
-            print(f"[Reflexion] Principal Engineer APPROVED & pytests 100% on round {round_num}")
+            print(f"[Reflexion] SRE Audit passed & pytests 100% on round {round_num}")
             break
             
         failures = []
         if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or prototype phrases.")
         if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
-        if "APPROVED" not in veto: failures.append(f"PRINCIPAL ENGINEER VETO:\n{veto}")
-        if logic_flaws: failures.append("REAL-WORLD LOGIC FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
+        if "APPROVED" not in veto: failures.append(f"SRE PRINCIPAL VETO:\n{veto}")
+        if logic_flaws: failures.append("DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
         if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
         if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - PRINCIPAL ENGINEER AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
+        reflection = f"[REFLEXION ROUND {round_num} - SRE & DISTRIBUTED SYSTEMS AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
