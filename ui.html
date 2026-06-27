@@ -87,42 +87,74 @@
   const userInput = document.getElementById('user-input');
   const sendBtn = document.getElementById('send-btn');
   const statusDiv = document.getElementById('status');
+  
   userInput.addEventListener('input', () => {
     userInput.style.height = 'auto';
     userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
     sendBtn.disabled = userInput.value.trim() === '';
   });
+
   userInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   });
+
+  function cleanResponse(text) {
+    // Remove JSON wrappers if they exist
+    try {
+      if (text.trim().startsWith('{')) {
+        const jsonObj = JSON.parse(text);
+        if (jsonObj.response) text = jsonObj.response;
+      }
+    } catch (e) {}
+
+    // Remove internal reasoning artifacts
+    text = text.replace(/THINK:.*?\n/g, '');
+    text = text.replace(/ACT:.*?\n/g, '');
+    text = text.replace(/VERIFY:.*?\n/g, '');
+    text = text.replace(/INTENT:.*?\n/g, '');
+    text = text.replace(/AMBIGUITY:.*?\n/g, '');
+    text = text.replace(/RESPONSE:/g, '');
+    
+    return text.trim();
+  }
+
   async function sendMessage() {
     const text = userInput.value.trim();
     if (!text) return;
+    
     addMessage(text, 'user');
     userInput.value = '';
     userInput.style.height = 'auto';
     sendBtn.disabled = true;
     statusDiv.innerText = 'Generating...';
     statusDiv.classList.add('active');
+    
     const aiDiv = addMessage('', 'ai');
+    
     try {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({message: text})
       });
+      
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullResponse = '';
+      
       while (true) {
         const {done, value} = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value);
         fullResponse += chunk;
-        aiDiv.innerHTML = marked.parse(fullResponse);
+        
+        // Clean the response before rendering
+        const displayText = cleanResponse(fullResponse);
+        aiDiv.innerHTML = marked.parse(displayText);
+        
         document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight;
       }
       statusDiv.innerText = 'Ready';
@@ -133,6 +165,7 @@
       statusDiv.classList.remove('active');
     }
   }
+
   function addMessage(text, role) {
     const row = document.createElement('div');
     row.className = 'msg-row ' + role;
