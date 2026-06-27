@@ -9,146 +9,41 @@
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
 <style>
   :root {
-    --claude-bg: #faf9f5;        /* Claude's signature warm cream background */
-    --claude-side-bg: #f0eee6;   /* Sidebar/Slightly darker cream */
-    --claude-user-bubble: #f0eee6; /* User message bubble */
-    --claude-text: #2b2b2b;      /* Main text color */
+    --claude-bg: #faf9f5;
+    --claude-side-bg: #f0eee6;
+    --claude-user-bubble: #f0eee6;
+    --claude-text: #2b2b2b;
     --claude-text-muted: #6b6b6b;
-    --claude-accent: #d97757;    /* Claude's terracotta/orange accent */
+    --claude-accent: #d97757;
     --claude-border: #e5e2d8;
     --claude-font: "Söhne", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: var(--claude-font);
-    background-color: var(--claude-bg);
-    color: var(--claude-text);
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  /* Top Header */
-  #header {
-    padding: 14px 24px;
-    border-bottom: 1px solid var(--claude-border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--claude-bg);
-  }
+  body { font-family: var(--claude-font); background-color: var(--claude-bg); color: var(--claude-text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  #header { padding: 14px 24px; border-bottom: 1px solid var(--claude-border); display: flex; justify-content: space-between; align-items: center; background: var(--claude-bg); }
   #header h1 { font-size: 18px; font-weight: 600; color: var(--claude-text); }
   #status { font-size: 13px; color: var(--claude-text-muted); font-weight: 500; }
   #status.active { color: var(--claude-accent); }
-
-  /* Chat Area */
-  #chat-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 32px 24px;
-  }
-  .chat-inner {
-    max-width: 768px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-  
+  #chat-container { flex: 1; overflow-y: auto; padding: 32px 24px; }
+  .chat-inner { max-width: 768px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
   .msg-row { display: flex; width: 100%; }
   .msg-row.user { justify-content: flex-end; }
   .msg-row.ai { justify-content: flex-start; }
-
-  .msg {
-    max-width: 85%;
-    line-height: 1.65;
-    font-size: 16px;
-  }
-  .user-msg {
-    background: var(--claude-user-bubble);
-    padding: 12px 18px;
-    border-radius: 12px;
-  }
-  .ai-msg {
-    padding: 0;
-  }
+  .msg { max-width: 85%; line-height: 1.65; font-size: 16px; }
+  .user-msg { background: var(--claude-user-bubble); padding: 12px 18px; border-radius: 12px; }
+  .ai-msg { padding: 0; }
   .ai-msg p { margin-bottom: 12px; }
-  .ai-msg pre {
-    background: #1a1a1a;
-    color: #f1f1f1;
-    padding: 16px;
-    border-radius: 8px;
-    overflow-x: auto;
-    font-family: "Fira Code", monospace;
-    font-size: 14px;
-  }
-  .ai-msg code {
-    background: #e8e6dc;
-    padding: 2px 5px;
-    border-radius: 4px;
-    font-family: "Fira Code", monospace;
-    font-size: 14px;
-  }
+  .ai-msg pre { background: #1a1a1a; color: #f1f1f1; padding: 16px; border-radius: 8px; overflow-x: auto; font-family: "Fira Code", monospace; font-size: 14px; }
+  .ai-msg code { background: #e8e6dc; padding: 2px 5px; border-radius: 4px; font-family: "Fira Code", monospace; font-size: 14px; }
   .ai-msg pre code { background: transparent; padding: 0; }
-
-  /* Input Area */
-  #input-area {
-    background: var(--claude-bg);
-    padding: 16px 24px 24px;
-    border-top: 1px solid var(--claude-border);
-  }
-  .input-wrapper {
-    max-width: 768px;
-    margin: 0 auto;
-    display: flex;
-    align-items: center;
-    background: #fff;
-    border: 1px solid var(--claude-border);
-    border-radius: 12px;
-    padding: 8px 12px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-    transition: border-color 0.2s;
-  }
+  #input-area { background: var(--claude-bg); padding: 16px 24px 24px; border-top: 1px solid var(--claude-border); }
+  .input-wrapper { max-width: 768px; margin: 0 auto; display: flex; align-items: center; background: #fff; border: 1px solid var(--claude-border); border-radius: 12px; padding: 8px 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: border-color 0.2s; }
   .input-wrapper:focus-within { border-color: var(--claude-accent); }
-  
-  #user-input {
-    flex: 1;
-    border: none;
-    background: transparent;
-    color: var(--claude-text);
-    font-family: var(--claude-font);
-    font-size: 16px;
-    padding: 8px 0;
-    outline: none;
-    resize: none;
-    max-height: 200px;
-    overflow-y: auto;
-    line-height: 1.5;
-  }
+  #user-input { flex: 1; border: none; background: transparent; color: var(--claude-text); font-family: var(--claude-font); font-size: 16px; padding: 8px 0; outline: none; resize: none; max-height: 200px; overflow-y: auto; line-height: 1.5; }
   #user-input::placeholder { color: #a9a9a9; }
-
-  #send-btn {
-    background: var(--claude-accent);
-    color: #fff;
-    border: none;
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: opacity 0.2s;
-    flex-shrink: 0;
-    margin-left: 8px;
-  }
+  #send-btn { background: var(--claude-accent); color: #fff; border: none; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: opacity 0.2s; flex-shrink: 0; margin-left: 8px; }
   #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   #send-btn svg { width: 18px; height: 18px; }
-
-  /* Scrollbar */
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #d4d1c4; border-radius: 4px; }
@@ -162,7 +57,6 @@
   </div>
   <div id="chat-container">
     <div class="chat-inner" id="chat-inner">
-      <!-- Initial AI Greeting -->
       <div class="msg-row ai">
         <div class="msg ai-msg">
           <p>Hello! I'm EliteOmni. How can I assist you today?</p>
@@ -181,59 +75,47 @@
       </button>
     </div>
   </div>
-
 <script>
   const chatInner = document.getElementById('chat-inner');
   const userInput = document.getElementById('user-input');
   const sendBtn = document.getElementById('send-btn');
   const statusDiv = document.getElementById('status');
-
-  // Auto-resize textarea
   userInput.addEventListener('input', () => {
     userInput.style.height = 'auto';
-    userInput.style.height = Math.min(useruserInput.scrollHeight, 200) + 'px';
+    userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
     sendBtn.disabled = userInput.value.trim() === '';
   });
-
-  // Enter to send (Shift+Enter for newline)
   userInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   });
-
   async function sendMessage() {
     const text = userInput.value.trim();
     if (!text) return;
-    
     addMessage(text, 'user');
     userInput.value = '';
     userInput.style.height = 'auto';
     sendBtn.disabled = true;
     statusDiv.innerText = 'Generating...';
     statusDiv.classList.add('active');
-    
     const aiDiv = addMessage('', 'ai');
-    
     try {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({message: text})
       });
-      
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullResponse = '';
-      
       while (true) {
         const {done, value} = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value);
         fullResponse += chunk;
         aiDiv.innerHTML = marked.parse(fullResponse);
-        // Scroll to bottom smoothly
         document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight;
       }
       statusDiv.innerText = 'Ready';
@@ -244,15 +126,12 @@
       statusDiv.classList.remove('active');
     }
   }
-
   function addMessage(text, role) {
     const row = document.createElement('div');
     row.className = 'msg-row ' + role;
-    
     const msgDiv = document.createElement('div');
     msgDiv.className = 'msg ' + role + '-msg';
     msgDiv.innerHTML = role === 'user' ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : marked.parse(text);
-    
     row.appendChild(msgDiv);
     chatInner.appendChild(row);
     document.getElementById('chat-container').scrollTop = document.getElementById('chat-container').scrollHeight;

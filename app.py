@@ -4984,3 +4984,8 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         "mcp_tools": _tools_schema,
     }
 # ── END TTFT PATCH ────────────────────────────────────────────────────────────
+
+
+@app.get("/newui", response_class=HTMLResponse)
+async def new_ui_route():
+    return HTMLResponse(open("ui.html").read())
