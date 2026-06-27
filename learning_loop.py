@@ -317,3 +317,61 @@ def get_learning_stats() -> dict:
         }
     except Exception:
         return {}
+
+# ── Semantic Caching (TF-IDF) ────────────────────────────────────────────────
+
+import math
+from collections import Counter
+
+def _tokenize(text):
+    return re.findall(r'\b\w{3,}\b', text.lower())
+
+def _tf(tokens):
+    count = Counter(tokens)
+    total = len(tokens)
+    return {word: count[word] / total for word in count} if total > 0 else {}
+
+def _cosine_sim(vec1, vec2):
+    if not vec1 or not vec2: return 0.0
+    intersection = set(vec1.keys()) & set(vec2.keys())
+    numerator = sum(vec1[x] * vec2[x] for x in intersection)
+    sum1 = sum(v**2 for v in vec1.values())
+    sum2 = sum(v**2 for v in vec2.values())
+    return numerator / (math.sqrt(sum1) * math.sqrt(sum2)) if sum1 and sum2 else 0.0
+
+def check_semantic_cache(query: str, threshold: float = 0.92) -> Optional[str]:
+    """Upgraded: Returns cached response if query is >92% similar to a past query."""
+    try:
+        with _lock:
+            con = sqlite3.connect(_DB)
+            con.execute("""CREATE TABLE IF NOT EXISTS semantic_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, query TEXT, response TEXT, query_tfidf TEXT, ts REAL
+            )""")
+            rows = con.execute("SELECT query, response, query_tfidf FROM semantic_cache ORDER BY ts DESC LIMIT 500").fetchall()
+            con.close()
+            
+        if not rows: return None
+        query_vec = _tf(_tokenize(query))
+        
+        for q, resp, tfidf_str in rows:
+            cached_vec = eval(tfidf_str) if tfidf_str else {}
+            sim = _cosine_sim(query_vec, cached_vec)
+            if sim >= threshold:
+                print(f"[Semantic Cache] Hit! Similarity: {sim:.2f}")
+                return resp
+        return None
+    except Exception:
+        return None
+
+def add_to_semantic_cache(query: str, response: str):
+    """Adds a query-response pair to the semantic cache."""
+    if not query or not response: return
+    try:
+        query_vec = str(_tf(_tokenize(query)))
+        with _lock:
+            con = sqlite3.connect(_DB)
+            con.execute("INSERT INTO semantic_cache (query, response, query_tfidf, ts) VALUES (?,?,?,?)",
+                        (query, response, query_vec, time.time()))
+            con.commit(); con.close()
+    except Exception:
+        pass
