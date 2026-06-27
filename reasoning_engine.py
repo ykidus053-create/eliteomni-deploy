@@ -1,6 +1,6 @@
 """
-Deliberative Reasoning Engine — Frontier Tier (o1-style).
-Implements: Hidden Scratchpad, Self-Correcting Math Loop, and Devil's Advocate Logic Verification.
+Deliberative Reasoning Engine — AlphaProof Tier.
+Implements: Chain of Code (SymPy simulation) and Socratic Multi-Agent Debate.
 """
 import re, time, random, threading, subprocess, tempfile, os, resource
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,14 +8,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="reason")
 
 def _set_limits():
-    # 3 seconds CPU time limit for math execution
-    resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
-    resource.setrlimit(resource.RLIMIT_AS, (100 * 1024 * 1024, 100 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+    resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
 
-def execute_math_code(code: str) -> tuple[bool, str]:
-    """Executes python math code safely and returns (success, output)."""
+def execute_logic_code(code: str) -> tuple[bool, str]:
+    """Executes python logic/math code safely and returns (success, output)."""
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        f.write(code)
+        f.write("import sympy\nimport math\n" + code)
         fname = f.name
     try:
         r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=5, preexec_fn=_set_limits)
@@ -27,90 +26,60 @@ def execute_math_code(code: str) -> tuple[bool, str]:
     finally:
         if os.path.exists(fname): os.unlink(fname)
 
-def self_correcting_math(msg: str, generate_fn, model: str, max_retries: int = 3) -> str:
-    """Forces the AI to write math code, executes it, and feeds errors back for self-correction."""
+def chain_of_code(msg: str, generate_fn, model: str, max_retries: int = 2) -> str:
+    """Forces the AI to write a SymPy python script to solve the problem, executes it, and returns the result."""
     prompt = [
-        {"role": "system", "content": "You are a mathematical computation engine. You MUST output a python code block formatted exactly as [PYTHON CALC START] print(answer) [PYTHON CALC END] to calculate this. Do not guess numbers."},
+        {"role": "system", "content": "You are a formal logic and math engine. You MUST write a Python script using the `sympy` library to simulate and solve the problem. Output ONLY the code inside [PYTHON LOGIC START] and [PYTHON LOGIC END] tags. Print the final answer at the end."},
         {"role": "user", "content": msg}
     ]
     
     last_error = ""
+    last_code = ""
     for attempt in range(max_retries):
         if last_error:
-            prompt.append({"role": "assistant", "content": f"[PYTHON CALC START]\n{last_code}\n[PYTHON CALC END]"})
-            prompt.append({"role": "user", "content": f"Execution failed with error: {last_error}\nFix the code and output the corrected [PYTHON CALC START]...[PYTHON CALC END] block."})
+            prompt.append({"role": "assistant", "content": f"[PYTHON LOGIC START]\n{last_code}\n[PYTHON LOGIC END]"})
+            prompt.append({"role": "user", "content": f"Execution failed: {last_error}\nFix the code and output the corrected [PYTHON LOGIC START]...[PYTHON LOGIC END] block."})
         
-        resp = generate_fn(prompt, max_tokens=500, model=model)
-        match = re.search(r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]', resp, re.DOTALL)
+        resp = generate_fn(prompt, max_tokens=800, model=model)
+        match = re.search(r'\[PYTHON LOGIC START\](.*?)\[PYTHON LOGIC END\]', resp, re.DOTALL)
         
-        if not match:
-            return resp # Fallback if AI refuses to use tags
+        if not match: return resp
             
         code = match.group(1).strip()
         last_code = code
-        success, output = execute_math_code(code)
+        success, output = execute_logic_code(code)
         
         if success:
-            return f"[CALCULATED RESULT: {output}]"
+            return f"[SIMULATION RESULT: {output}]"
         else:
             last_error = output
             
-    return f"[MATH EXECUTION FAILED AFTER {max_retries} ATTEMPTS. Last error: {last_error}]"
+    return f"[LOGIC EXECUTION FAILED AFTER {max_retries} ATTEMPTS. Last error: {last_error}]"
 
-def extract_and_run_math(response: str) -> str:
-    """Finds [PYTHON CALC START]...[END] blocks in general responses, runs them, and injects the result."""
-    pattern = r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]'
-    matches = re.findall(pattern, response, re.DOTALL)
-    if not matches: return response, False
-        
-    final_response = response
-    for code in matches:
-        success, result = execute_math_code(code.strip())
-        final_response = final_response.replace(
-            f"[PYTHON CALC START]{code}[PYTHON CALC END]",
-            f"[CALCULATED RESULT: {result}]"
-        )
-    return final_response, True
-
-def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model: str, n: int = 3) -> list:
-    def _gen_one(approach_hint: str) -> str:
-        prompt = [{"role": "system", "content": system + f"\n\nApproach hint: {approach_hint}"}] + history[-6:] + [{"role": "user", "content": msg}]
-        try: return generate_fn(prompt, max_tokens=1500, model=model)
-        except: return ""
-
-    approaches = [
-        "Direct and concise. Lead with the answer.",
-        "Step by step reasoning. Show your work explicitly.",
-        "Consider edge cases and alternative interpretations first.",
-    ][:n]
-
-    futures = [_executor.submit(_gen_one, approach) for approach in approaches]
-    results = []
-    for fut in as_completed(futures, timeout=30):
-        try:
-            r = fut.result(timeout=5)
-            if r and len(r) > 50: results.append(r)
-        except: pass
-    return results
-
-def devils_advocate(winner: str, msg: str, generate_fn, model: str) -> str:
-    """Upgraded: Tries to break the AI's logic. If it finds a hole, forces a rewrite."""
-    prompt = [
-        {"role": "system", "content": "You are a Ruthless Devil's Advocate. Find the ONE logical flaw, unsupported claim, or math error in the candidate. If it is flawless, reply EXACTLY: FLAWLESS. If flawed, reply: FLAW: [explain]"},
-        {"role": "user", "content": f"Question: {msg[:300]}\nCandidate Answer: {winner[:1000]}"}
+def socratic_debate(msg: str, system: str, history: list, generate_fn, model: str) -> str:
+    """Proposer, Skeptic, and Moderator debate the answer for bulletproof logic."""
+    
+    # 1. Proposer generates initial answer
+    proposer_prompt = [{"role": "system", "content": system + "\nYou are the Proposer. Provide a detailed, step-by-step answer."}] + history[-6:] + [{"role": "user", "content": msg}]
+    proposal = generate_fn(proposer_prompt, max_tokens=1000, model=model)
+    
+    # 2. Skeptic attacks the proposal
+    skeptic_prompt = [
+        {"role": "system", "content": "You are a ruthless Skeptic. Find the exact logical flaw, missing edge case, or fallacy in the Proposer's answer. If it is flawless, reply EXACTLY: FLAWLESS."},
+        {"role": "user", "content": f"Question: {msg}\nProposer's Answer: {proposal}"}
     ]
-    try:
-        critique = generate_fn(prompt, max_tokens=200, model=model)
-        if "FLAW:" in critique.upper():
-            # Force a rewrite addressing the flaw
-            rewrite_prompt = [
-                {"role": "system", "content": "Fix the flaw in your reasoning and output the corrected, flawless answer."},
-                {"role": "user", "content": f"Original Answer: {winner[:800]}\n\nFlaw Identified: {critique}\n\nProvide the corrected answer:"}
-            ]
-            fixed = generate_fn(rewrite_prompt, max_tokens=1000, model=model)
-            return fixed
-    except: pass
-    return winner
+    critique = generate_fn(skeptic_prompt, max_tokens=300, model=model)
+    
+    if "FLAWLESS" in critique.upper():
+        return proposal
+        
+    # 3. Moderator synthesizes the final truth
+    moderator_prompt = [
+        {"role": "system", "content": system + "\nYou are the Moderator. Synthesize a final, bulletproof answer that addresses the Skeptic's critique. Ensure no logical fallacies remain."},
+        {"role": "user", "content": f"Question: {msg}\nProposer's Answer: {proposal}\nSkeptic's Critique: {critique}\n\nProvide the final, corrected answer:"}
+    ]
+    final_answer = generate_fn(moderator_prompt, max_tokens=1000, model=model)
+    return final_answer
 
 def deliberate(msg: str, system: str, history: list, generate_fn, model: str, complexity: str = "medium", skill: str = "general") -> str:
     t0 = time.time()
@@ -118,30 +87,25 @@ def deliberate(msg: str, system: str, history: list, generate_fn, model: str, co
     # Easy path: single generation
     if complexity == "easy":
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
-        resp = generate_fn(prompt, max_tokens=2500, model=model)
-        if skill == "calculator":
-            resp, _ = extract_and_run_math(resp)
-        return resp
+        return generate_fn(prompt, max_tokens=2500, model=model)
 
-    # Hard/Medium path: Tree of Thoughts + Devil's Advocate + Math Execution
-    candidates = generate_hypotheses(msg, system, history, generate_fn, model, n=3 if complexity == "hard" else 2)
-    if not candidates:
-        prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
-        return generate_fn(prompt, max_tokens=1200, model=model)
-
-    # Pick the longest/most detailed candidate as the initial winner
-    winner = max(candidates, key=len)
-    
-    # Run Devil's Advocate to break and rewrite logic
-    winner = devils_advocate(winner, msg, generate_fn, model)
-    
-    # If calculator, use the self-correcting math loop
+    # Calculator / Math path: Chain of Code (SymPy)
     if skill == "calculator":
-        math_result = self_correcting_math(msg, generate_fn, model)
-        winner = f"{math_result}\n\n{winner}"
-    else:
-        # Still run any embedded math in the general/researcher response
-        winner, _ = extract_and_run_math(winner)
+        sim_result = chain_of_code(msg, generate_fn, model)
+        # Format the final response
+        format_prompt = [
+            {"role": "system", "content": "Use the simulation result to answer the user's question directly and concisely."},
+            {"role": "user", "content": f"Question: {msg}\nSimulation Result: {sim_result}\n\nFinal Answer:"}
+        ]
+        return generate_fn(format_prompt, max_tokens=500, model=model)
 
-    print(f"[Deliberate] Frontier ToT + Devil's Advocate done, t={int((time.time()-t0)*1000)}ms")
-    return winner
+    # Hard / Researcher path: Socratic Debate
+    if complexity in ("hard", "medium") and skill in ("researcher", "general"):
+        final_answer = socratic_debate(msg, system, history, generate_fn, model)
+        print(f"[Deliberate] Socratic Debate completed, t={int((time.time()-t0)*1000)}ms")
+        return final_answer
+
+    # Fallback for medium/coder
+    prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
+    resp = generate_fn(prompt, max_tokens=2000, model=model)
+    return resp
