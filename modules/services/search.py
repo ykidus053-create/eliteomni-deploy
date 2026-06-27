@@ -355,8 +355,8 @@ def tool_search(query: str, _raw: bool = False) -> str:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         def _fetch_item(item):
             print(f'[fetch debug] fetching: {item.get("url","")[:80]}')
-            if isinstance(item, str):
-        item = {"url": item, "content": "", "title": item}
+        if isinstance(item, str):
+            item = {"url": item, "content": "", "title": item}
     url = item.get("url", "")
             if not url: return item
             # Skip aggregator/index sites — they just list other articles
@@ -527,8 +527,8 @@ def tool_search_multi(user_msg: str) -> str:
                 all_results.append({"title": "Tavily", "content": raw, "url": "tavily"})
             elif isinstance(raw, list):
                 for item in raw:
-                    if isinstance(item, str):
-        item = {"url": item, "content": "", "title": item}
+        if isinstance(item, str):
+            item = {"url": item, "content": "", "title": item}
     url = item.get("url", "") or "tavily"
                     if url not in seen_urls:
                         seen_urls.add(url)
@@ -546,8 +546,8 @@ def tool_search_multi(user_msg: str) -> str:
             print(f"[multi-search] low quality ({quality:.2f}), re-searching: {refined}")
             extra = tool_search(refined, _raw=True) or []
             for item in extra:
-                if isinstance(item, str):
-        item = {"url": item, "content": "", "title": item}
+        if isinstance(item, str):
+            item = {"url": item, "content": "", "title": item}
     url = item.get("url", "")
                 if url and url not in seen_urls:
                     seen_urls.add(url)
@@ -584,8 +584,8 @@ def tool_search_multi(user_msg: str) -> str:
     # ── Step 4: WebFetch top results that have no snippet (visual/JS pages) ───
     for item in ranked[:3]:
         if not item.get("content") and not item.get("snippet"):
-            if isinstance(item, str):
-        item = {"url": item, "content": "", "title": item}
+        if isinstance(item, str):
+            item = {"url": item, "content": "", "title": item}
     url = item.get("url", "")
             if url:
                 fetched = tool_web_fetch(url, max_chars=400)
