@@ -4986,6 +4986,8 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 # ── END TTFT PATCH ────────────────────────────────────────────────────────────
 
 
-@app.get("/newui", response_class=HTMLResponse)
-async def new_ui_route():
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root_ui():
     return HTMLResponse(open("ui.html").read())
