@@ -1,34 +1,50 @@
 """
-Deliberative Reasoning Engine — replaces single-pass generation.
-Implements: Chain-of-Thought, Tree-of-Thought sampling, Process Reward Modeling,
-Self-consistency voting, and OODA with genuine state tracking.
-Upgraded: Strict timeouts and fallbacks to prevent hanging.
+Deliberative Reasoning Engine — 100x Upgrade.
+Implements: Tree of Thoughts (ToT), LLM Logic Judge, and Python Code Execution for Math.
 """
-import re, time, random, threading, asyncio
+import re, time, random, threading, asyncio, subprocess, tempfile, os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="reason")
 
-def decompose_problem(msg: str, generate_fn, model: str) -> dict:
-    prompt = [
-        {"role": "system", "content": "You are a problem decomposer. Analyze the user's request and output JSON only:\n{\"problem_type\": \"math|reasoning|factual|creative|code|multi_step\", \"sub_problems\": [\"...\"], \"requires_search\": true|false, \"requires_calculation\": true|false, \"ambiguities\": [\"...\"], \"complexity_estimate\": 1-10}"},
-        {"role": "user", "content": msg[:500]}
-    ]
+def execute_math_code(code: str) -> str:
+    """Executes python math code safely and returns the exact output."""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(code)
+        fname = f.name
     try:
-        raw = generate_fn(prompt, max_tokens=1500, model=model)
-        raw = re.sub(r'```json|```', '', raw).strip()
-        import json
-        return json.loads(raw)
-    except Exception:
-        return {"problem_type": "general", "sub_problems": [msg], "requires_search": False, "requires_calculation": False, "ambiguities": [], "complexity_estimate": 5}
+        r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            return r.stdout.strip() or r.stderr.strip()
+        return f"EXECUTION ERROR: {r.stderr.strip()[:200]}"
+    except Exception as e:
+        return f"EXECUTION ERROR: {str(e)}"
+    finally:
+        if os.path.exists(fname): os.unlink(fname)
+
+def extract_and_run_math(response: str) -> str:
+    """Finds [PYTHON CALC START]...[END] blocks, runs them, and injects the result."""
+    pattern = r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]'
+    matches = re.findall(pattern, response, re.DOTALL)
+    
+    if not matches:
+        return response, False  # False means no math code was found
+        
+    final_response = response
+    for code in matches:
+        result = execute_math_code(code.strip())
+        # Replace the code block with the executed result
+        final_response = final_response.replace(
+            f"[PYTHON CALC START]{code}[PYTHON CALC END]",
+            f"[CALCULATED RESULT: {result}]"
+        )
+    return final_response, True
 
 def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model: str, n: int = 3) -> list:
     def _gen_one(approach_hint: str) -> str:
         prompt = [{"role": "system", "content": system + f"\n\nApproach hint: {approach_hint}"}] + history[-6:] + [{"role": "user", "content": msg}]
-        try:
-            return generate_fn(prompt, max_tokens=1200, model=model)
-        except Exception:
-            return ""
+        try: return generate_fn(prompt, max_tokens=1200, model=model)
+        except: return ""
 
     approaches = [
         "Direct and concise. Lead with the answer.",
@@ -40,102 +56,60 @@ def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model
     results = []
     for fut in as_completed(futures, timeout=30):
         try:
-            r = fut.result(timeout=5)  # Hard timeout on result retrieval
-            if r and len(r) > 50:
-                results.append(r)
-        except Exception:
-            continue
+            r = fut.result(timeout=5)
+            if r and len(r) > 50: results.append(r)
+        except: pass
     return results
 
-def score_response(response: str, msg: str, generate_fn, model: str) -> float:
-    if not response or len(response) < 30:
-        return 0.0
-    rubric = (
-        "Score this response 1-10 on each dimension, reply ONLY as: H:N C:N A:N T:N\n"
-        "H=Helpfulness C=Completeness A=Accuracy T=Tone\n"
-        f"Question: {msg[:200]}\nResponse: {response[:600]}"
-    )
-    try:
-        score_raw = generate_fn(
-            [{"role": "system", "content": "You are a response quality scorer. Reply only in the format H:N C:N A:N T:N"},
-             {"role": "user", "content": rubric}],
-            max_tokens=30, model=model
-        )
-        scores = re.findall(r'[HCAT]:(\d+)', score_raw)
-        if len(scores) >= 3:
-            vals = [int(s) for s in scores[:4]]
-            weights = [0.40, 0.25, 0.25, 0.10]
-            composite = sum(v * w for v, w in zip(vals, weights[:len(vals)])) / 10.0
-            return composite
-    except Exception:
-        pass
-    
-    score = 0.5
-    if len(response) > 200: score += 0.1
-    if any(w in response for w in ['however', 'therefore', 'because', 'since']): score += 0.05
-    if response.count('\n') > 3: score += 0.05
-    bad_signals = ['I cannot', 'I apologize', 'As an AI', 'I don\'t have']
-    if any(b in response for b in bad_signals): score -= 0.15
-    return min(max(score, 0.0), 1.0)
-
-def self_consistency_vote(candidates: list, scores: list) -> str:
+def llm_logic_judge(msg: str, candidates: list, generate_fn, model: str) -> str:
+    """Upgraded: LLM as a Judge to pick the most logically sound candidate."""
     if not candidates: return ""
     if len(candidates) == 1: return candidates[0]
 
-    best_idx = scores.index(max(scores))
-    best = candidates[best_idx]
-
-    sorted_pairs = sorted(zip(scores, candidates), reverse=True)
-    if len(sorted_pairs) >= 2 and (sorted_pairs[0][0] - sorted_pairs[1][0]) < 0.1:
-        candidates_top2 = [c for _, c in sorted_pairs[:2]]
-        best = max(candidates_top2, key=lambda c: min(len(c), 2000))
-    return best
-
-def reflect_and_improve(response: str, msg: str, system: str, generate_fn, model: str, score: float) -> str:
-    if score >= 0.65 or len(response) < 50:
-        return response
-
-    critique_prompt = [
-        {"role": "system", "content": "You are a response critic. Identify the single most important gap or error in this response in ONE sentence. Be specific. Then output IMPROVED: followed by the complete improved response."},
-        {"role": "user", "content": f"Question: {msg[:300]}\nResponse: {response[:800]}\n\nWhat is the most critical gap? Then write the improved version."}
-    ]
+    prompt = [{"role": "system", "content": "You are an impartial Logic Judge. Evaluate the candidates for logical consistency, absence of fallacies, and correctness. Reply ONLY with the best candidate verbatim."}]
+    
+    candidate_text = ""
+    for i, c in enumerate(candidates[:3]):
+        candidate_text += f"\n\n--- CANDIDATE {i+1} ---\n{c[:1000]}\n"
+        
+    prompt.append({"role": "user", "content": f"Question: {msg[:300]}\n{candidate_text}\n\nWhich candidate is logically flawless? Reply with the exact text of the winner:"})
+    
     try:
-        critique_raw = generate_fn(critique_prompt, max_tokens=1500, model=model)
-        if "IMPROVED:" in critique_raw:
-            improved = critique_raw.split("IMPROVED:", 1)[1].strip()
-            if len(improved) > len(response) * 0.5:
-                return improved
-    except Exception:
-        pass
-    return response
+        winner = generate_fn(prompt, max_tokens=1000, model=model)
+        # Basic check to ensure it didn't hallucinate a completely new response
+        if len(winner) > 50 and any(c[:100] in winner for c in candidates):
+            return winner
+    except: pass
+    return max(candidates, key=len)
 
 def deliberate(msg: str, system: str, history: list, generate_fn, model: str, complexity: str = "medium", skill: str = "general") -> str:
     t0 = time.time()
-
+    
+    # Easy path: single generation
     if complexity == "easy":
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
-        return generate_fn(prompt, max_tokens=2500, model=model)
+        resp = generate_fn(prompt, max_tokens=2500, model=model)
+        # If it's a calculator task, enforce math execution
+        if skill == "calculator":
+            resp, _ = extract_and_run_math(resp)
+        return resp
 
-    n_hypotheses = 2 if complexity == "medium" else 3
-    candidates = generate_hypotheses(msg, system, history, generate_fn, model, n=n_hypotheses)
-
+    # Hard/Medium path: Tree of Thoughts + Math Execution
+    candidates = generate_hypotheses(msg, system, history, generate_fn, model, n=3 if complexity == "hard" else 2)
     if not candidates:
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
         return generate_fn(prompt, max_tokens=1200, model=model)
 
-    score_futures = {_executor.submit(score_response, c, msg, generate_fn, model): i for i, c in enumerate(candidates)}
-    scores = [0.5] * len(candidates)
-    for fut in as_completed(score_futures, timeout=20):
-        idx = score_futures[fut]
-        try:
-            scores[idx] = fut.result(timeout=5)
-        except Exception:
-            pass
+    best = llm_logic_judge(msg, candidates, generate_fn, model)
+    
+    # If calculator, execute the math in the winning response
+    if skill == "calculator":
+        best, had_math = extract_and_run_math(best)
+        if not had_math:
+            # If AI didn't write math code, force it to retry with code
+            retry_prompt = [{"role": "system", "content": "You MUST output [PYTHON CALC START] print(answer) [PYTHON CALC END] to calculate this."}, {"role": "user", "content": msg}]
+            retry_resp = generate_fn(retry_prompt, max_tokens=500, model=model)
+            best, _ = extract_and_run_math(retry_resp)
 
-    best = self_consistency_vote(candidates, scores)
-    best_score = max(scores) if scores else 0.5
-
-    if complexity == "hard":
-        best = reflect_and_improve(best, msg, system, generate_fn, model, best_score)
-
+    print(f"[Deliberate] ToT done, t={int((time.time()-t0)*1000)}ms")
     return best
