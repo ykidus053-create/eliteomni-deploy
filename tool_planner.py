@@ -1,4 +1,3 @@
-
 import re
 
 TOOL_SIGNALS = {
@@ -31,16 +30,33 @@ def plan_tools(msg, skill, complexity):
 
 def tool_plan_to_system(msg, skill, complexity):
     plan = plan_tools(msg, skill, complexity)
-    if not plan:
-        return ""
+    if not plan: return ""
     required = [p["tool"] for p in plan if p["urgency"] == "required"]
     optional = [p["tool"] for p in plan if p["urgency"] == "optional"]
     parts = []
-    if required:
-        parts.append("REQUIRED TOOLS: " + ", ".join(required) + " -- you MUST call these before answering.")
-    if optional:
-        parts.append("SUGGESTED TOOLS: " + ", ".join(optional) + " -- call if it improves accuracy.")
+    if required: parts.append("REQUIRED TOOLS: " + ", ".join(required) + " -- you MUST call these before answering.")
+    if optional: parts.append("SUGGESTED TOOLS: " + ", ".join(optional) + " -- call if it improves accuracy.")
     return "[TOOL PLAN]\n" + "\n".join(parts) + "\n[/TOOL PLAN]" if parts else ""
 
 def requires_tool(msg, tool):
     return any(p["tool"] == tool for p in plan_tools(msg, "general", "medium"))
+
+# Upgraded: Dynamic Tool Synthesis
+def synthesize_tool(task_desc: str, generate_fn, model: str = "mistral-medium-latest") -> dict:
+    """Dynamically writes a new Python tool if the AI lacks the capability to solve a task."""
+    prompt = [
+        {"role": "system", "content": "You are a tool engineer. Write a standalone Python function to solve the specific task. Output ONLY valid python code inside a ```python block. The function must return a string."},
+        {"role": "user", "content": f"Task: {task_desc}"}
+    ]
+    try:
+        raw = generate_fn(prompt, max_tokens=800, model=model)
+        match = re.search(r'```python\n(.*?)```', raw, re.DOTALL)
+        if match:
+            code = match.group(1).strip()
+            # Basic sandbox check
+            blocked = ["os.system", "subprocess", "shutil.rmtree", "__import__", "open("]
+            if not any(b in code for b in blocked):
+                return {"status": "synthesized", "code": code, "name": task_desc[:30].replace(" ", "_")}
+    except Exception:
+        pass
+    return {"status": "failed"}

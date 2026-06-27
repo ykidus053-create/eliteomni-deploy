@@ -42,8 +42,7 @@ def clean_history(history: list) -> list:
             if not content or len(content) < 2: continue
             if role not in ("user", "assistant"): continue
             if clean and clean[-1]["role"] == role:
-                if len(content) > len(clean[-1]["content"]):
-                    clean[-1]["content"] = content[:800]
+                if len(content) > len(clean[-1]["content"]): clean[-1]["content"] = content[:800]
                 continue
             clean.append({"role": role, "content": content[:800]})
         return clean[-8:]
@@ -55,8 +54,7 @@ class ToolResult:
     def __init__(self, ok: bool, value: str, error: str, source: str):
         self.ok = ok; self.value = value or ""; self.error = error or ""; self.source = source
     def to_context(self) -> Optional[str]:
-        if self.ok and self.value:
-            return f"[{self.source.upper()} RESULT]\n{self.value}\n[/{self.source.upper()}]"
+        if self.ok and self.value: return f"[{self.source.upper()} RESULT]\n{self.value}\n[/{self.source.upper()}]"
         return None
 
 def safe_tool_call(fn, *args, source: str = "tool", timeout: int = 10, **kwargs) -> ToolResult:
@@ -77,12 +75,14 @@ def safe_tool_call(fn, *args, source: str = "tool", timeout: int = 10, **kwargs)
 
 def call_llm(msgs: list, skill: str = "general", complexity: str = "medium",
              max_tokens: int = 1000, stream: bool = False):
+    """Upgraded: Graceful degradation. Falls back to mistral-small if primary model circuit trips."""
     from modules.core.http_client import mistral_stream
     _, model = route_model_v3(skill, complexity)
     cleaned    = clean_history([m for m in msgs if m.get("role") != "system"])
     system     = next((m for m in msgs if m.get("role") == "system"), None)
     final_msgs = ([system] if system else []) + cleaned
     if not final_msgs: return ("" if not stream else iter([]))
+    
     try:
         if stream: return mistral_stream(final_msgs, max_tokens=max_tokens, model=model)
         result = "".join(mistral_stream(final_msgs, max_tokens=max_tokens, model=model))
@@ -90,8 +90,17 @@ def call_llm(msgs: list, skill: str = "general", complexity: str = "medium",
         return result
     except Exception as e:
         CircuitState.record_failure(model)
-        log.error("[call_llm] model=%s failed: %s", model, e)
-        raise
+        log.error("[call_llm] model=%s failed: %s. Attempting fallback to mistral-small.", model, e)
+        try:
+            # Upgraded: Graceful fallback to small model to prevent UI crash
+            fallback_model = "mistral-small-latest"
+            if stream: return mistral_stream(final_msgs, max_tokens=max_tokens, model=fallback_model)
+            result = "".join(mistral_stream(final_msgs, max_tokens=max_tokens, model=fallback_model))
+            CircuitState.record_success(fallback_model)
+            return result
+        except Exception as e2:
+            log.error("[call_llm] Fallback model also failed: %s", e2)
+            raise
 
 def check_tool_available(tool_name: str) -> bool:
     try:
