@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import os
 import ast
+import resource
 
 PROTOTYPE_PHRASES = [
     "for simplicity", "for educational purposes", "basic version", "simplified",
@@ -71,7 +72,6 @@ def check_enterprise_compliance(code: str) -> list:
     return violations
 
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
-    """Upgraded: LLM audits the real-world logic before executing tests."""
     prompt = [
         {"role": "system", "content": "You are a ruthless Staff Engineer reviewing a PR. Does this code have real-world logic flaws? (e.g., missing timeouts on network calls, memory leaks on large files, race conditions, unhandled nulls). Reply ONLY with a JSON list of strings. If perfect, reply []."},
         {"role": "user", "content": f"Implementation:\n{impl_code[:1500]}\n\nTests:\n{test_code[:800]}"}
@@ -98,6 +98,13 @@ def extract_code_blocks(text: str) -> dict:
     if not test_code and len(matches) == 1: impl_code = matches[0].strip()
     return {"implementation": impl_code, "tests": test_code}
 
+def _set_limits():
+    """Upgraded: Set CPU and Memory limits for the sandbox to catch infinite loops and memory leaks."""
+    # 5 seconds CPU time limit
+    resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+    # 150MB Memory limit
+    resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
+
 def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
     if not test_code: return run_code(impl_code)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -105,23 +112,27 @@ def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
         with open(impl_path, "w") as f: f.write(impl_code)
         with open(test_path, "w") as f: f.write(test_code)
         try:
-            r = subprocess.run(["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error"], capture_output=True, text=True, timeout=30, cwd=tmpdir)
+            # Upgraded: Run pytest with strict warnings, fail on no tests, and apply resource limits
+            r = subprocess.run(
+                ["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error", "--no-header"],
+                capture_output=True, text=True, timeout=15, cwd=tmpdir,
+                preexec_fn=_set_limits
+            )
             return r.returncode == 0, r.stdout + r.stderr
-        except subprocess.TimeoutExpired: return False, "Pytest execution timed out after 30 seconds."
+        except subprocess.TimeoutExpired: return False, "Pytest execution timed out (15s) or hit CPU limit."
         except Exception as e: return False, str(e)
 
 def run_code(code: str) -> tuple[bool, str]:
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
         f.write(code); fname = f.name
     try:
-        r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=10, preexec_fn=_set_limits)
         return r.returncode == 0, r.stdout + r.stderr
     except Exception as e: return False, str(e)
     finally:
         if os.path.exists(fname): os.unlink(fname)
 
 def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: Real-World Logic Audit + Strict Pytest."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -140,11 +151,11 @@ def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: 
         if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or prototype phrases.")
         if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
         if logic_flaws: failures.append("REAL-WORLD LOGIC FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
-        if not ok: failures.append(f"Test/Execution Failures (Strict Mode):\n{output[:800]}")
+        if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
         if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - REAL-WORLD ENTERPRISE AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
+        reflection = f"[REFLEXION ROUND {round_num} - REAL-WORLD BULLETPROOF AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         

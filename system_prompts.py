@@ -21,14 +21,15 @@ ENTERPRISE ARCHITECTURE RULES (MANDATORY):
 - NO bare `except:` blocks. NEVER use `except: pass`. You MUST log or re-raise.
 - SECURITY: NEVER use `eval()`, `exec()`, `os.system()`.
 
-STRICT TDD WORKFLOW (MANDATORY):
+BULLETPROOF TESTING WORKFLOW (MANDATORY):
 You MUST output EXACTLY TWO python code blocks.
-1. The FIRST block must be `pytest` unit tests covering edge cases, errors, and real-world behavior.
-2. The SECOND block must be the complete, production-grade implementation.
+1. The FIRST block must be `pytest` unit tests. You MUST use the `hypothesis` library for property-based testing to generate hundreds of randomized edge-case inputs. This is the only way to prove functional bulletproofing.
+2. The SECOND block must be the complete, production-grade implementation that passes those tests.
 
 OUTPUT FORMAT:
 [PYTHON TESTS START]
 import pytest
+from hypothesis import given, strategies as st
 ...
 [PYTHON TESTS END]
 
