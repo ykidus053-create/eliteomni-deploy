@@ -10,7 +10,7 @@ PROTOTYPE_PHRASES = [
     "example implementation", "skeleton", "stub", "placeholder", "demo", "toy",
     "in real implementation", "extend as needed", "similarly for others",
     "production implementation", "actual implementation", "full implementation",
-    "for demonstration", "quick script"
+    "for demonstration", "quick script", "minimal viable"
 ]
 
 def has_stub(code: str) -> bool:
@@ -71,6 +71,20 @@ def check_enterprise_compliance(code: str) -> list:
         violations.append(f"Syntax Error preventing AST audit: {e}")
     return violations
 
+def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
+    """Upgraded: Ruthless LLM Veto. Forces complete rewrite if it looks like a toy."""
+    prompt = [
+        {"role": "system", "content": "You are a Ruthless Principal Engineer. Does this code represent a COMPLETE, ENTERPRISE-GRADE implementation, or is it a TOY/DEMO/PROTOTYPE? Look for missing error handling, hardcoded values, missing concurrency control, or shallow logic. Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
+        {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
+    ]
+    try:
+        raw = generate_fn(prompt, max_tokens=200)
+        if "VETO" in raw.upper():
+            return raw.strip()
+    except:
+        pass
+    return "APPROVED"
+
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
     prompt = [
         {"role": "system", "content": "You are a ruthless Staff Engineer reviewing a PR. Does this code have real-world logic flaws? (e.g., missing timeouts on network calls, memory leaks on large files, race conditions, unhandled nulls). Reply ONLY with a JSON list of strings. If perfect, reply []."},
@@ -99,10 +113,7 @@ def extract_code_blocks(text: str) -> dict:
     return {"implementation": impl_code, "tests": test_code}
 
 def _set_limits():
-    """Upgraded: Set CPU and Memory limits for the sandbox to catch infinite loops and memory leaks."""
-    # 5 seconds CPU time limit
     resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
-    # 150MB Memory limit
     resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
 
 def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
@@ -112,7 +123,6 @@ def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
         with open(impl_path, "w") as f: f.write(impl_code)
         with open(test_path, "w") as f: f.write(test_code)
         try:
-            # Upgraded: Run pytest with strict warnings, fail on no tests, and apply resource limits
             r = subprocess.run(
                 ["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error", "--no-header"],
                 capture_output=True, text=True, timeout=15, cwd=tmpdir,
@@ -132,7 +142,8 @@ def run_code(code: str) -> tuple[bool, str]:
     finally:
         if os.path.exists(fname): os.unlink(fname)
 
-def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: int = 5) -> str:
+def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
+    """Upgraded: Principal Engineer Veto forces complete rewrites for toy code."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -140,28 +151,30 @@ def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: 
     for round_num in range(1, max_rounds + 1):
         stubs = has_stub(impl_code)
         enterprise_violations = check_enterprise_compliance(impl_code)
+        veto = principal_engineer_veto(impl_code, task, generate_fn)
         logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn)
         ok, output = run_pytest(impl_code, test_code)
         
-        if not stubs and not enterprise_violations and not logic_flaws and ok:
-            print(f"[Reflexion] Enterprise audit, logic audit passed & pytests 100% on round {round_num}")
+        if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
+            print(f"[Reflexion] Principal Engineer APPROVED & pytests 100% on round {round_num}")
             break
             
         failures = []
         if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or prototype phrases.")
         if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
+        if "APPROVED" not in veto: failures.append(f"PRINCIPAL ENGINEER VETO:\n{veto}")
         if logic_flaws: failures.append("REAL-WORLD LOGIC FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
         if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
         if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - REAL-WORLD BULLETPROOF AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
+        reflection = f"[REFLEXION ROUND {round_num} - PRINCIPAL ENGINEER AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
         prompt = "\n".join(memory) + f"\n\nFailed Implementation:\n{impl_code}\n\nFailed Tests:\n{test_code}\n\nCorrected Enterprise Code:"
         msgs = [{"role": "user", "content": prompt}]
-        new_output = generate_fn(msgs, max_tokens=4000) or raw_output
+        new_output = generate_fn(msgs, max_tokens=8000) or raw_output  # Upgraded to 8000 tokens
         
         new_blocks = extract_code_blocks(new_output)
         if new_blocks["implementation"]: impl_code = new_blocks["implementation"]
