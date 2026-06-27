@@ -24,6 +24,14 @@ def has_stub(code: str) -> bool:
 
 def extract_code_blocks(text: str) -> dict:
     """Extracts implementation and test blocks from LLM output."""
+    # Try extracting using the strict XML-like tags first
+    tests_match = re.search(r'\[PYTHON TESTS START\](.*?)\[PYTHON TESTS END\]', text, re.DOTALL)
+    impl_match = re.search(r'\[PYTHON IMPL START\](.*?)\[PYTHON IMPL END\]', text, re.DOTALL)
+    
+    if tests_match and impl_match:
+        return {"implementation": impl_match.group(1).strip(), "tests": tests_match.group(1).strip()}
+
+    # Fallback to markdown extraction
     matches = re.findall(r'```(?:python|py)?\n(.*?)```', text, re.DOTALL)
     impl_code = ""
     test_code = ""
@@ -65,6 +73,7 @@ def run_code(code: str) -> tuple[bool, str]:
         if os.path.exists(fname): os.unlink(fname)
 
 def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: int = 5) -> str:
+    """Upgraded: Ruthless TDD Reflexion Loop. Runs pytest, feeds failures back to LLM."""
     blocks = extract_code_blocks(raw_output)
     impl_code = blocks["implementation"]
     test_code = blocks["tests"]

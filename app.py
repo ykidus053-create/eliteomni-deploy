@@ -933,7 +933,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         except Exception as _se:
             pass
     # ── POWER UPGRADE: Pre-Output Execution Gate ─────────────────────
-    if skill == "coder" and complexity == "hard":
+    if skill == "coder" and complexity in ("medium", "hard"):
         try:
             from reflexion_loop import reflexion_verify
             from modules.core.http_client import mistral_generate
