@@ -2,6 +2,7 @@ import re
 import subprocess
 import tempfile
 import os
+import ast
 
 PROTOTYPE_PHRASES = [
     "for simplicity", "for educational purposes", "basic version", "simplified",
@@ -11,6 +12,40 @@ PROTOTYPE_PHRASES = [
 ]
 
 def has_stub(code: str) -> bool:
+    """Upgraded: Uses AST to detect empty function bodies (pass, ..., return None)."""
+    # 1. AST check for empty function bodies
+    try:
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                is_stub = True
+                for stmt in node.body:
+                    # Ignore docstrings
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                        continue
+                    # Ignore 'pass'
+                    if isinstance(stmt, ast.Pass):
+                        continue
+                    # Ignore '...' (Ellipsis)
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is ...:
+                        continue
+                    # Ignore 'raise NotImplementedError'
+                    if isinstance(stmt, ast.Raise) and isinstance(stmt.exc, ast.Call) and isinstance(stmt.exc.func, ast.Name) and stmt.exc.func.id == 'NotImplementedError':
+                        continue
+                    # Ignore 'return None' or 'return'
+                    if isinstance(stmt, ast.Return) and (stmt.value is None or (isinstance(stmt.value, ast.Constant) and stmt.value.value is None)):
+                        continue
+                    
+                    # If it has any other statement, it's a real implementation
+                    is_stub = False
+                    break
+                if is_stub:
+                    print(f"[Reflexion] AST detected empty function body: {node.name}")
+                    return True
+    except SyntaxError:
+        pass # Let the execution gate catch syntax errors
+
+    # 2. Regex check for prototype phrases
     lines = code.split('\n')
     for i, line in enumerate(lines):
         if re.search(r'#.*(implement|support|handle|cache|replicate|persist|commit|sync)', line, re.I):
@@ -24,14 +59,12 @@ def has_stub(code: str) -> bool:
 
 def extract_code_blocks(text: str) -> dict:
     """Extracts implementation and test blocks from LLM output."""
-    # Try extracting using the strict XML-like tags first
     tests_match = re.search(r'\[PYTHON TESTS START\](.*?)\[PYTHON TESTS END\]', text, re.DOTALL)
     impl_match = re.search(r'\[PYTHON IMPL START\](.*?)\[PYTHON IMPL END\]', text, re.DOTALL)
     
     if tests_match and impl_match:
         return {"implementation": impl_match.group(1).strip(), "tests": tests_match.group(1).strip()}
 
-    # Fallback to markdown extraction
     matches = re.findall(r'```(?:python|py)?\n(.*?)```', text, re.DOTALL)
     impl_code = ""
     test_code = ""
@@ -73,7 +106,7 @@ def run_code(code: str) -> tuple[bool, str]:
         if os.path.exists(fname): os.unlink(fname)
 
 def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: Ruthless TDD Reflexion Loop. Runs pytest, feeds failures back to LLM."""
+    """Upgraded: AST-level stub detection forces the AI to write real implementations."""
     blocks = extract_code_blocks(raw_output)
     impl_code = blocks["implementation"]
     test_code = blocks["tests"]
@@ -84,14 +117,16 @@ def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: 
         ok, output = run_pytest(impl_code, test_code)
         
         if not stubs and ok:
-            print(f"[Reflexion] Pytests passed (100%) on round {round_num}")
+            print(f"[Reflexion] Pytests passed (100%) and AST verified no stubs on round {round_num}")
             break
             
         failures = []
         if stubs:
-            failures.append("CRITICAL FAILURE: Code contains unimplemented stubs (pass/...) OR forbidden prototype phrases.")
+            failures.append("CRITICAL FAILURE: AST analysis detected empty function bodies (pass, ..., return None) OR forbidden prototype phrases.")
         if not ok:
             failures.append(f"Test/Execution Failures:\n{output[:800]}")
+        if not test_code:
+            failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
             
         if not failures: break
 
