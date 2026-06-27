@@ -1300,6 +1300,8 @@ def pipeline_stream(msg: str, history: list):
         _round_chunks = []
         _pending_tool_calls = []
         from modules.core.http_client import mistral_stream_traced
+        _think_buf = ""
+        _in_think = False
         for tok in mistral_stream_traced(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS, skill=skill, label=skill+"/"+complexity):
             _ttft.on_token(tok)
             if isinstance(tok, str) and tok.startswith(_marker):
@@ -1309,6 +1311,34 @@ def pipeline_stream(msg: str, history: list):
                 except Exception as _tce:
                     print(f"[tool_call parse error] {_tce}")
                 continue
+            if isinstance(tok, str):
+                if _in_think:
+                    _think_buf += tok
+                    if "</think>" in _think_buf:
+                        _in_think = False
+                        _after = _think_buf.split("</think>", 1)[1]
+                        _think_buf = ""
+                        if _after:
+                            yield _after
+                            _round_chunks.append(_after)
+                            chunks.append(_after)
+                    continue
+                elif "<think>" in tok:
+                    _before, _rest = tok.split("<think>", 1)
+                    if _before:
+                        yield _before
+                        _round_chunks.append(_before)
+                        chunks.append(_before)
+                    if "</think>" in _rest:
+                        _after = _rest.split("</think>", 1)[1]
+                        if _after:
+                            yield _after
+                            _round_chunks.append(_after)
+                            chunks.append(_after)
+                    else:
+                        _in_think = True
+                        _think_buf = _rest
+                    continue
             yield tok
             _round_chunks.append(tok)
             chunks.append(tok)
