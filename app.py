@@ -1434,7 +1434,7 @@ BENCHMARK_SUITE = [
 
 HTML = r"""<!DOCTYPE html>
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/oldui", response_class=HTMLResponse)
 async def root_ui():
     return HTMLResponse(open("ui.html").read())
 
@@ -3751,4 +3751,9 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def root_ui():
+    return HTMLResponse(open("ui.html").read())
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root_new_ui():
     return HTMLResponse(open("ui.html").read())
