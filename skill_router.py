@@ -34,12 +34,24 @@ SKILL_KEYWORDS = [
     ("cite","researcher",3.0),("sources","researcher",2.0)
 ]
 
+# Upgraded: AST-level syntax and file extensions for bulletproof code detection
+CODE_SYNTAX_PATTERNS = [
+    r'\bdef\s+\w+\s*\(', r'\bclass\s+\w+\s*[\(:]', r'\bimport\s+\w+',
+    r'\bfrom\s+\w+\s+import\b', r'\bfunction\s+\w+\s*\(', r'\bconst\s+\w+\s*=',
+    r'\blet\s+\w+\s*=', r'\bvar\s+\w+\s*=', r'=>\s*\{?', r'print\(['\"]',
+    r'console\.log\(', r'\bif\s+__name__\s*==\s*[\'\"]__main__[\'\"]\b'
+]
+CODE_EXTENSIONS = [
+    r'\.py\b', r'\.js\b', r'\.ts\b', r'\.jsx\b', r'\.tsx\b', r'\.cpp\b', 
+    r'\.java\b', r'\.go\b', r'\.rs\b', r'\.rb\b', r'\.php\b', r'\.cs\b', r'\.html\b', r'\.css\b'
+]
+
 HARD_WORDS = ["research","comprehensive","analyze","implement","algorithm",
               "step by step","essay","explain in detail","design","architecture","optimize"]
-EASY_WORDS = ["hi ","hey ","hello","thanks","yes","no","capital of","2+2","what is your name"]
+EASY_WORDS = ["hi ","hey ","hello","thanks","yes","no","capital of","2+2","what time","who is"]
 
 def route(msg: str):
-    """Upgraded: Removed hardcoded 'coder' bypass. Now uses math detection and density scoring."""
+    """Upgraded: Uses AST syntax and file extension matching to catch hidden coding tasks."""
     m = msg.lower()
     for danger in SAFETY_TRIGGERS:
         if danger in m:
@@ -49,15 +61,27 @@ def route(msg: str):
     for keyword, skill, weight in SKILL_KEYWORDS:
         if keyword in m:
             scores[skill] += weight
-            
-    # Upgraded: Math detection (if string has numbers and operators, boost calculator)
+
+    # Upgraded: Force coder skill if code syntax or file extensions are detected
+    is_code = False
+    for pattern in CODE_SYNTAX_PATTERNS + CODE_EXTENSIONS:
+        if re.search(pattern, m):
+            scores["coder"] += 4.0  # Massive weight boost
+            is_code = True
+            break
+
+    # Upgraded: Math detection
     if re.search(r'\d+\s*[\+\-\*\/]\s*\d+', m) or re.search(r'\bmath\b', m):
         scores["calculator"] += 2.0
 
     best_skill = max(scores, key=scores.get) if scores else "general"
     best_score = scores.get(best_skill, 0.0)
     
-    if best_score < 1.5:
+    # If strong code signals are found, force coder even if score is low
+    if is_code:
+        best_skill = "coder"
+        
+    if best_score < 1.5 and not is_code:
         best_skill = "general"
         
     confidence = min(0.98, best_score / (best_score + 3.0)) if best_score > 0 else 0.5
