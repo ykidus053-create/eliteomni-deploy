@@ -44,6 +44,7 @@ def has_stub(code: str) -> bool:
 
 def check_enterprise_compliance(code: str) -> list:
     violations = []
+    is_cutoff = False
     try:
         tree = ast.parse(code)
         has_logging = False
@@ -89,8 +90,11 @@ def check_enterprise_compliance(code: str) -> list:
         if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'.")
         if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing.")
     except SyntaxError as e:
-        violations.append(f"Syntax Error preventing AST audit: {e}")
-    return violations
+        if "unexpected EOF" in str(e) or "incomplete input" in str(e):
+            is_cutoff = True
+        else:
+            violations.append(f"Syntax Error preventing AST audit: {e}")
+    return violations, is_cutoff
 
 def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
     prompt = [
@@ -185,15 +189,16 @@ def apply_surgical_patch(original_code: str, patch_output: str) -> str:
     return '\n'.join(lines)
 
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
+    """Upgraded: Automatic Continuation. Detects token limit cutoffs and resumes generation."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
     
     for round_num in range(1, max_rounds + 1):
         stubs = has_stub(impl_code)
-        enterprise_violations = check_enterprise_compliance(impl_code)
-        veto = principal_engineer_veto(impl_code, task, generate_fn)
-        logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn)
+        enterprise_violations, is_cutoff = check_enterprise_compliance(impl_code)
+        veto = principal_engineer_veto(impl_code, task, generate_fn) if not is_cutoff else "APPROVED"
+        logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn) if not is_cutoff else []
         ok, output = run_pytest(impl_code, test_code)
         
         if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
@@ -201,32 +206,45 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             break
             
         failures = []
-        if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies, prototype phrases, or architectural scaffolding.")
-        if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
-        if "APPROVED" not in veto: failures.append(f"STAFF ENGINEER VETO:\n{veto}")
-        if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
-        if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
-        if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
+        if is_cutoff:
+            failures.append("CRITICAL FAILURE: Code was cut off due to token limit. You MUST continue the code from the exact last line.")
+        else:
+            if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies, prototype phrases, or architectural scaffolding.")
+            if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
+            if "APPROVED" not in veto: failures.append(f"STAFF ENGINEER VETO:\n{veto}")
+            if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
+            if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
+            if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: STOP WRITING PROTOTYPES. You MUST rewrite the code from scratch if it was vetoed or used scaffolding. Write the ACTUAL ALGORITHM. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
+        reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}"
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
-        prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide a SURGICAL PATCH in this exact format:\n[PATCH START]\n<<<< ORIGINAL\n[exact lines from current implementation that are broken]\n====\n[corrected lines]\n>>>> PATCHED\n[PATCH END]"
-        msgs = [{"role": "user", "content": prompt}]
-        patch_output = generate_fn(msgs, max_tokens=2000)
-        
-        new_impl = apply_surgical_patch(impl_code, patch_output)
-        if new_impl == impl_code:
-            print("[Reflexion] Patch application failed, falling back to full rewrite.")
-            rewrite_prompt = "\n".join(memory) + f"\n\nFailed Implementation:\n{impl_code}\n\nOutput the complete, corrected implementation inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
-            new_output = generate_fn([{"role": "user", "content": rewrite_prompt}], max_tokens=8000)
-            new_blocks = extract_code_blocks(new_output)
-            if new_blocks["implementation"]: impl_code = new_blocks["implementation"]
-            if new_blocks["tests"]: test_code = new_blocks["tests"]
+        if is_cutoff:
+            # Upgraded: Automatic Continuation Prompt
+            prompt = "\n".join(memory) + f"\n\nThe previous code was cut off. Here is the incomplete code:\n\n{impl_code}\n\nContinue the code EXACTLY from the last line. Do not repeat any previous lines. Output ONLY the remaining code inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+            msgs = [{"role": "user", "content": prompt}]
+            cont_output = generate_fn(msgs, max_tokens=8000)
+            new_blocks = extract_code_blocks(cont_output)
+            if new_blocks["implementation"]:
+                # Stitch the code together
+                impl_code = impl_code + "\n" + new_blocks["implementation"]
         else:
-            impl_code = new_impl
+            prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide a SURGICAL PATCH in this exact format:\n[PATCH START]\n<<<< ORIGINAL\n[exact lines from current implementation that are broken]\n====\n[corrected lines]\n>>>> PATCHED\n[PATCH END]"
+            msgs = [{"role": "user", "content": prompt}]
+            patch_output = generate_fn(msgs, max_tokens=2000)
+            
+            new_impl = apply_surgical_patch(impl_code, patch_output)
+            if new_impl == impl_code:
+                print("[Reflexion] Patch application failed, falling back to full rewrite.")
+                rewrite_prompt = "\n".join(memory) + f"\n\nFailed Implementation:\n{impl_code}\n\nOutput the complete, corrected implementation inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+                new_output = generate_fn([{"role": "user", "content": rewrite_prompt}], max_tokens=8000)
+                new_blocks = extract_code_blocks(new_output)
+                if new_blocks["implementation"]: impl_code = new_blocks["implementation"]
+                if new_blocks["tests"]: test_code = new_blocks["tests"]
+            else:
+                impl_code = new_impl
 
     return impl_code
 
