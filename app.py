@@ -4,10 +4,9 @@ import sys
 try:
     import uvloop
     uvloop.install()
-    print("[TTFT] uvloop event loop installed -- async 2-4x faster")
+    print("[TTFT] uvloop event loop installed — async 2-4x faster")
 except ImportError:
     pass
-from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
 from modules.services.pipeline import _budget, stream_tokens, build_system_prompt, build_chatml, generate_sync
 from modules.claude_code import enrich_system_prompt, agentic_self_correct, detect_style_rule, update_claude_md
 from modules.core.http_client import groq_stream, groq_generate, vision_describe
@@ -257,12 +256,12 @@ _agent_team_exec = ThreadPoolExecutor(max_workers=6, thread_name_prefix="agent_t
 
 def _needs_fresh_search(msg: str) -> bool:
     """
-    Detect when model knowledge is likely stale -- auto-trigger search.
+    Detect when model knowledge is likely stale — auto-trigger search.
     Covers post-2023 tech, recent research, current events.
     """
     import re
     msg_lower = msg.lower()
-    # Never search for pure coding tasks -- model knows syntax/stdlib/algorithms
+    # Never search for pure coding tasks — model knows syntax/stdlib/algorithms
     _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
                      "debug", "refactor", "optimize", "algorithm", "implement",
                      "write a function", "write a class", "fix this", "bug in"]
@@ -316,7 +315,7 @@ def _needs_fresh_search(msg: str) -> bool:
 _system_prompt_cache = {}
 
 def _get_cached_system(skill, memory, episodic, rlhf_note, ctx_sum, complexity):
-    """Cache system prompt -- avoids rebuilding every request."""
+    """Cache system prompt — avoids rebuilding every request."""
     key = f"{skill}:{complexity}:{len(memory)}:{len(episodic)}"
     if key not in _system_prompt_cache:
         from modules.services.pipeline import build_system_prompt
@@ -361,7 +360,7 @@ def _warn_prompt_size(system: str):
     chars = len(system)
     approx_tokens = chars // 4
     if approx_tokens > 4000:
-        print(f"[TTFT WARNING] System prompt ~{approx_tokens} tokens -- consider trimming")
+        print(f"[TTFT WARNING] System prompt ~{approx_tokens} tokens — consider trimming")
     return approx_tokens
 
 
@@ -399,7 +398,7 @@ def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, s
 def pipeline_sync(msg: str, history: list) -> dict:
     from modules.core.http_client import mistral_stream
     """
-    v17 OODA Agentic Loop -- 62-component engine.
+    v17 OODA Agentic Loop — 62-component engine.
 
     OBSERVE  : gather memory, FIFO-compressed history, search context
     ORIENT   : adaptive complexity routing, effort parameter, system prompt
@@ -438,7 +437,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if skill == "calculator": complexity = max(complexity, "medium") if complexity != "hard" else complexity
     if skill == "coder" and complexity == "easy": complexity = "medium"  # coder is never easy
 
-    # Cache hit -- exact match first (0ms), then fuzzy match for easy queries
+    # Cache hit — exact match first (0ms), then fuzzy match for easy queries
     cached = cache_get(msg, skill)
     if cached and complexity == "easy":
         return {"response": cached, "skill": skill, "mode": "cached",
@@ -468,7 +467,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
     recent, ctx_sum = compress_history(_strip_thinking_from_history(history))
-    # Feature 15: hierarchical memory -- query each store separately then merge
+    # Feature 15: hierarchical memory — query each store separately then merge
     _mem_working  = mem_get(msg, k=3)
     _mem_episodic = mem_get_episodic(msg)
     sem_memory    = semantic_mem_get(msg, k=4)
@@ -544,7 +543,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
                 print(f"[Prefetch] injected {len(_prefetch_ctx)} results")
         except Exception as _pfe: print(f"[Prefetch] {_pfe}")
 
-    # FORCE TOOL PRE-EXECUTION -- run obvious tools before model sees message
+    # FORCE TOOL PRE-EXECUTION — run obvious tools before model sees message
     forced_results = []
     msg_lower = msg.lower()
     # Skip forced tool execution for vision-only queries
@@ -595,7 +594,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     rag_ctx = "\n[KNOWLEDGE BASE]\n" + "\n".join(f"- {r["text"][:200]}" for r in rag_hits) + "\n[END KNOWLEDGE BASE]" if rag_hits else ""
     _pgd_inject = None  # stubbed: pgd not loaded
     _pgd_using_new = bool(_pgd_inject) and _pgd_ab_active
-    _wm_ctx = {}  # world_model stubbed -- not implemented
+    _wm_ctx = {}  # world_model stubbed — not implemented
     _fs_examples = ""  # fewshot_get stubbed
     _fs_ctx = ""
     if _fs_examples:
@@ -642,11 +641,11 @@ def pipeline_sync(msg: str, history: list) -> dict:
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
-        # Real search results -- inject with strong grounding instruction
-        system += f"\n\n[WEB SEARCH RESULTS -- Today is {__import__('datetime').date.today()}. CRITICAL: You MUST answer using ONLY these search results. Do NOT use training data for any factual claims. If the results don't cover something, say you don't have that information rather than guessing.]\n{search_ctx[:8000]}\n[/WEB]"
+        # Real search results — inject with strong grounding instruction
+        system += f"\n\n[WEB SEARCH RESULTS — Today is {__import__('datetime').date.today()}. CRITICAL: You MUST answer using ONLY these search results. Do NOT use training data for any factual claims. If the results don't cover something, say you don't have that information rather than guessing.]\n{search_ctx[:8000]}\n[/WEB]"
     elif not search_ctx or "No results found" in search_ctx:
-        # Search failed or no results -- explicitly tell model to use knowledge
-        system += f"\n\n[SEARCH UNAVAILABLE -- Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
+        # Search failed or no results — explicitly tell model to use knowledge
+        system += f"\n\n[SEARCH UNAVAILABLE — Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
 
     # Inject MCP tool list if any tools discovered
     mcp_prompt = mcp_tool_list_prompt()
@@ -678,7 +677,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         plan = plan_fut.result(timeout=45) or ""
         team_result = team_fut.result(timeout=90)
         if plan: scratchpad_save(f"plan_{int(time.time())}", plan[:200])
-        # Plan used internally only -- never shown to user. Output must be
+        # Plan used internally only — never shown to user. Output must be
         # production-grade implementation only, no design doc preamble.
         if team_result:
             response = team_result
@@ -709,12 +708,12 @@ def pipeline_sync(msg: str, history: list) -> dict:
     system = inject_template(system, msg)
     prompt      = build_chatml(system, hist_msgs, _final_msg)
     seen_sents: set = set()
-    # KV cache hint: system prompt is stable -- always first message, never mutated
+    # KV cache hint: system prompt is stable — always first message, never mutated
 
-    # FAST PATH -- skip agentic loop for easy/general queries
+    # FAST PATH — skip agentic loop for easy/general queries
     if complexity == "easy" and skill not in ("coder", "calculator", "researcher"):
         from modules.core.http_client import mistral_stream
-        # 1. Trim history -- only last 2 turns for easy queries
+        # 1. Trim history — only last 2 turns for easy queries
         #    KV cache: keep system msg identical across requests for prefix cache hits
         fast_msgs = [m for m in prompt if m.get("role") == "system"][:1]
         fast_msgs += [m for m in prompt if m.get("role") != "system"][-4:]
@@ -780,7 +779,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     # ── FINALIZE (GPT-5.5 style: verify + trim + continue if incomplete) ─────
     final = response or ""
 
-    # 1. SELF-VERIFICATION -- check own work before outputting
+    # 1. SELF-VERIFICATION — check own work before outputting
     if final and complexity == "hard":
         try:
             vcheck = "".join(mistral_stream(
@@ -816,7 +815,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         except Exception as ve:
             print(f"[SelfVerify] {ve}")
 
-    # 2. TOKEN EFFICIENCY -- strip sycophantic openers and filler (saves ~35% tokens)
+    # 2. TOKEN EFFICIENCY — strip sycophantic openers and filler (saves ~35% tokens)
     import re as _re3
     filler = re.compile(
         r"^(Certainly!?|Absolutely!?|Great question!?|Sure!?|Of course!?|"
@@ -828,7 +827,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     from modules.services.agents import strip_tool_syntax
     final  = strip_tool_syntax(final)
     if skill == "coder":
-        # ── Anti-pseudocode gate -- reject and rewrite if detected ────────────
+        # ── Anti-pseudocode gate — reject and rewrite if detected ────────────
         _PSEUDO_SIGNALS = [
             "# TODO", "# FIXME", "# implement", "# add logic", "# your code here",
             "pass  #", "raise NotImplementedError", "fake_", "mock_", "stub_",
@@ -839,7 +838,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         ]
         _pseudo_hits = [s for s in _PSEUDO_SIGNALS if s.lower() in final.lower()]
         if _pseudo_hits:
-            print(f"[AntiPseudo] detected pseudocode signals: {_pseudo_hits} -- forcing rewrite")
+            print(f"[AntiPseudo] detected pseudocode signals: {_pseudo_hits} — forcing rewrite")
             try:
                 final = generate_sync(
                     build_chatml(
@@ -948,7 +947,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         if skill in ("researcher", "coder") or complexity == "hard":
             db_episodic_save(f"[{skill}] {msg[:100]} → {final_clean[:200]}")
     except Exception as _me: print(f"[MemPersist] {_me}")
-    # Save to fine-tune DB -- every conversation becomes training data
+    # Save to fine-tune DB — every conversation becomes training data
     finetune_save(skill, complexity, system, msg, final)
     # ── Claude Code: persist coding-style rules to CLAUDE.md ──────────────
     _rule = detect_style_rule(msg, final)
@@ -983,7 +982,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
 
 def _build_stream_context(msg: str, hist: list) -> dict:
     """
-    All pre-processing from pipeline_sync -- memory, search, prompt build.
+    All pre-processing from pipeline_sync — memory, search, prompt build.
     Returns everything groq_stream needs. No model call made here.
     """
     import re as _re3
@@ -1081,7 +1080,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
                 "\n[END KNOWLEDGE BASE]") if rag_hits else ""
     _pgd_inject = None  # stubbed: pgd not loaded
     _pgd_using_new = bool(_pgd_inject) and _pgd_ab_active
-    _wm_ctx = {}  # world_model stubbed -- not implemented
+    _wm_ctx = {}  # world_model stubbed — not implemented
     _fs_examples = ""  # fewshot_get stubbed
     _fs_ctx = ""
     if _fs_examples:
@@ -1147,7 +1146,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
 
 def _stream_post_process(msg: str, final: str, skill: str,
                           complexity: str, effort: str, system: str):
-    """Run all post-pipeline saves in a background thread -- never blocks streaming."""
+    """Run all post-pipeline saves in a background thread — never blocks streaming."""
     import re as _re4, threading as _tpp
     def _run():
         try:
@@ -1170,7 +1169,7 @@ def _stream_post_process(msg: str, final: str, skill: str,
 
 
 def pipeline_stream(msg: str, history: list):
-    # ── Safety gate -- runs before anything else ──────────────────────
+    # ── Safety gate — runs before anything else ──────────────────────
     if _SAFETY_LOADED:
         _safe, _reason = safety_check(msg, "general")
         if not _safe:
@@ -1245,7 +1244,7 @@ def pipeline_stream(msg: str, history: list):
         except Exception:
             pass
 
-    # ── Build prompt -- FULLY PARALLEL I/O ───────────────────────────────────
+    # ── Build prompt — FULLY PARALLEL I/O ───────────────────────────────────
     from concurrent.futures import ThreadPoolExecutor
     history = clean_history(history or [])
     if _count_tokens(history) > 150000:
@@ -1276,7 +1275,7 @@ def pipeline_stream(msg: str, history: list):
     hist_msgs       = [{"role": h.get("role","user"), "content": str(h.get("content",""))} for h in (recent or [])]
 
 
-    # ── Full agentic path -- stream from generate ──────────────────────────────
+    # ── Full agentic path — stream from generate ──────────────────────────────
     # ── Anti-pseudocode injection for coder skill ─────────────────────
     _final_msg = clean_msg
     if skill == "coder":
@@ -1300,8 +1299,6 @@ def pipeline_stream(msg: str, history: list):
         _round_chunks = []
         _pending_tool_calls = []
         from modules.core.http_client import mistral_stream_traced
-        _think_buf = ""
-        _in_think = False
         for tok in mistral_stream_traced(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS, skill=skill, label=skill+"/"+complexity):
             _ttft.on_token(tok)
             if isinstance(tok, str) and tok.startswith(_marker):
@@ -1311,34 +1308,6 @@ def pipeline_stream(msg: str, history: list):
                 except Exception as _tce:
                     print(f"[tool_call parse error] {_tce}")
                 continue
-            if isinstance(tok, str):
-                if _in_think:
-                    _think_buf += tok
-                    if "</think>" in _think_buf:
-                        _in_think = False
-                        _after = _think_buf.split("</think>", 1)[1]
-                        _think_buf = ""
-                        if _after:
-                            yield _after
-                            _round_chunks.append(_after)
-                            chunks.append(_after)
-                    continue
-                elif "<think>" in tok:
-                    _before, _rest = tok.split("<think>", 1)
-                    if _before:
-                        yield _before
-                        _round_chunks.append(_before)
-                        chunks.append(_before)
-                    if "</think>" in _rest:
-                        _after = _rest.split("</think>", 1)[1]
-                        if _after:
-                            yield _after
-                            _round_chunks.append(_after)
-                            chunks.append(_after)
-                    else:
-                        _in_think = True
-                        _think_buf = _rest
-                    continue
             yield tok
             _round_chunks.append(tok)
             chunks.append(tok)
@@ -1399,9 +1368,9 @@ def pipeline_stream(msg: str, history: list):
             from modules.services.code_enforcer import enforce_production_code, build_rewrite_prompt
             _clean, _violations, _rewrite_prompt = enforce_production_code(final, msg)
             if not _clean:
-                print(f"[AntiPseudo] AST+regex violations={_violations} -- streaming rewrite")
+                print(f"[AntiPseudo] AST+regex violations={_violations} — streaming rewrite")
                 rewrite_msgs = build_chatml(system, hist_msgs, _rewrite_prompt)
-                yield "\n\n---\n⚡ *Violations detected: " + ", ".join(_violations[:3]) + " -- rewriting with real production code...*\n\n"
+                yield "\n\n---\n⚡ *Violations detected: " + ", ".join(_violations[:3]) + " — rewriting with real production code...*\n\n"
                 rewrite_chunks = []
                 for tok in mistral_stream(rewrite_msgs, max_tokens=max_t, model=_tier["models"][0]):
                     yield tok
@@ -1463,14 +1432,1254 @@ BENCHMARK_SUITE = [
     {"id":"t4","type":"tools","prompt":"Check LINT(def f(x):\\n  return x*2) for issues.","expected_contains":["OK"]},
 ]
 
+HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EliteOmni</title>
+<style>
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url(https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/cc27851ad-CFxw3nG7.woff2) format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "dlig" 0;
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+:root{
+  /* ── Typography scale (Claude CDS) ── */
+  --text-xs:.75rem; --text-xs--lh:calc(1/.75);
+  --text-sm:.875rem; --text-sm--lh:calc(1.25/.875);
+  --text-base:1rem; --text-base--lh:1.5;
+  --text-lg:1.125rem; --text-lg--lh:calc(1.75/1.125);
+  --text-xl:1.25rem; --text-xl--lh:calc(1.75/1.25);
+  --text-2xl:1.5rem; --text-2xl--lh:calc(2/1.5);
+  --text-3xl:1.875rem; --text-3xl--lh:1.2;
+  --text-4xl:2.25rem; --text-4xl--lh:calc(2.5/2.25);
+  /* ── Font weights ── */
+  --fw-light:300; --fw-normal:400; --fw-medium:500; --fw-semibold:600; --fw-bold:700; --fw-extrabold:800;
+  /* ── Letter spacing ── */
+  --tracking-tight:-.025em; --tracking-normal:0em; --tracking-wide:.025em; --tracking-wider:.05em; --tracking-widest:.1em;
+  /* ── Line heights ── */
+  --leading-tight:1.25; --leading-snug:1.375; --leading-normal:1.5; --leading-relaxed:1.625;
+  /* ── Border radius ── */
+  --radius-sm:.25rem; --radius-md:.375rem; --radius-lg:.5rem; --radius-xl:.75rem; --radius-2xl:1rem; --radius-3xl:1.5rem;
+  /* ── Shadows ── */
+  --shadow-sm:0 1px 2px #0000000d; --shadow-md:0 4px 6px #0000001a; --shadow-lg:0 10px 15px #0000001a;
+  --drop-shadow-md:0 3px 3px #0000001f; --drop-shadow-lg:0 4px 4px #00000026;
+  /* ── Easing ── */
+  --ease-in:cubic-bezier(.4,0,1,1); --ease-in-out:cubic-bezier(.4,0,.2,1);
+  --default-transition-duration:.15s; --default-transition-timing:cubic-bezier(.4,0,.2,1);
+  /* ── Blur ── */
+  --blur-sm:8px; --blur-md:12px; --blur-lg:16px; --blur-xl:24px; --blur-3xl:64px;
+  /* ── Spacing base ── */
+  --spacing:.25rem;
+  /* ── Containers ── */
+  --container-xs:20rem; --container-sm:24rem; --container-md:28rem; --container-lg:32rem;
+  --container-xl:36rem; --container-2xl:42rem; --container-3xl:48rem; --container-4xl:56rem;
+  --container-5xl:64rem; --container-6xl:72rem; --container-7xl:80rem;
+}
+:root{
+  /* Backgrounds — from --bg-000/100/200/300 */
+  --bg:hsl(60,2.1%,18.4%);
+  --sidebar-bg:hsl(60,2.7%,14.5%);
+  --main-bg:hsl(60,2.1%,18.4%);
+  --input-bg:hsl(30,3.3%,11.8%);
+  --hover:hsl(60,2.7%,14.5%);
+  --active:hsl(30,3.3%,11.8%);
 
-@app.get("/oldui", response_class=HTMLResponse)
-async def root_ui():
-    return HTMLResponse(open("ui.html").read())
+  /* Borders — from --border-100 */
+  --border:hsl(51,16.5%,84.5%,0.12);
+  --border-light:hsl(51,16.5%,84.5%,0.2);
 
-async def root_ui():
-    return HTMLResponse(open("ui.html").read())
+  /* Text — from --text-000/200/400 */
+  --text:hsl(48,33.3%,97.1%);
+  --text-2:hsl(50,9%,73.7%);
+  --text-3:hsl(48,4.8%,59.2%);
 
+  /* Accent — from --brand-100 (Anthropic coral) */
+  --accent:hsl(15,63.1%,59.6%);
+  --accent-hover:hsl(15,54.2%,51.2%);
+
+  /* Accent blue — from --accent-100 */
+  --accent-blue:hsl(210,70.9%,51.6%);
+
+  /* Success/danger/warning */
+  --success:hsl(97,59.1%,46.1%);
+  --danger:hsl(0,67%,59.6%);
+  --warning:hsl(40,71%,50%);
+
+  --sb-width:260px;
+  --radius:8px;
+}
+body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:var(--text-base);line-height:var(--text-base--lh);font-weight:var(--fw-normal);letter-spacing:var(--tracking-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:"dlig" 0;scrollbar-color:rgba(226,225,218,0.35) rgba(0,0,0,0);scrollbar-width:thin;transition:color var(--default-transition-duration) var(--default-transition-timing)}
+#shell{display:flex;height:100dvh;overflow:hidden}
+
+/* SIDEBAR */
+#sb{width:var(--sb-width);background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s ease,opacity .2s;overflow:hidden}
+#sb.off{width:0;opacity:0;pointer-events:none}
+.sb-header{padding:12px 12px 8px;flex-shrink:0}
+.new-btn{width:100%;display:flex;align-items:center;gap:10px;padding:10px 12px;background:transparent;border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;cursor:pointer;transition:background .15s}
+.new-btn:hover{background:var(--hover)}
+.new-btn svg{opacity:.6}
+.sb-section-label{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;padding:16px 16px 6px}
+.sb-scroll{flex:1;overflow-y:auto;padding-bottom:8px}
+.sb-scroll::-webkit-scrollbar{width:0}
+.hi{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin:0 8px;border-radius:var(--radius);cursor:pointer;color:var(--text-2);font-size:13.5px;transition:background .12s}
+.hi:hover{background:var(--hover);color:var(--text)}
+.hi.on{background:var(--active);color:var(--text)}
+.hi-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hi-del{opacity:0;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:13px;padding:2px 4px;border-radius:4px;transition:opacity .12s,color .12s;flex-shrink:0}
+.hi:hover .hi-del{opacity:1}
+.hi-del:hover{color:var(--text)}
+.sb-footer{padding:8px 12px;border-top:1px solid var(--border);flex-shrink:0}
+.user-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:var(--radius);cursor:pointer;transition:background .12s}
+.user-row:hover{background:var(--hover)}
+.user-av{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#fff;flex-shrink:0}
+.user-name{font-size:13.5px;color:var(--text);font-weight:500}
+.user-sub{font-size:11px;color:var(--text-3);margin-top:1px}
+
+/* MAIN */
+#main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;background:var(--main-bg)}
+#topbar{height:44px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;border-bottom:1px solid var(--border)}
+.tb-l,.tb-r{display:flex;align-items:center;gap:4px}
+.ic-btn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--text-2);cursor:pointer;border-radius:var(--radius);transition:background .12s,color .12s}
+.ic-btn:hover{background:var(--hover);color:var(--text)}
+.model-tag{font-size:13px;color:var(--text-2);padding:4px 10px;border-radius:20px;border:1px solid var(--border);cursor:default}
+
+/* WELCOME */
+#welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;overflow-y:auto}
+#welcome.off{display:none}
+.wtitle{font-size:28px;font-weight:500;color:var(--text);margin-bottom:32px;letter-spacing:-.3px}
+.wgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:560px;width:100%}
+.wcard{background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;font-size:13.5px;color:var(--text-2);cursor:pointer;text-align:left;line-height:1.5;transition:all .15s}
+.wcard:hover{background:var(--active);border-color:var(--border-light);color:var(--text)}
+
+/* MESSAGES */
+#msgs{flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column}
+#msgs::-webkit-scrollbar{width:4px}
+#msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.mrow{padding:12px 0;max-width:720px;width:100%;margin:0 auto;padding-left:24px;padding-right:24px}
+.mrow.me{display:flex;justify-content:flex-end}
+.bub{font-size:15px;line-height:1.75;color:var(--text)}
+.bub.ub{background:var(--input-bg);border:1px solid var(--border);border-radius:18px;border-bottom-right-radius:4px;padding:12px 16px;max-width:85%;white-space:pre-wrap;word-break:break-word}
+.bub.ab{padding:2px 0}
+.bub.eb{color:#f87171}
+.macts{display:flex;gap:2px;margin-top:8px;opacity:0;transition:opacity .12s}
+.mrow:hover .macts{opacity:1}
+.ma{background:none;border:none;color:var(--text-3);font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:background .12s,color .12s;font-family:inherit}
+.ma:hover{background:var(--hover);color:var(--text-2)}
+
+/* AI bubble markdown */
+.ab p{margin:.5em 0}.ab p:first-child{margin-top:0}.ab p:last-child{margin-bottom:0}
+.ab strong{color:var(--text);font-weight:600}
+.ab em{color:var(--text-2)}
+.ab code{font-family:'DM Mono',monospace;font-size:13px;background:var(--input-bg);border:1px solid var(--border);padding:1px 6px;border-radius:4px;color:#e8c47a}
+.ab pre{background:#0d0d0d;border:1px solid var(--border);border-radius:var(--radius);margin:.8em 0;overflow:hidden}
+.pre-head{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);background:#111}
+.pre-lang{font-size:11px;color:var(--text-3);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em}
+.pre-copy{background:none;border:1px solid var(--border);color:var(--text-3);font-size:11px;cursor:pointer;padding:2px 8px;border-radius:4px;transition:all .12s}
+.pre-copy:hover{background:var(--hover);color:var(--text-2)}
+.ab pre code{background:none;padding:14px;display:block;font-size:13px;line-height:1.65;border:none}
+.ab ul,.ab ol{padding-left:1.5em;margin:.4em 0}.ab li{margin:.2em 0}
+.ab h1,.ab h2,.ab h3{color:var(--text);margin:.8em 0 .3em;font-weight:600}
+.ab h1{font-size:1.2em}.ab h2{font-size:1.08em}.ab h3{font-size:1em}
+.ab blockquote{border-left:3px solid var(--border-light);padding:6px 14px;color:var(--text-2);margin:.5em 0;font-style:italic}
+.ab table{border-collapse:collapse;width:100%;margin:.6em 0;font-size:14px}
+.ab th,.ab td{border:1px solid var(--border);padding:8px 12px;text-align:left}
+.ab th{background:var(--input-bg);color:var(--text);font-weight:600}
+.ab tr:nth-child(even) td{background:rgba(255,255,255,.02)}
+.ab a{color:#7cacf8;text-decoration:none}
+.ab a:hover{text-decoration:underline}
+
+/* SKILL BADGE */
+.abadge{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid;margin-bottom:6px;color:var(--text-3);border-color:var(--border);background:var(--input-bg)}
+
+/* TYPING */
+.trow{padding:12px 24px;max-width:720px;margin:0 auto;width:100%;display:flex;gap:4px;align-items:center}
+.td{width:5px;height:5px;border-radius:50%;background:var(--text-3);animation:hop 1.2s infinite}
+.td:nth-child(2){animation-delay:.2s}.td:nth-child(3){animation-delay:.4s}
+@keyframes hop{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-4px)}}
+
+/* CURSOR */
+.cursor{display:inline-block;width:2px;height:1em;background:var(--text-2);margin-left:2px;border-radius:1px;animation:blink-c .5s infinite;vertical-align:text-bottom}
+@keyframes blink-c{0%,100%{opacity:1}50%{opacity:0}}
+
+/* INPUT */
+#foot{flex-shrink:0;padding:12px 16px 20px;background:var(--main-bg)}
+#iw{max-width:720px;margin:0 auto}
+#box{background:var(--input-bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
+#box:focus-within{border-color:var(--border-light)}
+.irow{display:flex;align-items:flex-end;gap:6px;padding:10px 12px 8px}
+textarea#inp{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:15px;font-family:inherit;resize:none;max-height:160px;line-height:1.6;padding:2px 0;min-height:24px;caret-color:var(--text)}
+textarea#inp::placeholder{color:var(--text-3)}
+#send{width:32px;height:32px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background .15s,opacity .15s}
+#send:hover{background:var(--accent-hover)}
+#send:disabled{opacity:.25;cursor:not-allowed}
+#stop{width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:none;align-items:center;justify-content:center;transition:background .15s}
+#stop:hover{background:var(--hover)}
+.ibot{display:flex;align-items:center;justify-content:space-between;padding:4px 12px 8px;gap:6px}
+.itools{display:flex;gap:4px;flex-wrap:wrap}
+.itl{background:none;border:1px solid transparent;color:var(--text-3);font-size:12px;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit;transition:all .12s}
+.itl:hover{border-color:var(--border);color:var(--text-2);background:var(--hover)}
+.hint{font-size:11px;color:var(--text-3)}
+
+/* BADGE */
+#badge{position:fixed;bottom:88px;right:16px;background:var(--input-bg);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;color:var(--text-3);opacity:0;transition:opacity .3s;pointer-events:none;font-family:'DM Mono',monospace}
+#badge.show{opacity:1}
+
+/* MODALS */
+#mem-modal,#sysprompt-modal,#fb-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:500;align-items:center;justify-content:center}
+#mem-modal.open,#sysprompt-modal.open,#fb-modal.open{display:flex}
+#mem-box,#sysprompt-box,#fb-box{background:#222;border:1px solid var(--border);border-radius:12px;padding:20px;width:min(480px,90vw);max-height:70vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.modal-title{font-size:15px;font-weight:600;color:var(--text)}
+.modal-close{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:18px;padding:0;margin-left:auto;line-height:1}
+.modal-close:hover{color:var(--text)}
+.modal-header{display:flex;align-items:center}
+#sysprompt-ta{width:100%;height:120px;background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;padding:10px;resize:vertical;font-family:inherit;outline:none}
+#sysprompt-ta:focus{border-color:var(--border-light)}
+.mem-item{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;font-size:13px;color:var(--text-2)}
+.mem-del{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:13px;margin-left:auto;transition:color .12s}
+.mem-del:hover{color:#f87171}
+.fb-opt{font-size:13px;color:var(--text-2);background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;cursor:pointer;text-align:left;transition:all .12s;width:100%}
+.fb-opt:hover{background:var(--active);color:var(--text)}
+.btn-primary{background:var(--accent);color:#fff;border:none;border-radius:var(--radius);padding:8px 16px;font-size:14px;cursor:pointer;transition:background .12s;font-family:inherit}
+.btn-primary:hover{background:var(--accent-hover)}
+
+/* THINK TOGGLE */
+#think-toggle{font-size:12px;color:var(--text-3);background:none;border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;transition:all .14s;font-family:inherit}
+#think-toggle.on{color:var(--accent);border-color:var(--accent)}
+
+/* ATTACH */
+#attach-preview{display:none;flex-wrap:wrap;gap:6px;padding:6px 12px;border-top:1px solid var(--border)}
+.att-chip{display:flex;align-items:center;gap:6px;background:var(--input-bg);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:12px;color:var(--text-2)}
+.att-chip img{height:20px;width:20px;border-radius:3px;object-fit:cover}
+.att-chip button{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:12px;padding:0 2px}
+.att-chip button:hover{color:#f87171}
+
+/* CONV SEARCH */
+#conv-search{width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;padding:7px 10px;outline:none;font-family:inherit;transition:border-color .15s}
+#conv-search:focus{border-color:var(--border-light)}
+
+/* FOLLOW-UPS */
+#followups{display:flex;flex-wrap:wrap;gap:6px;padding:8px 24px 0;max-width:720px;margin:0 auto;width:100%}
+.fup-btn{font-size:12.5px;color:var(--text-2);background:var(--input-bg);border:1px solid var(--border);border-radius:20px;padding:5px 12px;cursor:pointer;transition:all .12s}
+.fup-btn:hover{background:var(--active);color:var(--text);border-color:var(--border-light)}
+
+/* DROP OVERLAY */
+#drop-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);border:2px dashed var(--border-light);z-index:999;align-items:center;justify-content:center;font-size:18px;color:var(--text-2)}
+#drop-overlay.active{display:flex}
+
+/* MOBILE */
+@media(max-width:768px){
+  #sb{position:fixed;inset:0 auto 0 0;z-index:20;transform:translateX(-100%);width:var(--sb-width)!important;opacity:1!important;pointer-events:all!important;transition:transform .2s ease}
+  #sb.mo{transform:translateX(0)}
+  #sb.off{transform:translateX(-100%);width:var(--sb-width)!important;opacity:1!important}
+  .mrow,#followups{padding-left:12px;padding-right:12px}
+  #foot{padding:8px 12px 16px}
+  .bub.ub{max-width:90%}
+  .wgrid{grid-template-columns:1fr}
+  .wtitle{font-size:22px}
+}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* MOBILE RESPONSIVE */
+@media (max-width: 768px) {
+  body{font-size:14px}
+  #sb{position:fixed;top:0;left:0;height:100dvh;z-index:400;box-shadow:2px 0 20px rgba(0,0,0,.4)}
+  #sb.off{width:0;box-shadow:none}
+  #sb:not(.off){width:80vw;max-width:280px}
+  #topbar{height:48px;padding:0 12px}
+  #welcome{padding:24px 16px}
+  .wtitle{font-size:20px;margin-bottom:20px}
+  .wgrid{grid-template-columns:1fr;max-width:100%}
+  .wcard{padding:12px 14px;font-size:13px}
+  .mrow{padding-left:14px;padding-right:14px;padding-top:10px;padding-bottom:10px}
+  .bub{font-size:14.5px}
+  .bub.ub{max-width:92%;padding:10px 14px}
+  #foot{padding:8px 10px 14px}
+  textarea#inp{font-size:16px}
+  #send,#stop{width:36px;height:36px}
+  .ibot{flex-wrap:wrap}
+  .itl{font-size:11px;padding:4px 7px}
+  .ab pre code{font-size:12px;padding:10px}
+  .ab table{font-size:12.5px}
+  .ab th,.ab td{padding:6px 8px}
+  #mem-box,#sysprompt-box,#fb-box{width:94vw;padding:16px}
+  #badge{bottom:78px;right:10px;font-size:10px}
+}
+
+@media (max-width: 480px) {
+  .wtitle{font-size:18px}
+  .model-tag{display:none}
+  .hint{display:none}
+}
+
+</style>
+</head>
+<body>
+<div id="drop-overlay">Drop file to attach</div>
+<div id="shell">
+
+<!-- SIDEBAR -->
+<aside id="sb">
+  <div class="sb-header">
+    <button class="new-btn" onclick="newChat()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      New chat
+      <span style="margin-left:auto;font-size:11px;color:var(--text-3);font-family:'DM Mono',monospace">Ctrl+K</span>
+    </button>
+    <div style="margin-top:8px">
+      <input id="conv-search" placeholder="Search conversations…" oninput="filterConvs(this.value)">
+    </div>
+  </div>
+  <div class="sb-scroll">
+    <div class="sb-section-label">Recent</div>
+    <div id="hlist"></div>
+  </div>
+  <div class="sb-footer">
+    <div class="user-row">
+      <div class="user-av">KY</div>
+      <div>
+        <div class="user-name">Kidus Yared</div>
+        <div class="user-sub">EliteOmni Pro</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div id="main">
+  <div id="topbar">
+    <div class="tb-l">
+      <button class="ic-btn" onclick="toggleSb()" title="Toggle sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <span class="model-tag" id="btag">Mistral Large</span>
+    </div>
+    <div class="tb-r">
+      <button id="think-toggle" onclick="if(typeof toggleThinking==='function')toggleThinking()">Extended thinking</button>
+      <button class="ic-btn" onclick="openMemModal()" title="Memory">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a5 5 0 0 1 5 5v3a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"/><path d="M15 17H9a6 6 0 0 0-6 6h18a6 6 0 0 0-6-6z"/></svg>
+      </button>
+      <button class="ic-btn" onclick="document.getElementById('sysprompt-modal').classList.add('open')" title="Instructions">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+      </button>
+      <button class="ic-btn" onclick="exportMarkdown()" title="Export">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button class="ic-btn" onclick="clearChat()" title="Clear">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- WELCOME -->
+  <div id="welcome">
+    <h1 class="wtitle">How can I help you today?</h1>
+    <div class="wgrid">
+      <button class="wcard" onclick="use(this)">Search the latest AI news today</button>
+      <button class="wcard" onclick="use(this)">Write a Python binary search with type hints</button>
+      <button class="wcard" onclick="use(this)">Calculate 17.3% of 8450 then sqrt(256)</button>
+      <button class="wcard" onclick="use(this)">What is the exact current time and date?</button>
+      <button class="wcard" onclick="use(this)">Build a FastAPI REST API and explain each part</button>
+      <button class="wcard" onclick="use(this)">Describe this image for me</button>
+    </div>
+  </div>
+
+  <div id="msgs" style="display:none"></div>
+
+  <input type="file" id="file-img" accept="image/*" multiple style="display:none" onchange="handleFiles(this.files,'image')">
+  <input type="file" id="file-doc" multiple style="display:none" onchange="handleFiles(this.files,'doc')">
+  <div id="attach-preview"></div>
+
+  <div id="foot">
+    <div id="iw">
+      <div id="box">
+        <div id="attach-preview-inner"></div>
+        <div class="irow">
+          <input type="file" id="imgfile" accept="image/*" style="display:none" onchange="handleImgFile(this)">
+          <button class="itl" onclick="document.getElementById('imgfile').click()" title="Attach image" style="padding:4px 6px;font-size:16px">🖼️</button>
+          <button class="itl" onclick="document.getElementById('file-doc').click()" title="Attach document" style="padding:4px 6px;font-size:16px">📎</button>
+          <div style="flex:1;position:relative">
+            <textarea id="inp" placeholder="Message EliteOmni…" rows="1"></textarea>
+            <div id="imgpreview" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;background:#222;border:1px solid var(--border);border-radius:8px;padding:6px;z-index:10">
+              <img id="imgthumb" style="max-height:80px;max-width:140px;border-radius:4px;display:block">
+              <button onclick="clearImg()" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:11px;width:100%;text-align:center;margin-top:4px">Remove</button>
+            </div>
+          </div>
+          <button id="stop" onclick="stopGen()" title="Stop">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          </button>
+          <button id="send" onclick="send()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div class="ibot">
+          <div class="itools">
+            <button class="itl" onclick="ins('SEARCH(')">Search</button>
+            <button class="itl" onclick="ins('CALC(')">Calculate</button>
+            <button class="itl" onclick="ins('BROWSER(scrape:')">Browser</button>
+            <button class="itl" onclick="ins('WEATHER(')">Weather</button>
+            <button class="itl" onclick="ins('FETCH(')">Fetch</button>
+            <button class="itl" onclick="ins('TIME()')">Time</button>
+            <button class="itl" onclick="window.open('/benchmark','_blank')">Benchmark</button>
+            <button class="itl" onclick="document.getElementById('imgfile').click()">Vision</button>
+          </div>
+          <span class="hint">Enter to send · Shift+Enter for newline</span>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:8px;font-size:11px;color:var(--text-3)">EliteOmni can make mistakes. Verify important information.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- BADGE -->
+<div id="badge"></div>
+
+<!-- MEMORY MODAL -->
+<div id="mem-modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div id="mem-box">
+    <div class="modal-header"><span class="modal-title">Memory</span><button class="modal-close" onclick="document.getElementById('mem-modal').classList.remove('open')">×</button></div>
+    <div id="mem-list"></div>
+    <button class="btn-primary" onclick="clearAllMemory()">Clear all memory</button>
+  </div>
+</div>
+
+<!-- SYSTEM PROMPT MODAL -->
+<div id="sysprompt-modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div id="sysprompt-box">
+    <div class="modal-header"><span class="modal-title">Custom instructions</span><button class="modal-close" onclick="document.getElementById('sysprompt-modal').classList.remove('open')">×</button></div>
+    <textarea id="sysprompt-ta" placeholder="What would you like EliteOmni to know or always do?"></textarea>
+    <button class="btn-primary" onclick="saveSystemPrompt()">Save</button>
+  </div>
+</div>
+
+<!-- FEEDBACK MODAL -->
+<div id="fb-modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div id="fb-box">
+    <div class="modal-header"><span class="modal-title">What went wrong?</span><button class="modal-close" onclick="document.getElementById('fb-modal').classList.remove('open')">×</button></div>
+    <button class="fb-opt" onclick="submitFbReason('wrong')">Incorrect information</button>
+    <button class="fb-opt" onclick="submitFbReason('unhelpful')">Not helpful</button>
+    <button class="fb-opt" onclick="submitFbReason('harmful')">Harmful or offensive</button>
+    <button class="fb-opt" onclick="submitFbReason('other')">Other</button>
+  </div>
+</div>
+<script>
+marked.setOptions({highlight(code,lang){if(lang&&hljs.getLanguage(lang))return hljs.highlight(code,{language:lang}).value;return hljs.highlightAuto(code).value;},breaks:true,gfm:true});
+function _makeReactArtifact(code) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'margin:.8em 0;border:1px solid var(--bd);border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.35)';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'background:linear-gradient(90deg,rgba(79,126,247,.15),rgba(97,218,251,.08));padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd)';
+  bar.innerHTML = '<span style="font-size:.62rem;color:#61dafb;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:1px">⚛️ React Artifact</span>';
+  const btns = document.createElement('div'); btns.style.cssText = 'display:flex;gap:6px';
+  const mkBtn = (t) => { const b = document.createElement('button'); b.textContent = t; b.style.cssText = 'background:none;border:1px solid var(--bd);border-radius:5px;padding:2px 9px;cursor:pointer;color:var(--t2);font-size:.62rem'; return b; };
+  const expBtn = mkBtn('⤢ Expand'), openBtn = mkBtn('↗ Open');
+  let expanded = false;
+  expBtn.onclick = () => { expanded = !expanded; fr.style.height = expanded ? '600px' : '380px'; expBtn.textContent = expanded ? '⤡ Collapse' : '⤢ Expand'; };
+  btns.appendChild(expBtn); btns.appendChild(openBtn); bar.appendChild(btns);
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'width:100%;height:380px;border:none;background:#fff;display:block;transition:height .3s';
+  fr.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups';
+  const srcdoc = '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    '<script src="https://unpkg.com/react@18/umd/react.development.js"><\/script>' +
+    '<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"><\/script>' +
+    '<script src="https://unpkg.com/@babel/standalone/babel.min.js"><\/script>' +
+    '<style>body{margin:0;padding:16px;font-family:system-ui,sans-serif;background:#fff}*{box-sizing:border-box}<\/style>' +
+    '</head><body><div id="root"></div>' +
+    '<script type="text/babel">' + code +
+    '\nconst root=ReactDOM.createRoot(document.getElementById("root"));' +
+    '\nconst AppToRender=typeof App!=="undefined"?App:()=>React.createElement("div",null,"Component loaded");' +
+    '\nroot.render(React.createElement(AppToRender));' +
+    '<\/script></body></html>';
+  fr.srcdoc = srcdoc;
+  openBtn.onclick = () => { const w = window.open('about:blank','_blank'); w.document.write(srcdoc); w.document.close(); };
+  wrap.appendChild(bar); wrap.appendChild(fr); return wrap;
+}
+
+function _makeArtifact(code, lang) {
+  wrap.style.cssText = 'margin:.8em 0;border:1px solid var(--bd);border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.35)';
+  bar.style.cssText = 'background:linear-gradient(90deg,rgba(79,126,247,.1),rgba(201,168,76,.05));padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd)';
+  const lbl = document.createElement('span');
+  lbl.style.cssText = 'font-size:.62rem;color:var(--teal);font-family:"DM Mono",monospace;text-transform:uppercase;letter-spacing:1px';
+  lbl.innerHTML = '⚡ Live Artifact · ' + lang + ' <button onclick="artifactFullscreen(wrap.querySelector(&apos;iframe&apos;))" style="float:right;background:none;border:none;color:var(--t3);cursor:pointer;font-size:.75rem">⛶ Full</button>';
+  expBtn.onclick = () => { expanded = !expanded; fr.style.height = expanded ? '600px' : '320px'; expBtn.textContent = expanded ? '⤡ Collapse' : '⤢ Expand'; };
+  openBtn.onclick = () => { const w = window.open('about:blank','_blank'); w.document.write(srcdoc); w.document.close(); };
+  btns.appendChild(expBtn); btns.appendChild(openBtn); bar.appendChild(lbl); bar.appendChild(btns);
+  fr.style.cssText = 'width:100%;height:320px;border:none;background:#fff;display:block;transition:height .3s ease';
+  fr.sandbox = 'allow-scripts allow-modals allow-same-origin allow-forms allow-popups';
+  fr.srcdoc = srcdoc;
+  wrap.appendChild(bar); wrap.appendChild(fr); return wrap;
+}
+function _renderArtifacts(el) {
+  el.querySelectorAll('pre code').forEach(b => {
+    if (b.closest('.artifact-rendered')) return;
+    const lang = (b.className || '').replace('language-','').toLowerCase();
+    if (lang === 'jsx' || lang === 'react' || (lang === 'javascript' && b.textContent.includes('React'))) {
+      const art = _makeReactArtifact(b.textContent);
+      art.classList.add('artifact-rendered');
+      b.closest('pre').insertAdjacentElement('afterend', art);
+      return;
+    }
+  });
+  el.querySelectorAll('pre code').forEach(b => {
+    if (b.closest('.artifact-rendered')) return;
+    const lang = (b.className || '').replace('language-','').toLowerCase();
+    if (!['html','svg','javascript','js'].includes(lang)) return;
+    const code = b.textContent;
+    if (code.length < 50) return;
+    const art = document.createElement('div');
+    const fr2 = document.createElement('iframe');
+    fr2.style.cssText = 'width:100%;min-height:200px;border:none;background:#fff';
+    fr2.srcdoc = code;
+    art.appendChild(fr2);
+    art.classList.add('artifact-rendered');
+    b.closest('pre').insertAdjacentElement('afterend', art);
+  });
+}
+function renderMd(text){console.log("[renderMd]",text.length,text.slice(0,60));
+  try{
+    const opens=(text.match(/```/g)||[]).length;
+    if(opens%2!==0)text=text+'\n```';
+  }catch(_){}
+  const mmBlocks=[];
+  text=text.replace(/```mermaid\n([\s\S]*?)```/g,(_,c)=>{const id='mm'+mmBlocks.length;mmBlocks.push({id,c:c.trim()});return '<MERMAID_'+id+'>';});
+  // Protect LaTeX blocks from marked mangling
+  const mathBlocks=[];
+  text=text.replace(/\$\$([\s\S]*?)\$\$/g,(_,m)=>{const id='MATH'+mathBlocks.length;mathBlocks.push({id,m,block:true});return 'MATHBLOCK_'+id;});
+  text=text.replace(/\$([^\$\n]+?)\$/g,(_,m)=>{const id='MATH'+mathBlocks.length;mathBlocks.push({id,m,block:false});return 'MATHINLINE_'+id;});
+  let html=marked.parse(text);
+  html=html.replace(/<pre><code(?: class="language-([^"]*)")?>/g,(_,lang)=>{const l=lang||'code';return `<pre><div class="pre-head"><span class="pre-lang">${l}</span><button class="pre-copy" onclick="cpCode(this)">Copy</button></div><code${lang?` class="language-${lang}"`:''}>`;});
+  html=html.replace(/\[([0-9]+)\]/g,(_,n)=>`<sup class="cite-ref" onclick="jumpCite(${n})" title="Jump to source">[${n}]</sup>`);
+  mmBlocks.forEach(({id,c})=>{html=html.replace(`<p>MERMAID_${id}</p>`,`<div class="mermaid-wrap"><div class="mermaid">${c}</div></div>`).replace(`MERMAID_${id}`,`<div class="mermaid-wrap"><div class="mermaid">${c}</div></div>`);});
+  // Restore LaTeX blocks rendered via KaTeX
+  mathBlocks.forEach(({id,m,block})=>{
+    try{
+      const rendered=katex.renderToString(m,{throwOnError:false,displayMode:block});
+      html=html.replace('MATHBLOCK_'+id,`<div class="katex-block">${rendered}</div>`);
+      html=html.replace('MATHINLINE_'+id,rendered);
+    }catch(e){
+      html=html.replace('MATHBLOCK_'+id,`$$${m}$$`);
+      html=html.replace('MATHINLINE_'+id,`$${m}$`);
+    }
+  });
+  return html;
+}
+function postRenderMd(el){
+  el.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b);}catch(e){}});
+  if(window.renderMathInElement){try{renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false},{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false});}catch(e){}}
+  el.querySelectorAll('.mermaid:not([data-processed])').forEach(d=>{try{mermaid.init(undefined,d);d.dataset.processed='1';}catch(e){}});
+  _renderArtifacts(el);
+}
+function cpCode(btn){const code=btn.closest('pre').querySelector('code');navigator.clipboard.writeText(code.innerText||code.textContent).then(()=>{const o=btn.textContent;btn.textContent='Copied!';setTimeout(()=>btn.textContent=o,1500);});}
+let busy=false,convs=JSON.parse(localStorage.getItem('eo16_c')||'[]'),cur=null,sbOpen=window.innerWidth>640,_ready=true,_abortCtrl=null;
+const inp=document.getElementById('inp');
+if(!sbOpen)document.getElementById('sb').classList.add('off');
+newChat();renderHist();loadShared();
+(function(){
+  document.getElementById('loader')?.classList.remove('show');
+  document.getElementById('sdot')?.classList.remove('warn');
+  const btag=document.getElementById('btag');
+  if(btag)btag.textContent='GLM-4.7 + DeepSeek V3 + Llama 4 Vision';
+  _ready=true;
+})();
+function showMemoryUI() {
+    const ui = document.getElementById('memUI');
+    ui.style.display = ui.style.display === 'none' ? 'block' : 'none';
+    if (ui.style.display === 'block') {
+        fetch('/memory/instructions').then(r=>r.json()).then(d=>{
+            document.getElementById('memTxt').value = d.instructions || '';
+        });
+    }
+}
+function saveMemory() {
+    const text = document.getElementById('memTxt').value.trim();
+    fetch('/memory/instructions', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({instructions: text})
+    }).then(r=>r.json()).then(()=>{
+        document.getElementById('memUI').style.display = 'none';
+        alert('Instructions saved! EliteOmni will always remember these.');
+    });
+}
+function toggleTheme() {
+    const root = document.documentElement;
+    const isLight = root.getAttribute('data-theme') === 'light';
+    if (isLight) {
+        root.removeAttribute('data-theme');
+        document.body.removeAttribute('data-theme');
+        document.body.classList.remove('light');
+        localStorage.setItem('eo_theme','dark');
+        document.getElementById('themeBtn').textContent = '🌙';
+    } else {
+        root.setAttribute('data-theme','light');
+        document.body.setAttribute('data-theme','light');
+        document.body.classList.add('light');
+        localStorage.setItem('eo_theme','light');
+        document.getElementById('themeBtn').textContent = '☀️';
+    }
+}
+// Load saved theme on startup
+(function(){
+    const t = localStorage.getItem('eo_theme');
+    if (t === 'light') {
+        document.documentElement.setAttribute('data-theme','light');
+        document.body.setAttribute('data-theme','light');
+        document.body.classList.add('light');
+        setTimeout(()=>{ const b=document.getElementById('themeBtn'); if(b) b.textContent='☀️'; },100);
+    } else {
+        setTimeout(()=>{ const b=document.getElementById('themeBtn'); if(b) b.textContent='🌙'; },100);
+    }
+})();
+function toggleSb(){sbOpen=!sbOpen;const sb=document.getElementById('sb');if(sbOpen){sb.classList.remove('off');sb.classList.add('mo');}else{sb.classList.add('off');sb.classList.remove('mo');}}
+let _activeProject=null;
+async function loadProjects(){
+  try{const r=await fetch('/projects');const ps=await r.json();const el=document.getElementById('proj-list');el.innerHTML='';
+  ps.forEach(p=>{const d=document.createElement('div');d.style.cssText='padding:4px 8px;border-radius:6px;font-size:.72rem;color:var(--t2);cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:2px';
+  d.style.background=_activeProject===p.id?'rgba(79,126,247,.15)':'transparent';
+  const n=document.createElement('span');n.textContent=p.name;n.onclick=()=>{_activeProject=_activeProject===p.id?null:p.id;loadProjects();};
+  const x=document.createElement('button');x.textContent='✕';x.style.cssText='background:none;border:none;color:var(--t3);cursor:pointer;font-size:.65rem';
+  x.onclick=async(e)=>{e.stopPropagation();await fetch('/projects/'+p.id,{method:'DELETE'});loadProjects();};
+  d.appendChild(n);d.appendChild(x);el.appendChild(d);});}catch(e){}}
+async function createProject(){
+  const name=prompt('Project name:');if(!name)return;
+  await fetch('/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note:''})});
+  loadProjects();}
+loadProjects();
+function genSuggs(resp,q){
+  const r=resp.toLowerCase(),s=[];
+  if(r.includes('code')||r.includes('function')||r.includes('python'))s.push('Add error handling','Show a usage example');
+  if(r.includes('search')||r.includes('found')||r.includes('result'))s.push('Tell me more','Search for recent updates');
+  if(r.includes('step')||r.includes('first')||r.includes('then'))s.push('What comes next?','What could go wrong?');
+  if(r.includes('explain')||r.includes('because'))s.push('Simplify that','Give me an example');
+  if(resp.length>600)s.push('Summarize in 3 bullets');
+  s.push('Go deeper');
+  return [...new Set(s)].slice(0,3);
+}
+function renderHist(){const el=document.getElementById('hlist');el.innerHTML='';convs.slice().reverse().forEach(c=>{const d=document.createElement('div');d.className='hi'+(cur&&cur.id===c.id?' on':'');const t=document.createElement('span');t.className='hi-title';t.textContent=c.title||'Conversation';t.onclick=()=>loadConv(c.id);const x=document.createElement('button');x.className='hi-del';x.textContent='x';x.title='Delete';x.onclick=(e)=>{e.stopPropagation();deleteConv(c.id);};d.appendChild(t);d.appendChild(x);el.appendChild(d);});}
+function newChat(){if(_abortCtrl){_abortCtrl.abort();_abortCtrl=null;}unlock();if(cur&&cur.msgs&&cur.msgs.length)saveConv();cur={id:Date.now().toString(),title:'',msgs:[]};inp.value='';inp.style.height='auto';const m=document.getElementById('msgs');m.innerHTML='';m.style.display='none';document.getElementById('welcome').classList.remove('off');renderHist();}
+function loadConv(id){if(_abortCtrl){_abortCtrl.abort();_abortCtrl=null;}unlock();const c=convs.find(x=>x.id===id);if(!c)return;if(cur&&cur.msgs&&cur.msgs.length)saveConv();cur=JSON.parse(JSON.stringify(c));const m=document.getElementById('msgs');m.innerHTML='';m.style.display='flex';document.getElementById('welcome').classList.add('off');cur.msgs.forEach(msg=>addBub(msg.text,msg.role,false,false,msg.skill));m.scrollTop=m.scrollHeight;renderHist();}
+function saveConv(){if(!cur||!cur.msgs||!cur.msgs.length)return;const idx=convs.findIndex(c=>c.id===cur.id);if(idx>=0)convs[idx]=cur;else convs.push(cur);if(convs.length>60)convs=convs.slice(-60);localStorage.setItem('eo16_c',JSON.stringify(convs));renderHist();}
+function deleteConv(id){convs=convs.filter(c=>c.id!==id);localStorage.setItem('eo16_c',JSON.stringify(convs));if(cur&&cur.id===id){cur={id:Date.now().toString(),title:'',msgs:[]};document.getElementById('msgs').innerHTML='';document.getElementById('msgs').style.display='none';document.getElementById('welcome').classList.remove('off');}renderHist();}// ── MESSAGE EDITING ──────────────────────────────────────────────
+function editMsg(btn) {
+    const bub = btn.closest('.mbod').querySelector('.bub');
+    const old = bub.innerText;
+    const ta = document.createElement('textarea');
+    ta.value = old;
+    ta.style.cssText = 'width:100%;background:rgba(79,126,247,.1);border:1px solid rgba(79,126,247,.3);border-radius:8px;padding:8px;color:var(--t1);font-family:"DM Sans",sans-serif;font-size:.865rem;resize:vertical;min-height:60px';
+    bub.replaceWith(ta);
+    ta.focus();
+    btn.textContent = '✓ Save';
+    btn.onclick = () => {
+        const newDiv = document.createElement('div');
+        newDiv.className = 'bub ub';
+        newDiv.textContent = ta.value;
+        ta.replaceWith(newDiv);
+        btn.textContent = '✏️';
+        btn.onclick = () => editMsg(btn);
+        inp.value = ta.value;
+        send();
+    };
+}
+
+// ── REGENERATE ────────────────────────────────────────────────────
+function regenerate(btn) {
+    if (!cur || !cur.msgs || cur.msgs.length < 2) return;
+    // Remove last assistant message
+    cur.msgs.pop();
+    const lastUser = cur.msgs[cur.msgs.length - 1];
+    if (!lastUser) return;
+    // Remove last message row from UI
+    const rows = document.querySelectorAll('.mrow');
+    if (rows.length) rows[rows.length - 1].remove();
+    inp.value = lastUser.text;
+    send();
+}
+
+// ── STAR MESSAGE ──────────────────────────────────────────────────
+let _starred = JSON.parse(localStorage.getItem('eo_starred') || '[]');
+function starMsg(btn) {
+    const idx = _starred.findIndex(s => s.text === text);
+    if (idx >= 0) {
+        _starred.splice(idx, 1);
+        btn.textContent = '☆';
+        btn.style.color = '';
+    } else {
+        _starred.push({ text, ts: Date.now() });
+        btn.textContent = '★';
+        btn.style.color = 'var(--gold)';
+    }
+    localStorage.setItem('eo_starred', JSON.stringify(_starred));
+}
+
+// ── CONVERSATION BRANCHING ────────────────────────────────────────
+function branchFrom(btn) {
+    const row = btn.closest('.mrow');
+    if (idx < 0) return;
+    // Fork conversation up to this point
+    const newMsgs = cur.msgs.slice(0, idx + 1);
+    if (cur && cur.msgs && cur.msgs.length) saveConv();
+    cur = { id: Date.now().toString(), title: (cur.title || 'Chat') + ' [branch]', msgs: newMsgs };
+    const m = document.getElementById('msgs');
+    m.innerHTML = '';
+    cur.msgs.forEach(msg => addBub(msg.text, msg.role, false, false, msg.skill));
+    m.scrollTop = m.scrollHeight;
+    renderHist();
+}
+
+function exportMarkdown() {
+    if (!cur || !cur.msgs || !cur.msgs.length) { alert("No conversation to export."); return; }
+    let md = "# " + (cur.title || "EliteOmni Conversation") + "\n\n";
+    md += "*Exported " + new Date().toLocaleString() + "*\n\n---\n\n";
+    cur.msgs.forEach(m => {
+        const role = m.role === "user" ? "**You**" : "**EliteOmni**";
+        md += role + "\n\n" + m.text + "\n\n---\n\n";
+    });
+    const blob = new Blob([md], {type: "text/markdown"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (cur.title || "conversation").replace(/[^a-z0-9]/gi,"_") + ".md";
+    a.click();
+}
+
+function shareChat() {
+  if (!cur || !cur.msgs || !cur.msgs.length) { alert('No conversation to share.'); return; }
+  const data = { title: cur.title || 'EliteOmni Conversation', msgs: cur.msgs, ts: Date.now() };
+  const json = JSON.stringify(data);
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  const url = window.location.origin + '/?share=' + b64;
+  navigator.clipboard.writeText(url).then(() => alert('Share link copied to clipboard!'));
+}
+function loadShared() {
+  const params = new URLSearchParams(window.location.search);
+  const share = params.get('share');
+  if (!share) return;
+  try {
+    cur = { id: Date.now().toString(), title: data.title, msgs: data.msgs };
+    m.innerHTML = ''; m.style.display = 'flex';
+    document.getElementById('welcome').classList.add('off');
+    cur.msgs.forEach(msg => addBub(msg.text, msg.role, false, false, msg.skill));
+    m.scrollTop = m.scrollHeight;
+  } catch(e) { console.error('Share load failed:', e); }
+}
+function clearChat(){if(cur){convs=convs.filter(c=>c.id!==cur.id);localStorage.setItem('eo16_c',JSON.stringify(convs));}cur={id:Date.now().toString(),title:'',msgs:[]};document.getElementById('msgs').innerHTML='';document.getElementById('msgs').style.display='none';document.getElementById('welcome').classList.remove('off');renderHist();}
+// ── DRAG & DROP FILE UPLOAD ───────────────────────────────────────
+const dropZone = document.getElementById('box');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'rgba(79,126,247,.6)'; });
+dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = ''; });
+dropZone.addEventListener('drop', async e => {
+  e.preventDefault(); dropZone.style.borderColor = '';
+  const files = Array.from(e.dataTransfer.files);
+  for (const file of files) {
+    const fd = new FormData(); fd.append('file', file);
+    addBub(`📎 Uploading ${file.name}...`, 'assistant', false, true, null);
+    const d = await r.json();
+    if (d.error) { addBub(`❌ ${d.error}`, 'assistant', true, true, null); }
+    else { addBub(`✅ **${file.name}** indexed (${d.chunks_indexed} chunks). You can now ask questions about it.`, 'assistant', false, true, null); }
+  }
+});
+// ── KEYBOARD SHORTCUTS ───────────────────────────────────────────
+document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'k') { e.preventDefault(); newChat(); inp.focus(); }
+        if (e.key === '/') { e.preventDefault(); showShortcuts(); }
+        if (e.key === 'e') { e.preventDefault(); exportMarkdown(); }
+        if (e.key === 'd') { e.preventDefault(); toggleTheme(); }
+        if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); send(); }
+    }
+    if (e.key === 'Escape') { if(_abortCtrl){stopGen();} }
+});
+function showShortcuts() {
+    alert(
+        "EliteOmni Keyboard Shortcuts\n\n" +
+        "Ctrl+K — New conversation\n" +
+        "Ctrl+/ — Show shortcuts\n" +
+        "Ctrl+E — Export markdown\n" +
+        "Ctrl+D — Toggle dark/light theme\n" +
+        "Ctrl+Enter — Send message\n" +
+        "Escape — Stop generation\n" +
+        "Enter — Send | Shift+Enter — New line"
+    );
+}
+inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+inp.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';});
+function use(el){inp.value=el.textContent.replace(/^[\u{1F300}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\s]+/u,'').trim();inp.focus();send();}
+function ins(t){inp.value+=t;inp.focus();inp.dispatchEvent(new Event('input'));}
+function unlock(){document.getElementById('send').disabled=false;document.getElementById('send').style.display='flex';document.getElementById('stop').style.display='none';inp.disabled=false;busy=false;inp.focus();}
+function showStop(){document.getElementById('send').style.display='none';document.getElementById('stop').style.display='flex';}
+let _pendingImg=null;
+let _pendingFiles=[];
+
+function handleFiles(files, type){
+  for(const f of files){
+    const r=new FileReader();
+    r.onload=(e)=>{
+      const data=e.target.result;
+      const entry={name:f.name,type,data,b64:data.split(',')[1]||null,text:null};
+      if(type==='doc'){
+        // read as text for text-based files
+        const tr=new FileReader();
+        tr.onload=(ev)=>{entry.text=ev.target.result.slice(0,8000);};
+        const _textExts=['.txt','.md','.py','.js','.csv','.json','.html','.css','.ts','.jsx','.tsx','.yaml','.yml','.xml','.log','.sh','.c','.cpp','.java','.go','.rs','.rb','.php'];
+        const _ext='.'+f.name.split('.').pop().toLowerCase();
+        if(f.type==='application/pdf'||f.name.endsWith('.pdf')){
+          entry.text='[PDF file — extracting text via OCR]';
+          entry.b64=data.split(',')[1];
+        } else if(_textExts.includes(_ext)||f.type.startsWith('text/')){
+          tr.readAsText(f);
+        } else {
+          entry.text='[Binary/unsupported file — attempting OCR/extraction]';
+          entry.b64=data.split(',')[1];
+        }
+      }
+      if(type==='image'){entry.b64=data.split(',')[1];}
+      _pendingFiles.push(entry);
+      renderAttachPreview();
+    };
+    r.readAsDataURL(f);
+  }
+}
+
+function renderAttachPreview(){
+  const bar=document.getElementById('attach-preview-inner');
+  if(!bar)return;
+  if(!_pendingFiles.length){bar.style.display='none';return;}
+  bar.style.display='flex';bar.innerHTML='';
+  _pendingFiles.forEach((f,i)=>{
+    const chip=document.createElement('div');chip.className='att-chip';
+    if(f.type==='image'){
+      const img=document.createElement('img');img.src=f.data;chip.appendChild(img);
+    } else {
+      const ic=document.createElement('span');ic.textContent='📄';chip.appendChild(ic);
+    }
+    const nm=document.createElement('span');nm.textContent=f.name.slice(0,20);chip.appendChild(nm);
+    const x=document.createElement('button');x.textContent='✕';x.className='att-rm';
+    x.onclick=()=>{_pendingFiles.splice(i,1);renderAttachPreview();};
+    chip.appendChild(x);bar.appendChild(chip);
+  });
+}
+
+function clearAttachments(){_pendingFiles=[];_pendingImg=null;renderAttachPreview();}
+
+function handleImgFile(input){
+  const f=input.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=(e)=>{const d=e.target.result;_pendingImg=d.split(',')[1];_pendingFiles.push({name:f.name,type:'image',data:d,b64:d.split(',')[1]||null,text:null});renderAttachPreview();document.getElementById('imgthumb').src=d;document.getElementById('imgpreview').style.display='block';};
+  r.readAsDataURL(f);
+}
+function clearImg(){_pendingImg=null;document.getElementById('imgpreview').style.display='none';document.getElementById('imgfile').value='';}
+document.addEventListener('paste',(e)=>{
+  const items=e.clipboardData?.items;if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];document.getElementById('imgthumb').src=ev.target.result;document.getElementById('imgpreview').style.display='block';};
+      r.readAsDataURL(f);e.preventDefault();break;
+    }
+  }
+});
+document.addEventListener('paste',(e)=>{
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];document.getElementById('imgthumb').src=ev.target.result;document.getElementById('imgpreview').style.display='block';};
+      r.readAsDataURL(f);e.preventDefault();break;
+    }
+  }
+});
+
+function toggleThinking(){const b=document.getElementById('think-btn');if(b)b.classList.toggle('on');}
+// toggleVoice defined below
+
+// ── MIC TEST ──────────────────────────────────────────
+function testMic(){
+  const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
+  if(!SR){ alert('NO SpeechRecognition API — must use Chrome or Edge'); return; }
+  alert('SpeechRecognition API found! Starting 3-second test... speak now');
+  r.continuous = false;
+  r.interimResults = true;
+  r.lang = 'en-US';
+  r.onresult = (e) => {
+    alert('HEARD: ' + t);
+    inp.value = t;
+  };
+  r.onerror = (e) => { alert('ERROR: ' + e.error + ' — ' + JSON.stringify(e)); };
+  r.onend = () => { console.log('test ended'); };
+  r.start();
+}
+// ── VOICE INPUT ──────────────────────────────────────────
+let _recog = null;
+function toggleVoice(){
+  const btn = document.getElementById('voiceBtn');
+  if(!btn){ console.error('voiceBtn not found'); return; }
+  if(_recog){
+    _recog.abort();
+    _recog = null;
+    btn.textContent = '🎤 Voice';
+    btn.style.cssText = '';
+    return;
+  }
+  if(!SR){ alert('Voice requires Chrome or Edge browser'); return; }
+  _recog = new SR();
+  _recog.continuous = true;
+  _recog.interimResults = true;
+  _recog.lang = 'en-US';
+  _recog.maxAlternatives = 1;
+  btn.textContent = '🔴 Stop';
+  btn.style.background = 'rgba(232,107,107,.3)';
+  btn.style.color = '#e86b6b';
+  let finalText = '';
+  _recog.onresult = (event) => {
+    let interim = '';
+    for(let i = event.resultIndex; i < event.results.length; i++){
+      if(event.results[i].isFinal){ finalText += t; }
+      else { interim = t; }
+    }
+    inp.value = (finalText + interim).trim();
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(inp.scrollHeight, 140) + 'px';
+  };
+  _recog.onend = () => {
+    btn.textContent = '🎤 Voice';
+    btn.style.background = '';
+    btn.style.color = '';
+    _recog = null;
+    if(t) setTimeout(() => send(), 400);
+  };
+  _recog.onerror = (e) => {
+    btn.textContent = '🎤 Voice';
+    btn.style.background = '';
+    btn.style.color = '';
+    _recog = null;
+    if(e.error === 'not-allowed') alert('Microphone blocked — click the 🔒 in your address bar and allow microphone');
+    else if(e.error !== 'aborted') console.error('Voice error:', e.error);
+  };
+  try { _recog.start(); } catch(e){ console.error('start error:', e); }
+}
+let _currentStyle='default';
+function updateStyle(val){
+  _currentStyle=val;
+  const labels={'default':'💬 Auto','concise':'⚡ Concise','explanatory':'📚 Explain','formal':'👔 Formal'};
+  // Show badge
+  const badge=document.createElement('div');
+  badge.style.cssText='position:fixed;bottom:80px;right:20px;background:var(--g2);border:1px solid var(--bd);border-radius:8px;padding:6px 12px;font-size:.75rem;color:var(--t2);z-index:999;animation:fadeOut 2s forwards';
+  badge.textContent='Style: '+labels[val];
+  document.body.appendChild(badge);
+  setTimeout(()=>badge.remove(),2000);
+}
+function stopGen(){if(_abortCtrl){_abortCtrl.abort();_abortCtrl=null;}}
+function scr(){const m=document.getElementById('msgs');m.scrollTop=m.scrollHeight;}
+const SMETA={researcher:{icon:'🔬',label:'Research Agent'},coder:{icon:'💻',label:'Code Agent'},calculator:{icon:'⚡',label:'Math Agent'},safety:{icon:'🛡',label:'Safety Agent'},general:{icon:'✦',label:'General'}};
+let _lastMsg='',_lastResp='',_lastSkill='';
+function addBub(text,role,isErr,anim,skill){
+  const msgs=document.getElementById('msgs');msgs.style.display='flex';document.getElementById('welcome').classList.add('off');
+  const row=document.createElement('div');row.className='mrow';
+  const bub=document.createElement('div');
+  if(anim)row.style.animation='rise .18s ease';
+  const av=document.createElement('div');av.className='mav '+(role==='user'?'me':'ai');av.textContent=role==='user'?'KY':'✦';
+  const bod=document.createElement('div');bod.className='mbod';
+  if(role!=='user'&&skill&&skill!=='general'){const b=document.createElement('div');b.className=`abadge ${skill}`;const m2=SMETA[skill]||{icon:'•',label:skill};b.textContent=`${m2.icon} ${m2.label}`;bod.appendChild(b);}
+  if(role==='user'||isErr){bub.className='bub '+(role==='user'?'ub':'ab eb');bub.textContent=text;if(role==='user'){const ea=document.createElement('div');ea.className='macts';ea.innerHTML='<button class="ma" onclick="editMsg(this)">✏️</button>';bod.appendChild(ea);}}
+  else{bub.className='bub ab';try{bub.innerHTML=renderMd(text);postRenderMd(bub);}catch(e){bub.textContent=text;}}
+  bod.appendChild(bub);
+  if(role==='assistant' && cur && !cur.title && cur.msgs && cur.msgs.length>=2){
+    // Auto-generate title from first user message
+    const firstUser = cur.msgs.find(m=>m.role==='user');
+    if(firstUser){
+      const raw = firstUser.content || '';
+      cur.title = raw.replace(/[\n\r]/g,' ').trim().slice(0,40) || 'New Chat';
+      if(cur.title.length===40) cur.title += '…';
+      renderHist();
+      // Also ask the model to generate a better title async
+      fetch('/generate_title', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({msg: raw.slice(0,200)})})
+        .then(r=>r.json()).then(d=>{
+          if(d.title && cur){ cur.title=d.title; renderHist(); saveConv(); }
+        }).catch(()=>{});
+    }
+  }
+if(role==='assistant' && cur && !cur.title && cur.msgs && cur.msgs.length>=2){
+    // Auto-generate title from first user message
+    if(firstUser){
+      cur.title = raw.replace(/[\n\r]/g,' ').trim().slice(0,40) || 'New Chat';
+      if(cur.title.length===40) cur.title += '…';
+      renderHist();
+      // Also ask the model to generate a better title async
+      fetch('/generate_title', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({msg: raw.slice(0,200)})})
+        .then(r=>r.json()).then(d=>{
+          if(d.title && cur){ cur.title=d.title; renderHist(); saveConv(); }
+        }).catch(()=>{});
+    }
+  }
+if(role!=='user'){const acts=document.createElement('div');acts.className='macts';const tc=document.createElement('span');tc.className='tok-count';tc.textContent=Math.round(text.length/4)+'t';acts.innerHTML=`<button class="ma" onclick="fb(this,1,'${skill}')">👍</button><button class="ma" onclick="fbBad(this,'${skill}')">👎</button><button class="ma" onclick="cpBub(this)">Copy</button><button class="ma" onclick="regenerate(this)">↺ Regen</button><button class="ma" onclick="starMsg(this)">☆</button><button class="ma" onclick="branchFrom(this)">⑂ Branch</button>`;acts.appendChild(tc);bod.appendChild(acts);}
+  row.appendChild(av);row.appendChild(bod);msgs.appendChild(row);scr();return{row,bub};
+}
+function showTyping(){const m=document.getElementById('msgs');const row=document.createElement('div');row.className='trow';row.id='ty';const av=document.createElement('div');av.className='mav ai';av.textContent='✦';const bub=document.createElement('div');bub.className='tbub';bub.innerHTML='<div class="td"></div><div class="td"></div><div class="td"></div>';row.appendChild(av);row.appendChild(bub);m.appendChild(row);scr();}
+function hideTyping(){const t=document.getElementById('ty');if(t)t.remove();}
+function fb(btn,g,skill){btn.parentElement.querySelectorAll('.ma').forEach(b=>b.style.color='');btn.style.color=g?'var(--green)':'var(--red)';fetch('/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({skill,msg:_lastMsg,response:_lastResp,rating:g})}).catch(()=>{});}
+function cpBub(btn){const bub=btn.closest('.mbod').querySelector('.bub');navigator.clipboard.writeText(bub.innerText||bub.textContent).then(()=>{const o=btn.textContent;btn.textContent='Copied!';setTimeout(()=>btn.textContent=o,1500);});}
+function showBadge(ms,chars,skill,mode){const b=document.getElementById('badge');const m=SMETA[skill]||{icon:'⚡'};b.textContent=`${m.icon} ${chars>0?Math.round(chars/(ms/1000)):0}c/s - ${ms}ms`;b.classList.add('show');setTimeout(()=>b.classList.remove('show'),3500);}
+function speakText(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const clean = text.replace(/[#*\x60>]/g,'').replace(/\[.*?\]/g,'').slice(0,500);
+  const utt = new SpeechSynthesisUtterance(clean);
+  utt.rate = 1.05; utt.pitch = 1.0;
+  const voices = window.speechSynthesis.getVoices();
+  const pref = voices.find(v => v.name.includes('Google') || v.name.includes('Natural'));
+  if (pref) utt.voice = pref;
+  window.speechSynthesis.speak(utt);
+}
+async function send(){
+  if(busy)return;
+  const msg=inp.value.trim();if(!msg)return;
+  if(!cur)newChat();
+  inp.value='';inp.style.height='auto';
+  const _filesToSend=[..._pendingFiles];
+  addBub(msg,'user',false,true,null);
+  clearAttachments();
+  busy=true;
+  document.getElementById('send').disabled=true;
+  inp.disabled=true;
+  showStop();
+  if(!cur.title)cur.title=msg.slice(0,44)+(msg.length>44?'...':'');
+  const hist=cur.msgs.map(m=>({role:m.role,content:m.text}));
+  showTyping();
+  const t0=Date.now();
+  let fullText='',aiBub=null,skillName='general',modeName='fast';
+  _lastMsg=msg;
+  _abortCtrl=new AbortController();
+
+  // Build payload
+  const imgs=(_filesToSend||[]).filter(f=>f.type==='image');
+  const docs=(_filesToSend||[]).filter(f=>f.type==='doc');
+  const payload={message:msg,history:hist};
+  if(imgs.length)payload.image_b64=imgs[0].b64;
+  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.b64||null}));
+
+  try{
+    const resp=await fetch('/stream',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload),
+      signal:_abortCtrl.signal
+    });
+    if(!resp.ok){
+      const errText=await resp.text().catch(()=>'');
+      throw new Error('Server error '+resp.status+': '+errText.slice(0,200));
+    }
+
+    const reader=resp.body.getReader();
+    const decoder=new TextDecoder();
+    let metaParsed=false;
+    let buf='';
+
+    // Create AI bubble immediately
+    hideTyping();
+    const r=addBub('','assistant',false,true,skillName);
+    aiBub=r.bub;
+    aiBub.innerHTML='<span class="cursor" id="cur"></span>';
+
+    // ── Claude-style rAF throttled streaming ──────────────────────
+    // Tokens accumulate in fullText, rAF renders at 60fps max
+    // Incremental markdown during stream, full render + hljs on done
+    let rafPending=false;
+    let lastLen=0;
+
+    function rafRender(){
+      if(!aiBub || !fullText) return;
+      if(fullText.length===lastLen) return;
+      lastLen=fullText.length;
+      try{
+        aiBub.innerHTML=renderMd(fullText)+'<span class="cursor" id="cur"></span>';
+      }catch(e){
+        aiBub.textContent=fullText;
+        const c=document.createElement('span');c.className='cursor';c.id='cur';
+        aiBub.appendChild(c);
+      }
+      if((document.getElementById("msgs").scrollHeight-document.getElementById("msgs").scrollTop-document.getElementById("msgs").clientHeight)<80)document.getElementById("msgs").scrollTop=document.getElementById("msgs").scrollHeight;
+      rafPending=false;
+    }
+
+    function scheduleRaf(){
+      if(rafPending) return;
+      rafPending=true;
+      requestAnimationFrame(rafRender);
+    }
+
+    while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      const raw=decoder.decode(value,{stream:true});
+      buf+=raw;
+
+      // Parse metadata from first newline-terminated JSON line
+      if(!metaParsed){
+        const nl=buf.indexOf('\n');
+        if(nl!==-1){
+          const firstLine=buf.slice(0,nl).trim();
+          try{
+            const meta=JSON.parse(firstLine);
+            if(meta&&meta.skill){skillName=meta.skill;modeName=meta.mode||'fast';buf=buf.slice(nl+1);}
+            metaParsed=true;
+          }catch(e){metaParsed=true;}
+          fullText=buf;
+        } else if(buf.length>200){
+          metaParsed=true;
+          fullText=buf;
+        }
+      } else {
+        fullText=buf;
+      }
+
+      // Schedule one rAF per frame — never blocks, never per-token
+      if(metaParsed && fullText){
+        scheduleRaf();
+        const _m=document.getElementById("msgs");
+        if(_m.scrollHeight-_m.scrollTop-_m.clientHeight<200)_m.scrollTop=_m.scrollHeight;
+      }
+    }
+
+    // ── Final render: full markdown + hljs + math, exactly once ───
+    if(aiBub){
+      try{
+        if(!fullText) fullText=buf;
+        const fc=document.getElementById('cur');if(fc)fc.remove();
+        aiBub.innerHTML=renderMd(fullText);
+        requestAnimationFrame(()=>{
+          aiBub.querySelectorAll('pre code').forEach(b=>{try{hljs.highlightElement(b);}catch(e){}});
+          if(window.renderMathInElement){
+            try{renderMathInElement(aiBub,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}],throwOnError:false});}catch(e){}
+          }
+          postRenderMd(aiBub);
+        });
+      }catch(e){aiBub.textContent=fullText||buf;}
+      scr();
+    }
+    // Use buf as fallback if fullText empty
+    if(!fullText) fullText=buf;
+
+  }catch(e){
+    hideTyping();
+    if(e.name==='AbortError'){
+      if(fullText) fullText+=' *(stopped)*';
+    } else {
+      console.error('Stream error:',e);
+      const errMsg='Error: '+e.message;
+      if(!aiBub){
+        aiBub=r.bub;
+      } else {
+        aiBub.textContent=errMsg;
+      }
+      fullText=fullText||errMsg;
+    }
+  }finally{
+    _abortCtrl=null;
+
+    // Final render
+    if(aiBub && fullText){
+      try{
+        aiBub.innerHTML=renderMd(fullText);
+        postRenderMd(aiBub);
+        // HTML artifact previews
+        aiBub.querySelectorAll('pre code.language-html,pre code.language-svg').forEach(b=>{
+          if(b.closest('pre').nextSibling?.tagName==='DIV') return; // already rendered
+          const wr=document.createElement('div');
+          wr.style.cssText='border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-top:10px';
+          const bar=document.createElement('div');
+          bar.style.cssText='background:var(--g2);padding:5px 12px;font-size:.68rem;color:var(--t3);display:flex;justify-content:space-between';
+          bar.innerHTML='<span>▶ Live Preview</span>';
+          const fr=document.createElement('iframe');
+          fr.style.cssText='width:100%;min-height:200px;border:none;background:#fff';
+          fr.srcdoc=b.textContent;
+          wr.appendChild(bar);wr.appendChild(fr);
+          b.closest('pre').after(wr);
+        });
+      }catch(e){console.error('[FINAL RENDER ERROR]',e);aiBub.textContent=fullText;}
+    }
+
+    // Follow-up suggestions (once, not twice)
+    if(fullText && fullText.length>80 && !fullText.startsWith('Error:')){
+      const suggs=genSuggs(fullText,msg);
+      if(suggs.length){
+        const sd=document.createElement('div');
+        sd.style.cssText='display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px 36px';
+        suggs.forEach(s=>{
+          const b=document.createElement('button');
+          b.textContent=s;
+          b.style.cssText='background:var(--g2);border:1px solid var(--bd);border-radius:16px;padding:4px 12px;font-size:.72rem;color:var(--t2);cursor:pointer';
+          b.onclick=()=>{inp.value=s;sd.remove();send();};
+          sd.appendChild(b);
+        });
+        document.getElementById('msgs').appendChild(sd);
+        scr();
+      }
+    }
+
+    showBadge(Date.now()-t0,fullText.length,skillName,modeName);
+    _lastResp=fullText;_lastSkill=skillName;
+    if(fullText && !fullText.startsWith('Error:')){
+      cur.msgs.push({role:'user',text:msg},{role:'assistant',text:fullText,skill:skillName});
+    }
+    saveConv();unlock();scr();
+  }
+}
+
+mermaid.initialize({startOnLoad:false,theme:'dark',securityLevel:'loose'});
+
+// DRAG & DROP
+const _dropOv=document.getElementById('drop-overlay');
+document.addEventListener('dragover',e=>{e.preventDefault();_dropOv.classList.add('active');});
+document.addEventListener('dragleave',e=>{if(!e.relatedTarget)_dropOv.classList.remove('active');});
+document.addEventListener('drop',e=>{e.preventDefault();_dropOv.classList.remove('active');Array.from(e.dataTransfer.files).forEach(f=>handleFiles([f],f.type.startsWith('image/')?'image':'doc'));});
+
+// CONV SEARCH
+function filterConvs(q){document.querySelectorAll('#hlist .hi').forEach(el=>{const t=el.querySelector('.hi-title')?.textContent?.toLowerCase()||'';el.style.display=(!q||t.includes(q.toLowerCase()))?'':'none';});}
+
+// MEMORY MODAL
+let _localMems=JSON.parse(localStorage.getItem('eo_mems')||'[]');
+function openMemModal(){const list=document.getElementById('mem-list');if(!list)return;list.innerHTML='';if(!_localMems.length){list.innerHTML='<div style="color:var(--t3);font-size:.75rem;text-align:center;padding:16px">No memories yet</div>';}else{_localMems.forEach((m,i)=>{const d=document.createElement('div');d.className='mem-item';d.innerHTML=`<span style="flex:1">${m.slice(0,120)}</span><button class="mem-del" onclick="deleteMem(${i})">✕</button>`;list.appendChild(d);});}document.getElementById('mem-modal').classList.add('open');}
+function deleteMem(i){_localMems.splice(i,1);localStorage.setItem('eo_mems',JSON.stringify(_localMems));openMemModal();}
+function clearAllMemory(){if(!confirm('Clear all memory?'))return;_localMems=[];localStorage.setItem('eo_mems',JSON.stringify(_localMems));fetch('/memory/clear',{method:'POST'}).catch(()=>{});openMemModal();}
+
+// CUSTOM SYSTEM PROMPT
+(function(){const s=localStorage.getItem('eo_sysprompt');if(s)document.getElementById('sysprompt-ta').value=s;})();
+function saveSystemPrompt(){const v=document.getElementById('sysprompt-ta').value.trim();localStorage.setItem('eo_sysprompt',v);fetch('/context/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rules:v?[v]:[]})}).catch(()=>{});document.getElementById('sysprompt-modal').classList.remove('open');addBub('✅ Custom instructions saved.','assistant',false,true,null);}
+
+// THINKING TOGGLE
+let _thinkingOn=localStorage.getItem('eo_thinking')==='1';
+(function(){if(_thinkingOn)document.getElementById('think-toggle').classList.add('on');})();
+
+// FOLLOW-UP SUGGESTIONS
+function showFollowups(ctx){const ex=document.getElementById('followups');if(ex)ex.remove();const t=ctx.toLowerCase();let s=[];if(t.includes('def ')||t.includes('function')||t.includes('code'))s=['Add error handling','Write unit tests','Explain line by line'];else if(t.includes('what is')||t.includes('explain')||t.includes('how'))s=['Give me an example','What are alternatives?','Summarise in one line'];else if(t.includes('search')||t.includes('news')||t.includes('latest'))s=['Tell me more','What happened next?','Compare with before'];else s=['Can you elaborate?','What should I do next?','Give a concrete example'];const div=document.createElement('div');div.id='followups';s.forEach(q=>{const b=document.createElement('button');b.className='fup-btn';b.textContent=q;b.onclick=()=>{inp.value=q;div.remove();send();};div.appendChild(b);});document.getElementById('msgs').appendChild(div);scr();}
+
+// CITATIONS JUMP
+function jumpCite(n){const bubs=document.querySelectorAll('.bub.ab');const last=bubs[bubs.length-1];if(!last)return;const walker=document.createTreeWalker(last,NodeFilter.SHOW_TEXT);let node;while((node=walker.nextNode())){if(node.textContent.includes(`[${n}]`)){node.parentElement.scrollIntoView({behavior:'smooth',block:'center'});break;}}}
+
+// FEEDBACK WITH REASON
+let _fbPending=null;
+function fbBad(btn,skill){_fbPending={btn,skill};document.getElementById('fb-modal').classList.add('open');}
+function submitFbReason(reason){document.getElementById('fb-modal').classList.remove('open');if(!_fbPending)return;const{btn,skill}=_fbPending;btn.style.color='var(--red)';fetch('/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({skill,msg:_lastMsg,response:_lastResp,rating:0,reason})}).catch(()=>{});_fbPending=null;}
+
+// ARTIFACT FULLSCREEN
+function artifactFullscreen(iframe){const m=document.createElement('div');m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center';const bar=document.createElement('div');bar.style.cssText='width:100%;display:flex;justify-content:flex-end;padding:8px 16px';const cl=document.createElement('button');cl.textContent='✕ Close';cl.style.cssText='background:none;border:1px solid #555;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:.8rem';cl.onclick=()=>document.body.removeChild(m);bar.appendChild(cl);const fr=document.createElement('iframe');fr.srcdoc=iframe.srcdoc;fr.style.cssText='width:95vw;height:90vh;border:none;border-radius:8px;background:#fff';m.appendChild(bar);m.appendChild(fr);document.body.appendChild(m);}
+</script>
+"""
+
+@app.get("/", response_class=HTMLResponse)
 async def home(): return HTML
 
 @app.get("/health")
@@ -1508,7 +2717,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg"}
 
 def _extract_text_from_file(filename: str, data: bytes) -> str:
-    """Extract text from uploaded file -- supports txt/md/code/PDF/DOCX."""
+    """Extract text from uploaded file — supports txt/md/code/PDF/DOCX."""
     ext = os.path.splitext(filename.lower())[1]
     try:
         if ext in (".txt", ".md", ".py", ".js", ".ts", ".html",
@@ -1573,7 +2782,7 @@ async def upload_file(file: UploadFile = FastAPIFile(...)):
         "extracted_chars": len(text),
         "chunks_indexed": len(chunks[:5000]),
         "preview": text[:300],
-        "status": "indexed in RAG -- AI can now reference this file"
+        "status": "indexed in RAG — AI can now reference this file"
     }
 
 @app.post("/video/edit")
@@ -1687,7 +2896,7 @@ async def video_upload(file: UploadFile = FastAPIFile(...)):
         "filename": filename,
         "file_path": save_path,
         "size_mb": round(len(data) / 1024 / 1024, 2),
-        "status": "uploaded -- use /video/edit to process"
+        "status": "uploaded — use /video/edit to process"
     })
 
 
@@ -1742,7 +2951,7 @@ async def memory_clear():
 
 @app.get("/search/status")
 async def search_status():
-    """Live SearXNG status -- use this to diagnose web-search issues."""
+    """Live SearXNG status — use this to diagnose web-search issues."""
     loop = asyncio.get_event_loop()
     live_probe = await loop.run_in_executor(None, lambda: _probe_searxng(timeout=4))
     return {
@@ -1782,7 +2991,7 @@ async def feedback(req: Request):
 
 @app.post("/stream")
 async def stream_chat(req: Request):
-    """Main streaming endpoint -- parses request then streams via generator."""
+    """Main streaming endpoint — parses request then streams via generator."""
     try:
         data = await req.json()
     except Exception:
@@ -1864,7 +3073,7 @@ async def stream_chat(req: Request):
         try:
             ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=6)
         except _asyncio.TimeoutError:
-            print("[stream_chat] ctx timeout -- fast first token with minimal ctx")
+            print("[stream_chat] ctx timeout — fast first token with minimal ctx")
             from modules.core.constants import get_infra_tier
             _infra_t = get_infra_tier("medium")
             ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
@@ -1888,7 +3097,7 @@ async def stream_chat(req: Request):
 
         yield json.dumps({"skill": ctx["skill"], "mode": ctx["mode"]}) + "\n"
 
-        # asyncio.Queue -- no run_in_executor overhead per token
+        # asyncio.Queue — no run_in_executor overhead per token
         tok_q  = asyncio.Queue()
         chunks = []
         in_think = [False]
@@ -1964,7 +3173,7 @@ async def stream_chat(req: Request):
                 # or until enough has accumulated that this looks like a
                 # false positive (e.g. the word appears mid-sentence).
                 if "\n\n" in buf:
-                    # Drop everything up to and including the blank line --
+                    # Drop everything up to and including the blank line —
                     # that was the reasoning block.
                     buf = buf.split("\n\n", 1)[-1]
                 else:
@@ -2377,39 +3586,7 @@ function applyArtifactEdit() {
     }
     closeModal();
 }
-</script>
-<script>
-(function() {
-    if (window._eliteOmniSanitized) return;
-    window._eliteOmniSanitized = true;
-    
-    // Wait for marked.js to load, then wrap its parse function
-    const interval = setInterval(() => {
-        if (typeof marked !== 'undefined' && marked.parse) {
-            const originalParse = marked.parse;
-            marked.parse = function(text) {
-                let t = text;
-                try {
-                    if (t.trim().startsWith('{')) {
-                        const j = JSON.parse(t);
-                        if (j.response) t = j.response;
-                    }
-                } catch (e) {}
-                
-                // Remove internal reasoning artifacts
-                t = t.replace(/\*\*?-?\s*(Intent|Wrong answer|Draft|Accuracy|Completeness|Relevance|Final Output|THINK|ACT|VERIFY|INTENT|AMBIGUITY):[\s\S]*?(?=(\*\*?-?\s*(Intent|Wrong answer|Draft|Accuracy|Completeness|Relevance|Final Output|RESPONSE):)|$)/gi, '');
-                t = t.replace(/RESPONSE:\s*/gi, '');
-                t = t.replace(/^\*\*\s*/gm, ''); // Clean up leftover bold markers
-                
-                return originalParse(t);
-            };
-            clearInterval(interval);
-        }
-    }, 50);
-})();
-</script>
-
-</body></html>""")
+</script></body></html>""")
 
 @app.get("/finetune/stats")
 async def finetune_stats():
@@ -2449,7 +3626,7 @@ async def vision_status():
         "loaded": _vision_loaded,
         "model": GROQ_MODEL_VISION,
         "provider": "Groq API",
-        "tip": "Vision powered by Groq llama-4-scout -- no local model needed"
+        "tip": "Vision powered by Groq llama-4-scout — no local model needed"
     }
 
 import sqlite3 as _psql
@@ -2515,8 +3692,8 @@ async def token_stats():
     return {
         "prompt_cache_entries": len(_prompt_cache),
         "prompt_cache_hits": _prompt_cache_hits,
-        "compaction": "auto -- triggers when history > 1500 tokens",
-        "thinking_strip": "enabled -- thinking tokens stripped before context",
+        "compaction": "auto — triggers when history > 1500 tokens",
+        "thinking_strip": "enabled — thinking tokens stripped before context",
         "tool_output_cap": "15 lines max per tool call",
         "anthropic_mechanisms": ["prompt_caching","auto_compaction","thinking_strip","tool_result_only"]
     }
@@ -2538,8 +3715,8 @@ async def cache_clear():
 async def get_effort():
     """Get current effort level (low | medium | high)."""
     return {"effort": EFFORT_LEVEL, "description": {
-        "low":    "Fast responses, minimal reasoning -- greetings/simple facts",
-        "medium": "Balanced -- adaptive thinking, tool use, dual-path calc (default)",
+        "low":    "Fast responses, minimal reasoning — greetings/simple facts",
+        "medium": "Balanced — adaptive thinking, tool use, dual-path calc (default)",
         "high":   "Extended thinking, full PEVI loop, all deliberation prompts",
     }}
 
@@ -2620,7 +3797,7 @@ async def generate_title(req: Request):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONVERSATIONS API -- persistent server-side conversation storage
+# CONVERSATIONS API — persistent server-side conversation storage
 # ══════════════════════════════════════════════════════════════════════════════
 import sqlite3 as _csql, secrets as _secrets
 
@@ -2733,7 +3910,7 @@ b{{color:#7c8cff}}p{{margin:8px 0;white-space:pre-wrap}}</style></head>
 <body><h2>{title}</h2>{html_msgs}</body></html>""")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODELS endpoint -- switch model at runtime
+# MODELS endpoint — switch model at runtime
 # ══════════════════════════════════════════════════════════════════════════════
 @app.get("/models")
 async def list_models():
@@ -2838,7 +4015,7 @@ async def get_task_endpoint(task_id: str):
 
 @app.post("/research")
 async def deep_research(req: Request):
-    """Feature 29: deep research mode -- 5+ searches, synthesized report."""
+    """Feature 29: deep research mode — 5+ searches, synthesized report."""
     d = await req.json()
     query = d.get("query","")[:500]
     if not query: return {"error":"query required"}
@@ -2935,7 +4112,7 @@ async def computer_use_endpoint(req: Request):
 
 @app.post("/tts")
 async def tts(req: Request):
-    """Returns SSML hint -- actual TTS done client-side via Web Speech API."""
+    """Returns SSML hint — actual TTS done client-side via Web Speech API."""
     d = await req.json()
     return {"text": d.get("text",""), "engine": "browser"}
 
@@ -3420,9 +4597,9 @@ def pgd_ab_score(used_new: bool, score: int):
             old_avg = sum(_pgd_ab_scores["old"]) / old_n
             if new_avg > old_avg:
                 _pgd_save_prompt(_pgd_ab_variant)
-                print(f"[PGD] ✅ Challenger WON ({new_avg:.1f} vs {old_avg:.1f}) -- prompt evolved")
+                print(f"[PGD] ✅ Challenger WON ({new_avg:.1f} vs {old_avg:.1f}) — prompt evolved")
             else:
-                print(f"[PGD] ❌ Challenger lost ({new_avg:.1f} vs {old_avg:.1f}) -- kept original")
+                print(f"[PGD] ❌ Challenger lost ({new_avg:.1f} vs {old_avg:.1f}) — kept original")
             _pgd_ab_active = False
 
 def _pgd_load_prompt() -> str:
@@ -3464,7 +4641,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         _recent_user_msgs = " ".join(h.get("content", "") for h in hist[-6:] if h.get("role") == "user")
         _hist_skill = classify_skill(_recent_user_msgs)
         if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8: skill = _hist_skill
-    # Persistent skill -- restore from DB if still general
+    # Persistent skill — restore from DB if still general
     if skill == "general":
         try:
             import sqlite3 as _sq3, os as _os3
@@ -3516,21 +4693,21 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
     # ── 2. Parallel I/O tasks (all I/O runs concurrently) ───────────────────
     def _do_search():
-        # Skip search for short/conversational messages -- saves 1-3s TTFT
+        # Skip search for short/conversational messages — saves 1-3s TTFT
         _skip_words = {"hi","hello","hey","thanks","ok","okay","sure","yes","no","bye"}
         if len(msg.split()) <= 3 and msg.lower().strip().rstrip("!?.") in _skip_words:
             return (msg, "")
-        # Skip search for coding tasks -- model knows syntax/algorithms/stdlib
+        # Skip search for coding tasks — model knows syntax/algorithms/stdlib
         _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
                          "debug", "refactor", "optimize", "algorithm", "implement",
                          "write a function", "fix this", "bug in"]
         if any(t in msg.lower() for t in _code_signals):
             return (msg, "")
-        # Check Tavily cache first -- avoids duplicate HTTP call
+        # Check Tavily cache first — avoids duplicate HTTP call
         from modules.services.search import _tavily_cache, tavily_search
         _ck = msg.strip().lower()[:120]
         if _ck in _tavily_cache:
-            print("[_do_search] Tavily cache hit -- reusing result")
+            print("[_do_search] Tavily cache hit — reusing result")
             import datetime as _dt
             _ctx = ("MANDATORY: LIVE search results fetched " + str(_dt.date.today()) + ". "
                     "You MUST use these. FORBIDDEN from saying no internet access.\n"
@@ -3753,7 +4930,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
     if rag_ctx: system += rag_ctx
 
-    # search already ran in _do_search above -- skip double search
+    # search already ran in _do_search above — skip double search
 
     if search_ctx:
         import datetime
@@ -3807,15 +4984,3 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         "mcp_tools": _tools_schema,
     }
 # ── END TTFT PATCH ────────────────────────────────────────────────────────────
-
-
-
-
-@app.get("/", response_class=HTMLResponse)
-async def root_ui():
-    return HTMLResponse(open("ui.html").read())
-
-
-@app.get("/", response_class=HTMLResponse)
-async def root_new_ui():
-    return HTMLResponse(open("ui.html").read())
