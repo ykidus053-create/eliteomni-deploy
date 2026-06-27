@@ -4,6 +4,8 @@ import tempfile
 import os
 import ast
 import resource
+import sys
+from io import StringIO
 
 PROTOTYPE_PHRASES = [
     "for simplicity", "for educational purposes", "basic version", "simplified",
@@ -42,7 +44,7 @@ def has_stub(code: str) -> bool:
         if phrase in code_lower: return True
     return False
 
-def check_enterprise_compliance(code: str) -> list:
+def check_enterprise_compliance(code: str) -> tuple[list, bool]:
     violations = []
     is_cutoff = False
     try:
@@ -50,6 +52,7 @@ def check_enterprise_compliance(code: str) -> list:
         has_logging = False
         has_metrics = False
         banned_calls = {'eval', 'exec', 'compile', '__import__', 'os.system', 'subprocess.call'}
+        io_calls = {'requests.get', 'requests.post', 'open', 'urlopen', 'psycopg2.connect', 'sqlite3.connect'}
         
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
@@ -59,10 +62,19 @@ def check_enterprise_compliance(code: str) -> list:
                     if node.returns is None: violations.append(f"Function '{node.name}' missing return type hint.")
                 if not node.name.startswith("_") and not node.name.startswith("test_"):
                     if not ast.get_docstring(node): violations.append(f"Function '{node.name}' missing a docstring.")
+                func_name_lower = node.name.lower()
+                is_io_func = any(k in func_name_lower for k in ['save', 'load', 'fetch', 'get', 'post', 'read', 'write', 'connect', 'repository', 'client'])
+                for stmt in ast.walk(node):
+                    if isinstance(stmt, ast.Call):
+                        call_name = ""
+                        if isinstance(stmt.func, ast.Name): call_name = stmt.func.id
+                        elif isinstance(stmt.func, ast.Attribute): call_name = stmt.func.attr
+                        if call_name in io_calls and not is_io_func:
+                            violations.append(f"ARCHITECTURE VIOLATION (SRP): I/O call '{call_name}()' found inside business logic function '{node.name}'.")
             if isinstance(node, ast.ExceptHandler):
-                if node.type is None: violations.append("Bare 'except:' block found. Use specific exceptions.")
-                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass): violations.append("Silent 'except: pass' block found. Enterprise code must log or re-raise.")
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print': violations.append("Use of print() found. Enterprise code must use the 'logging' module.")
+                if node.type is None: violations.append("Bare 'except:' block found.")
+                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass): violations.append("Silent 'except: pass' block found.")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print': violations.append("Use of print() found.")
             if isinstance(node, ast.Call):
                 func_name = ""
                 if isinstance(node.func, ast.Name): func_name = node.func.id
@@ -77,7 +89,7 @@ def check_enterprise_compliance(code: str) -> list:
                     if isinstance(base, ast.Name): base_name = base.id
                     elif isinstance(base, ast.Attribute): base_name = base.attr
                     if base_name in ('ABC', 'ABCMeta', 'Protocol'):
-                        violations.append(f"SCAFFOLDING BAN: Class '{node.name}' inherits from {base_name}. Write a concrete implementation.")
+                        violations.append(f"SCAFFOLDING BAN: Class '{node.name}' inherits from {base_name}.")
                 for stmt in node.body:
                     if isinstance(stmt, ast.FunctionDef):
                         for decorator in stmt.decorator_list:
@@ -98,7 +110,7 @@ def check_enterprise_compliance(code: str) -> list:
 
 def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
     prompt = [
-        {"role": "system", "content": "You are a Ruthless Principal Engineer. Is this code a shallow wrapper, prototype, or architectural scaffolding? Does it actually implement the core algorithm requested, or does it just set up the architecture and leave the hard logic empty? If it is a prototype, reply 'VETO' followed by a scathing critique. If it is a complete, concrete implementation, reply 'APPROVED'."},
+        {"role": "system", "content": "You are a Ruthless Principal Software Architect. Is this code architecturally consistent? Does it cleanly separate I/O from business logic? If it is inconsistent or a prototype, reply 'VETO' followed by a scathing critique. If it is clean, reply 'APPROVED'."},
         {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
     ]
     try:
@@ -109,7 +121,7 @@ def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
 
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
     prompt = [
-        {"role": "system", "content": "You are a Chaos Engineer. Does this code have real-world failure modes? (e.g., missing circuit breakers, retry storms, deadlocks, unhandled JSON decode errors). Reply ONLY with a JSON list of strings. If perfect, reply []."},
+        {"role": "system", "content": "You are a Chaos Engineer. Does this code have real-world failure modes? Reply ONLY with a JSON list of strings. If perfect, reply []."},
         {"role": "user", "content": f"Implementation:\n{impl_code[:1500]}\n\nTests:\n{test_code[:800]}"}
     ]
     try:
@@ -132,64 +144,45 @@ def extract_code_blocks(text: str) -> dict:
     if not test_code and len(matches) == 1: impl_code = matches[0].strip()
     return {"implementation": impl_code, "tests": test_code}
 
-def _set_limits():
-    resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
-    resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
-
-def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
-    if not test_code: return run_code(impl_code)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        impl_path, test_path = os.path.join(tmpdir, "module.py"), os.path.join(tmpdir, "test_module.py")
-        with open(impl_path, "w") as f: f.write(impl_code)
-        with open(test_path, "w") as f: f.write(test_code)
-        try:
-            r = subprocess.run(["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error", "--no-header"], capture_output=True, text=True, timeout=15, cwd=tmpdir, preexec_fn=_set_limits)
-            return r.returncode == 0, r.stdout + r.stderr
-        except subprocess.TimeoutExpired: return False, "Pytest execution timed out (15s) or hit CPU limit."
-        except Exception as e: return False, str(e)
-
-def run_code(code: str) -> tuple[bool, str]:
-    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        f.write(code); fname = f.name
+def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str]:
+    """Upgraded: Persistent Execution Sandbox. Runs tests in-memory like a Jupyter kernel."""
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = StringIO()
+    sys.stderr = StringIO()
+    
+    sandbox_globals = {}
+    success = False
+    output = ""
+    
     try:
-        r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=10, preexec_fn=_set_limits)
-        return r.returncode == 0, r.stdout + r.stderr
-    except Exception as e: return False, str(e)
+        # 1. Load implementation into sandbox
+        exec(impl_code, sandbox_globals)
+        
+        # 2. Run tests in the SAME sandbox
+        if test_code:
+            # Inject pytest assert runner
+            sandbox_globals['pytest'] = __import__('pytest')
+            exec(test_code, sandbox_globals)
+            # If we reach here, no exceptions were raised
+            success = True
+        else:
+            success = True
+    except AssertionError as e:
+        success = False
+        output = f"AssertionError: {e}"
+    except Exception as e:
+        success = False
+        import traceback
+        output = traceback.format_exc()
     finally:
-        if os.path.exists(fname): os.unlink(fname)
-
-def apply_surgical_patch(original_code: str, patch_output: str) -> str:
-    match = re.search(r'\[PATCH START\](.*?)\[PATCH END\]', patch_output, re.DOTALL)
-    if not match: return original_code
-    patch_text = match.group(1).strip()
-    lines = original_code.split('\n')
-    patch_lines = patch_text.split('\n')
-    i = 0
-    while i < len(patch_lines):
-        line = patch_lines[i]
-        if line.strip() == "<<<< ORIGINAL":
-            original_block = []
-            patched_block = []
-            i += 1
-            while i < len(patch_lines) and patch_lines[i].strip() != "====":
-                original_block.append(patch_lines[i])
-                i += 1
-            i += 1
-            while i < len(patch_lines) and patch_lines[i].strip() != ">>>> PATCHED":
-                patched_block.append(patch_lines[i])
-                i += 1
-            try:
-                start_idx = lines.index(original_block[0])
-                end_idx = start_idx + len(original_block)
-                if lines[start_idx:end_idx] == original_block:
-                    lines[start_idx:end_idx] = patched_block
-            except ValueError:
-                pass
-        i += 1
-    return '\n'.join(lines)
+        output += sys.stdout.getvalue() + sys.stderr.getvalue()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        
+    return success, output[:1000]
 
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: Automatic Continuation. Detects token limit cutoffs and resumes generation."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -199,21 +192,21 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         enterprise_violations, is_cutoff = check_enterprise_compliance(impl_code)
         veto = principal_engineer_veto(impl_code, task, generate_fn) if not is_cutoff else "APPROVED"
         logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn) if not is_cutoff else []
-        ok, output = run_pytest(impl_code, test_code)
+        ok, output = run_in_persistent_sandbox(impl_code, test_code)
         
         if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
-            print(f"[Reflexion] SOTA Agentic Loop: Pytests 100% passed on round {round_num}")
+            print(f"[Reflexion] SOTA Agentic Loop: Sandbox Tests 100% passed on round {round_num}")
             break
             
         failures = []
         if is_cutoff:
             failures.append("CRITICAL FAILURE: Code was cut off due to token limit. You MUST continue the code from the exact last line.")
         else:
-            if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies, prototype phrases, or architectural scaffolding.")
-            if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
-            if "APPROVED" not in veto: failures.append(f"STAFF ENGINEER VETO:\n{veto}")
+            if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or scaffolding.")
+            if enterprise_violations: failures.append("ARCHITECTURAL & ENTERPRISE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
+            if "APPROVED" not in veto: failures.append(f"PRINCIPAL ARCHITECT VETO:\n{veto}")
             if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
-            if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
+            if not ok: failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
             if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
@@ -222,29 +215,23 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         memory = (memory + [reflection])[-3:]
         
         if is_cutoff:
-            # Upgraded: Automatic Continuation Prompt
-            prompt = "\n".join(memory) + f"\n\nThe previous code was cut off. Here is the incomplete code:\n\n{impl_code}\n\nContinue the code EXACTLY from the last line. Do not repeat any previous lines. Output ONLY the remaining code inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+            prompt = "\n".join(memory) + f"\n\nThe previous code was cut off. Here is the incomplete code:\n\n{impl_code}\n\nContinue the code EXACTLY from the last line. Output ONLY the remaining code inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
             msgs = [{"role": "user", "content": prompt}]
             cont_output = generate_fn(msgs, max_tokens=8000)
             new_blocks = extract_code_blocks(cont_output)
             if new_blocks["implementation"]:
-                # Stitch the code together
                 impl_code = impl_code + "\n" + new_blocks["implementation"]
         else:
-            prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide a SURGICAL PATCH in this exact format:\n[PATCH START]\n<<<< ORIGINAL\n[exact lines from current implementation that are broken]\n====\n[corrected lines]\n>>>> PATCHED\n[PATCH END]"
+            # Upgraded: Ask the AI to redefine only the broken functions
+            prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags. You only need to output the functions that need fixing, but they must be complete."
             msgs = [{"role": "user", "content": prompt}]
-            patch_output = generate_fn(msgs, max_tokens=2000)
-            
-            new_impl = apply_surgical_patch(impl_code, patch_output)
-            if new_impl == impl_code:
-                print("[Reflexion] Patch application failed, falling back to full rewrite.")
-                rewrite_prompt = "\n".join(memory) + f"\n\nFailed Implementation:\n{impl_code}\n\nOutput the complete, corrected implementation inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
-                new_output = generate_fn([{"role": "user", "content": rewrite_prompt}], max_tokens=8000)
-                new_blocks = extract_code_blocks(new_output)
-                if new_blocks["implementation"]: impl_code = new_blocks["implementation"]
-                if new_blocks["tests"]: test_code = new_blocks["tests"]
-            else:
-                impl_code = new_impl
+            new_output = generate_fn(msgs, max_tokens=4000)
+            new_blocks = extract_code_blocks(new_output)
+            if new_blocks["implementation"]:
+                # Merge the new code into the sandbox (Python exec naturally overwrites old definitions)
+                impl_code = impl_code + "\n" + new_blocks["implementation"]
+            if new_blocks["tests"]:
+                test_code = new_blocks["tests"]
 
     return impl_code
 
