@@ -1438,6 +1438,9 @@ HTML = r"""<!DOCTYPE html>
 async def root_ui():
     return HTMLResponse(open("ui.html").read())
 
+async def root_ui():
+    return HTMLResponse(open("ui.html").read())
+
 async def home(): return HTML
 
 @app.get("/health")
