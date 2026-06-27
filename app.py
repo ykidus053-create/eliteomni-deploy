@@ -5074,3 +5074,15 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         "mcp_tools": _tools_schema,
     }
 # ── END TTFT PATCH ────────────────────────────────────────────────────────────
+
+
+
+from fastapi import FastAPI
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from proactive_daemon import start_proactive_daemon
+        start_proactive_daemon()
+    except Exception as e:
+        print(f"[Startup] Proactive Daemon failed: {e}")
