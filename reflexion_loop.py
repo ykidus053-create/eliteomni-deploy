@@ -12,7 +12,7 @@ PROTOTYPE_PHRASES = [
     "production implementation", "actual implementation", "full implementation",
     "for demonstration", "quick script", "minimal viable", "extensible",
     "future-proof", "base class", "abstract", "architectural foundation",
-    "interface", "scaffolding"
+    "interface", "scaffolding", "wrapper"
 ]
 
 def has_stub(code: str) -> bool:
@@ -75,9 +75,8 @@ def check_enterprise_compliance(code: str) -> list:
                     base_name = ""
                     if isinstance(base, ast.Name): base_name = base.id
                     elif isinstance(base, ast.Attribute): base_name = base.attr
-                    # Upgraded: Aggressively ban ABC and Protocol
                     if base_name in ('ABC', 'ABCMeta', 'Protocol'):
-                        violations.append(f"SCAFFOLDING BAN: Class '{node.name}' inherits from {base_name}. Write a concrete implementation, not an abstract interface.")
+                        violations.append(f"SCAFFOLDING BAN: Class '{node.name}' inherits from {base_name}. Write a concrete implementation.")
                 for stmt in node.body:
                     if isinstance(stmt, ast.FunctionDef):
                         for decorator in stmt.decorator_list:
@@ -87,15 +86,15 @@ def check_enterprise_compliance(code: str) -> list:
                 for alias in node.names:
                     if 'logging' in alias.name: has_logging = True
                     if 'prometheus_client' in alias.name or 'opentelemetry' in alias.name or 'datadog' in alias.name: has_metrics = True
-        if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'. Enterprise systems must use structured logging.")
-        if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing. Enterprise code must be observable.")
+        if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'.")
+        if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing.")
     except SyntaxError as e:
         violations.append(f"Syntax Error preventing AST audit: {e}")
     return violations
 
 def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
     prompt = [
-        {"role": "system", "content": "You are a Ruthless Staff Engineer reviewing a PR. Does this code represent a COMPLETE, CONCRETE, MONOLITHIC implementation, or is it an over-engineered 'extensible foundation' / abstract base class? Does it implement the hardest algorithmic part, or just wrappers? Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
+        {"role": "system", "content": "You are a Ruthless Principal Engineer. Is this code a shallow wrapper, prototype, or architectural scaffolding? Does it actually implement the core algorithm requested, or does it just set up the architecture and leave the hard logic empty? If it is a prototype, reply 'VETO' followed by a scathing critique. If it is a complete, concrete implementation, reply 'APPROVED'."},
         {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
     ]
     try:
@@ -210,7 +209,7 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed or used scaffolding. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
+        reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: STOP WRITING PROTOTYPES. You MUST rewrite the code from scratch if it was vetoed or used scaffolding. Write the ACTUAL ALGORITHM. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
