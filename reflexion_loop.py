@@ -19,106 +19,83 @@ def has_stub(code: str) -> bool:
             if isinstance(node, ast.FunctionDef):
                 is_stub = True
                 for stmt in node.body:
-                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
-                        continue
-                    if isinstance(stmt, ast.Pass):
-                        continue
-                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is ...:
-                        continue
-                    if isinstance(stmt, ast.Raise) and isinstance(stmt.exc, ast.Call) and isinstance(stmt.exc.func, ast.Name) and stmt.exc.func.id == 'NotImplementedError':
-                        continue
-                    if isinstance(stmt, ast.Return) and (stmt.value is None or (isinstance(stmt.value, ast.Constant) and stmt.value.value is None)):
-                        continue
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str): continue
+                    if isinstance(stmt, ast.Pass): continue
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is ...: continue
+                    if isinstance(stmt, ast.Raise) and isinstance(stmt.exc, ast.Call) and isinstance(stmt.exc.func, ast.Name) and stmt.exc.func.id == 'NotImplementedError': continue
+                    if isinstance(stmt, ast.Return) and (stmt.value is None or (isinstance(stmt.value, ast.Constant) and stmt.value.value is None)): continue
                     is_stub = False
                     break
                 if is_stub: return True
-    except SyntaxError:
-        pass
+    except SyntaxError: pass
 
     lines = code.split('\n')
     for i, line in enumerate(lines):
         if re.search(r'#.*(implement|support|handle|cache|replicate|persist|commit|sync)', line, re.I):
             next_real = [l.strip() for l in lines[i+1:i+5] if l.strip()]
-            if not next_real or all(l in ('pass', '...', 'return None', 'return {}', 'return []') for l in next_real):
-                return True
+            if not next_real or all(l in ('pass', '...', 'return None', 'return {}', 'return []') for l in next_real): return True
     code_lower = code.lower()
     for phrase in PROTOTYPE_PHRASES:
         if phrase in code_lower: return True
     return False
 
 def check_enterprise_compliance(code: str) -> list:
-    """Upgraded: AST audit for strict enterprise standards, security, and docs."""
     violations = []
     try:
         tree = ast.parse(code)
         has_logging = False
         banned_calls = {'eval', 'exec', 'compile', '__import__', 'os.system', 'subprocess.call'}
-        
         for node in ast.walk(tree):
-            # 1. Enforce Type Hints
             if isinstance(node, ast.FunctionDef):
                 if not node.name.startswith("test_") and node.name != "__init__":
                     for arg in node.args.args:
-                        if arg.annotation is None and arg.arg not in ('self', 'cls'):
-                            violations.append(f"Function '{node.name}' missing type hint for argument '{arg.arg}'.")
-                    if node.returns is None:
-                        violations.append(f"Function '{node.name}' missing return type hint.")
-                
-                # 2. Enforce Docstrings on public methods
+                        if arg.annotation is None and arg.arg not in ('self', 'cls'): violations.append(f"Function '{node.name}' missing type hint for argument '{arg.arg}'.")
+                    if node.returns is None: violations.append(f"Function '{node.name}' missing return type hint.")
                 if not node.name.startswith("_") and not node.name.startswith("test_"):
-                    if not ast.get_docstring(node):
-                        violations.append(f"Function '{node.name}' missing a docstring.")
-
-            # 3. Ban bare 'except:' and silent 'pass' in except blocks
+                    if not ast.get_docstring(node): violations.append(f"Function '{node.name}' missing a docstring.")
             if isinstance(node, ast.ExceptHandler):
-                if node.type is None:
-                    violations.append("Bare 'except:' block found. Use specific exceptions.")
-                # Check if the except block just passes (hides bugs)
-                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
-                    violations.append("Silent 'except: pass' block found. Enterprise code must log or re-raise exceptions.")
-                        
-            # 4. Ban 'print(' and enforce 'logging'
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print':
-                violations.append("Use of print() found. Enterprise code must use the 'logging' module.")
-                
-            # 5. Security Audit: Ban dangerous calls
+                if node.type is None: violations.append("Bare 'except:' block found. Use specific exceptions.")
+                if len(node.body) == 1 and isinstance(node.body[0], ast.Pass): violations.append("Silent 'except: pass' block found. Enterprise code must log or re-raise.")
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print': violations.append("Use of print() found. Enterprise code must use the 'logging' module.")
             if isinstance(node, ast.Call):
                 func_name = ""
-                if isinstance(node.func, ast.Name):
-                    func_name = node.func.id
-                elif isinstance(node.func, ast.Attribute):
-                    func_name = node.func.attr
-                if func_name in banned_calls:
-                    violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned in enterprise code.")
-                    
+                if isinstance(node.func, ast.Name): func_name = node.func.id
+                elif isinstance(node.func, ast.Attribute): func_name = node.func.attr
+                if func_name in banned_calls: violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned.")
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
-                    if 'logging' in alias.name:
-                        has_logging = True
-                        
-        if not has_logging and len(code.split('\n')) > 20:
-            violations.append("Missing 'import logging'. Enterprise systems must use structured logging.")
-            
+                    if 'logging' in alias.name: has_logging = True
+        if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'. Enterprise systems must use structured logging.")
     except SyntaxError as e:
         violations.append(f"Syntax Error preventing AST audit: {e}")
-        
     return violations
+
+def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
+    """Upgraded: LLM audits the real-world logic before executing tests."""
+    prompt = [
+        {"role": "system", "content": "You are a ruthless Staff Engineer reviewing a PR. Does this code have real-world logic flaws? (e.g., missing timeouts on network calls, memory leaks on large files, race conditions, unhandled nulls). Reply ONLY with a JSON list of strings. If perfect, reply []."},
+        {"role": "user", "content": f"Implementation:\n{impl_code[:1500]}\n\nTests:\n{test_code[:800]}"}
+    ]
+    try:
+        raw = generate_fn(prompt, max_tokens=300)
+        import json
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except:
+        pass
+    return []
 
 def extract_code_blocks(text: str) -> dict:
     tests_match = re.search(r'\[PYTHON TESTS START\](.*?)\[PYTHON TESTS END\]', text, re.DOTALL)
     impl_match = re.search(r'\[PYTHON IMPL START\](.*?)\[PYTHON IMPL END\]', text, re.DOTALL)
-    if tests_match and impl_match:
-        return {"implementation": impl_match.group(1).strip(), "tests": tests_match.group(1).strip()}
-
+    if tests_match and impl_match: return {"implementation": impl_match.group(1).strip(), "tests": tests_match.group(1).strip()}
     matches = re.findall(r'```(?:python|py)?\n(.*?)```', text, re.DOTALL)
     impl_code, test_code = "", ""
     for match in matches:
-        if "import pytest" in match or "def test_" in match:
-            test_code = match.strip()
-        else:
-            impl_code = match.strip()
-    if not test_code and len(matches) == 1:
-        impl_code = matches[0].strip()
+        if "import pytest" in match or "def test_" in match: test_code = match.strip()
+        else: impl_code = match.strip()
+    if not test_code and len(matches) == 1: impl_code = matches[0].strip()
     return {"implementation": impl_code, "tests": test_code}
 
 def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
@@ -128,26 +105,23 @@ def run_pytest(impl_code: str, test_code: str) -> tuple[bool, str]:
         with open(impl_path, "w") as f: f.write(impl_code)
         with open(test_path, "w") as f: f.write(test_code)
         try:
-            r = subprocess.run(["python", "-m", "pytest", test_path, "-v", "--tb=long"], capture_output=True, text=True, timeout=30, cwd=tmpdir)
+            r = subprocess.run(["python", "-m", "pytest", test_path, "-v", "--tb=long", "-W", "error"], capture_output=True, text=True, timeout=30, cwd=tmpdir)
             return r.returncode == 0, r.stdout + r.stderr
-        except subprocess.TimeoutExpired:
-            return False, "Pytest execution timed out after 30 seconds."
-        except Exception as e:
-            return False, str(e)
+        except subprocess.TimeoutExpired: return False, "Pytest execution timed out after 30 seconds."
+        except Exception as e: return False, str(e)
 
 def run_code(code: str) -> tuple[bool, str]:
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        f.write(code)
-        fname = f.name
+        f.write(code); fname = f.name
     try:
         r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=30)
         return r.returncode == 0, r.stdout + r.stderr
-    except Exception as e:
-        return False, str(e)
+    except Exception as e: return False, str(e)
     finally:
         if os.path.exists(fname): os.unlink(fname)
 
 def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: int = 5) -> str:
+    """Upgraded: Real-World Logic Audit + Strict Pytest."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -155,25 +129,22 @@ def reflexion_verify(raw_output: str, generate_fn, model: str = "", max_rounds: 
     for round_num in range(1, max_rounds + 1):
         stubs = has_stub(impl_code)
         enterprise_violations = check_enterprise_compliance(impl_code)
+        logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn)
         ok, output = run_pytest(impl_code, test_code)
         
-        if not stubs and not enterprise_violations and ok:
-            print(f"[Reflexion] Enterprise audit passed & pytests 100% on round {round_num}")
+        if not stubs and not enterprise_violations and not logic_flaws and ok:
+            print(f"[Reflexion] Enterprise audit, logic audit passed & pytests 100% on round {round_num}")
             break
             
         failures = []
-        if stubs:
-            failures.append("CRITICAL FAILURE: AST analysis detected empty function bodies (pass, ...) OR forbidden prototype phrases (e.g., 'toy', 'basic').")
-        if enterprise_violations:
-            failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:6]))
-        if not ok:
-            failures.append(f"Test/Execution Failures:\n{output[:800]}")
-        if not test_code:
-            failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
-            
+        if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or prototype phrases.")
+        if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
+        if logic_flaws: failures.append("REAL-WORLD LOGIC FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
+        if not ok: failures.append(f"Test/Execution Failures (Strict Mode):\n{output[:800]}")
+        if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - STRICT ENTERPRISE AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
+        reflection = f"[REFLEXION ROUND {round_num} - REAL-WORLD ENTERPRISE AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST fix the runtime error OR implement the missing logic completely.\nYou MUST output BOTH the corrected implementation AND the tests in separate python blocks."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
