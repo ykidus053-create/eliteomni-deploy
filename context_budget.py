@@ -53,9 +53,11 @@ def compress_rag_hits(hits: list, budget_tokens: int) -> str:
     return "\n".join(result)
 
 def get_optimal_max_tokens(msg: str, skill: str, complexity: str) -> int:
-    """Upgraded: Dynamic token allocation based on task."""
-    if complexity == "hard" or skill == "coder":
+    """Upgraded: Force massive token budget for coders to prevent truncation."""
+    if skill == "coder":
         return 4000
+    elif complexity == "hard":
+        return 3000
     elif complexity == "medium":
         return 2000
     return 1000
