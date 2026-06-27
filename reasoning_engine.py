@@ -1,6 +1,6 @@
 """
-Deliberative Reasoning Engine — AlphaGeometry / o1 Absolute Frontier.
-Implements: MCTS (Monte Carlo Tree Search) for Logic and Z3 Formal Theorem Proving.
+Deliberative Reasoning Engine — Frontier Tier (o1-style).
+Implements: Hidden Scratchpad, Self-Correcting Math Loop, and Devil's Advocate Logic Verification.
 """
 import re, time, random, threading, subprocess, tempfile, os, resource
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,14 +8,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="reason")
 
 def _set_limits():
-    resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
-    resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_CPU, (3, 3))
+    resource.setrlimit(resource.RLIMIT_AS, (100 * 1024 * 1024, 100 * 1024 * 1024))
 
-def execute_z3_code(code: str) -> tuple[bool, str]:
-    """Executes Z3 formal logic code safely and returns (success, output)."""
+def execute_math_code(code: str) -> tuple[bool, str]:
+    """Executes python math code safely and returns (success, output)."""
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
-        # Ensure z3 is imported
-        f.write("import z3\nimport sympy\n" + code)
+        f.write("import math\nimport sympy\n" + code)
         fname = f.name
     try:
         r = subprocess.run(["python", fname], capture_output=True, text=True, timeout=5, preexec_fn=_set_limits)
@@ -27,10 +26,10 @@ def execute_z3_code(code: str) -> tuple[bool, str]:
     finally:
         if os.path.exists(fname): os.unlink(fname)
 
-def formal_verification(msg: str, generate_fn, model: str, max_retries: int = 2) -> str:
-    """Forces the AI to write Z3/SymPy constraints to formally prove the answer."""
+def self_correcting_math(msg: str, generate_fn, model: str, max_retries: int = 3) -> str:
+    """Forces the AI to write math code, executes it, and feeds errors back for self-correction."""
     prompt = [
-        {"role": "system", "content": "You are a Formal Logic Engine. You MUST write a Python script using the `z3` library (or `sympy`) to construct a formal proof or constraint solver for the problem. Output ONLY the code inside [FORMAL PROOF START] and [FORMAL PROOF END] tags. Print the final result or proof status at the end."},
+        {"role": "system", "content": "You are a mathematical computation engine. You MUST output a python code block formatted exactly as [PYTHON CALC START] print(answer) [PYTHON CALC END] to calculate this. Do not guess numbers."},
         {"role": "user", "content": msg}
     ]
     
@@ -38,76 +37,98 @@ def formal_verification(msg: str, generate_fn, model: str, max_retries: int = 2)
     last_code = ""
     for attempt in range(max_retries):
         if last_error:
-            prompt.append({"role": "assistant", "content": f"[FORMAL PROOF START]\n{last_code}\n[FORMAL PROOF END]"})
-            prompt.append({"role": "user", "content": f"Execution failed: {last_error}\nFix the code and output the corrected [FORMAL PROOF START]...[FORMAL PROOF END] block."})
+            prompt.append({"role": "assistant", "content": f"[PYTHON CALC START]\n{last_code}\n[PYTHON CALC END]"})
+            prompt.append({"role": "user", "content": f"Execution failed with error: {last_error}\nFix the code and output the corrected [PYTHON CALC START]...[PYTHON CALC END] block."})
         
-        resp = generate_fn(prompt, max_tokens=800, model=model)
-        match = re.search(r'\[FORMAL PROOF START\](.*?)\[FORMAL PROOF END\]', resp, re.DOTALL)
+        resp = generate_fn(prompt, max_tokens=500, model=model)
+        match = re.search(r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]', resp, re.DOTALL)
         
-        if not match: return resp
+        if not match:
+            return resp # Fallback if AI refuses to use tags
             
         code = match.group(1).strip()
         last_code = code
-        success, output = execute_z3_code(code)
+        success, output = execute_math_code(code)
         
         if success:
-            return f"[FORMALLY PROVEN RESULT: {output}]"
+            return f"[CALCULATED RESULT: {output}]"
         else:
             last_error = output
             
-    return f"[FORMAL VERIFICATION FAILED AFTER {max_retries} ATTEMPTS. Last error: {last_error}]"
+    return f"[MATH EXECUTION FAILED AFTER {max_retries} ATTEMPTS. Last error: {last_error}]"
 
-def mcts_search(msg: str, system: str, history: list, generate_fn, model: str, depth: int = 2, branching: int = 3) -> str:
-    """Monte Carlo Tree Search for logical reasoning. Explores branches and evaluates soundness."""
+def extract_and_run_math(response: str) -> str:
+    """Upgraded: Universal Math Interceptor. Finds CALC(), [PYTHON CALC], and raw equations, runs them."""
+    final_response = response
+    has_math = False
     
-    # Root state: Initial logical step
-    root_prompt = [{"role": "system", "content": system + "\nTake the FIRST logical step towards solving this. Do not solve the whole thing."}] + history[-6:] + [{"role": "user", "content": msg}]
-    root_step = generate_fn(root_prompt, max_tokens=300, model=model)
-    
-    current_best_path = [root_step]
-    
-    for d in range(depth):
-        # Generate branching possibilities
-        def _gen_branch(hint):
-            branch_prompt = [{"role": "system", "content": system + f"\nCurrent logical path: {' '.join(current_best_path)}\nProvide the NEXT logical step. Approach: {hint}"}] + history[-4:] + [{"role": "user", "content": msg}]
-            return generate_fn(branch_prompt, max_tokens=400, model=model)
+    # 1. Intercept CALC(...) syntax
+    calc_matches = re.findall(r'CALC\((.*?)\)', response, re.DOTALL)
+    for expr in calc_matches:
+        has_math = True
+        success, result = execute_math_code(f"print({expr})")
+        if success:
+            final_response = final_response.replace(f"CALC({expr})", f"**{result}**")
+        else:
+            final_response = final_response.replace(f"CALC({expr})", f"[Calc Error: {result}]")
+
+    # 2. Intercept [PYTHON CALC START]...[PYTHON CALC END] syntax
+    pattern = r'\[PYTHON CALC START\](.*?)\[PYTHON CALC END\]'
+    matches = re.findall(pattern, final_response, re.DOTALL)
+    for code in matches:
+        has_math = True
+        success, result = execute_math_code(code.strip())
+        if success:
+            final_response = final_response.replace(
+                f"[PYTHON CALC START]{code}[PYTHON CALC END]",
+                f"**{result}**"
+            )
+        else:
+            final_response = final_response.replace(
+                f"[PYTHON CALC START]{code}[PYTHON CALC END]",
+                f"[Calc Error: {result}]"
+            )
             
-        hints = ["Direct logical deduction.", "Consider an alternative interpretation.", "Find a counterexample or edge case."]
-        futures = [_executor.submit(_gen_branch, h) for h in hints]
-        
-        candidates = []
-        for fut in as_completed(futures, timeout=20):
-            try:
-                res = fut.result(timeout=5)
-                if res: candidates.append(res)
-            except: pass
-            
-        if not candidates: break
-        
-        # Evaluate branches for logical soundness
-        def _eval_branch(candidate):
-            eval_prompt = [{"role": "system", "content": "You are a Logic Evaluator. Score this reasoning step from 0.0 to 1.0 for logical soundness and relevance. Reply ONLY with a float."}, {"role": "user", "content": candidate}]
-            try:
-                score_str = generate_fn(eval_prompt, max_tokens=10, model=model)
-                return float(re.search(r'0\.\d+|1\.0', score_str).group())
-            except: return 0.1
-                
-        eval_futures = {_executor.submit(_eval_branch, c): c for c in candidates}
-        best_score, best_step = 0.0, ""
-        for fut in as_completed(eval_futures, timeout=15):
-            try:
-                score = fut.result(timeout=5)
-                if score >= best_score:
-                    best_score = score
-                    best_step = eval_futures[fut]
-            except: pass
-            
-        if best_step:
-            current_best_path.append(best_step)
-            
-    # Synthesize final answer from the best MCTS path
-    synth_prompt = [{"role": "system", "content": system + "\nSynthesize the final, bulletproof answer based on the verified logical path."}, {"role": "user", "content": f"Verified Logical Path:\n{' '.join(current_best_path)}\n\nFinal Answer:"}]
-    return generate_fn(synth_prompt, max_tokens=1000, model=model)
+    return final_response, has_math
+
+def generate_hypotheses(msg: str, system: str, history: list, generate_fn, model: str, n: int = 3) -> list:
+    def _gen_one(approach_hint: str) -> str:
+        prompt = [{"role": "system", "content": system + f"\n\nApproach hint: {approach_hint}"}] + history[-6:] + [{"role": "user", "content": msg}]
+        try: return generate_fn(prompt, max_tokens=1500, model=model)
+        except: return ""
+
+    approaches = [
+        "Direct and concise. Lead with the answer.",
+        "Step by step reasoning. Show your work explicitly.",
+        "Consider edge cases and alternative interpretations first.",
+    ][:n]
+
+    futures = [_executor.submit(_gen_one, approach) for approach in approaches]
+    results = []
+    for fut in as_completed(futures, timeout=30):
+        try:
+            r = fut.result(timeout=5)
+            if r and len(r) > 50: results.append(r)
+        except: pass
+    return results
+
+def devils_advocate(winner: str, msg: str, generate_fn, model: str) -> str:
+    """Upgraded: Tries to break the AI's logic. If it finds a hole, forces a rewrite."""
+    prompt = [
+        {"role": "system", "content": "You are a Ruthless Devil's Advocate. Find the ONE logical flaw, unsupported claim, or math error in the candidate. If it is flawless, reply EXACTLY: FLAWLESS. If flawed, reply: FLAW: [explain]"},
+        {"role": "user", "content": f"Question: {msg[:300]}\nCandidate Answer: {winner[:1000]}"}
+    ]
+    try:
+        critique = generate_fn(prompt, max_tokens=200, model=model)
+        if "FLAW:" in critique.upper():
+            rewrite_prompt = [
+                {"role": "system", "content": "Fix the flaw in your reasoning and output the corrected, flawless answer."},
+                {"role": "user", "content": f"Original Answer: {winner[:800]}\n\nFlaw Identified: {critique}\n\nProvide the corrected answer:"}
+            ]
+            fixed = generate_fn(rewrite_prompt, max_tokens=1000, model=model)
+            return fixed
+    except: pass
+    return winner
 
 def deliberate(msg: str, system: str, history: list, generate_fn, model: str, complexity: str = "medium", skill: str = "general") -> str:
     t0 = time.time()
@@ -115,20 +136,29 @@ def deliberate(msg: str, system: str, history: list, generate_fn, model: str, co
     # Easy path: single generation
     if complexity == "easy":
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
-        return generate_fn(prompt, max_tokens=2500, model=model)
+        resp = generate_fn(prompt, max_tokens=2500, model=model)
+        if skill == "calculator":
+            resp, _ = extract_and_run_math(resp)
+        return resp
 
-    # Math / Logic path: Z3 Formal Theorem Prover
-    if skill == "calculator" or any(k in msg.lower() for k in ["prove", "logically", "if and only if", "implies"]):
-        proof_result = formal_verification(msg, generate_fn, model)
-        format_prompt = [{"role": "system", "content": "Use the formally proven result to answer the user's question directly and concisely."}, {"role": "user", "content": f"Question: {msg}\nFormal Proof Result: {proof_result}\n\nFinal Answer:"}]
-        return generate_fn(format_prompt, max_tokens=500, model=model)
+    # Hard/Medium path: Tree of Thoughts + Devil's Advocate + Math Execution
+    candidates = generate_hypotheses(msg, system, history, generate_fn, model, n=3 if complexity == "hard" else 2)
+    if not candidates:
+        prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
+        return generate_fn(prompt, max_tokens=1200, model=model)
 
-    # Hard / Researcher path: MCTS Reasoning
-    if complexity in ("hard", "medium") and skill in ("researcher", "general"):
-        final_answer = mcts_search(msg, system, history, generate_fn, model)
-        print(f"[Deliberate] MCTS Search completed, t={int((time.time()-t0)*1000)}ms")
-        return final_answer
+    winner = max(candidates, key=len)
+    
+    # Run Devil's Advocate to break and rewrite logic
+    winner = devils_advocate(winner, msg, generate_fn, model)
+    
+    # If calculator, use the self-correcting math loop
+    if skill == "calculator":
+        math_result = self_correcting_math(msg, generate_fn, model)
+        winner = f"{math_result}\n\n{winner}"
+    else:
+        # Still run any embedded math in the general/researcher response
+        winner, _ = extract_and_run_math(winner)
 
-    # Fallback
-    prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
-    return generate_fn(prompt, max_tokens=2000, model=model)
+    print(f"[Deliberate] Frontier ToT + Devil's Advocate done, t={int((time.time()-t0)*1000)}ms")
+    return winner
