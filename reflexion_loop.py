@@ -50,7 +50,6 @@ def check_enterprise_compliance(code: str) -> list:
         banned_calls = {'eval', 'exec', 'compile', '__import__', 'os.system', 'subprocess.call'}
         
         for node in ast.walk(tree):
-            # 1. Enforce Type Hints & Docstrings
             if isinstance(node, ast.FunctionDef):
                 if not node.name.startswith("test_") and node.name != "__init__":
                     for arg in node.args.args:
@@ -58,19 +57,25 @@ def check_enterprise_compliance(code: str) -> list:
                     if node.returns is None: violations.append(f"Function '{node.name}' missing return type hint.")
                 if not node.name.startswith("_") and not node.name.startswith("test_"):
                     if not ast.get_docstring(node): violations.append(f"Function '{node.name}' missing a docstring.")
-            # 2. Ban bare 'except:' and silent 'pass'
             if isinstance(node, ast.ExceptHandler):
                 if node.type is None: violations.append("Bare 'except:' block found. Use specific exceptions.")
                 if len(node.body) == 1 and isinstance(node.body[0], ast.Pass): violations.append("Silent 'except: pass' block found. Enterprise code must log or re-raise.")
-            # 3. Ban 'print('
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'print': violations.append("Use of print() found. Enterprise code must use the 'logging' module.")
-            # 4. Security Audit
+            
+            # Upgraded: Static Taint Analysis (Network/DB calls MUST have timeouts)
             if isinstance(node, ast.Call):
                 func_name = ""
                 if isinstance(node.func, ast.Name): func_name = node.func.id
                 elif isinstance(node.func, ast.Attribute): func_name = node.func.attr
+                
                 if func_name in banned_calls: violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned.")
-            # 5. Ban Abstract Base Classes
+                
+                # Enforce timeouts on network calls
+                if func_name in ('get', 'post', 'put', 'delete', 'request', 'connect', 'create_connection'):
+                    has_timeout = any(kw.arg == 'timeout' for kw in node.keywords)
+                    if not has_timeout:
+                        violations.append(f"PRODUCTION SAFETY: Network call '{func_name}()' missing 'timeout' argument. It will hang forever if the network drops.")
+
             if isinstance(node, ast.ClassDef):
                 for base in node.bases:
                     base_name = ""
@@ -84,7 +89,6 @@ def check_enterprise_compliance(code: str) -> list:
                             if isinstance(decorator, ast.Name) and decorator.id == 'abstractmethod':
                                 violations.append(f"OVER-ENGINEERING: Abstract method '{stmt.name}' found. Implement it completely.")
                                 
-            # 6. Upgraded: Enforce Observability (Metrics/Tracing)
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     if 'logging' in alias.name: has_logging = True
@@ -92,7 +96,7 @@ def check_enterprise_compliance(code: str) -> list:
                         has_metrics = True
                         
         if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'. Enterprise systems must use structured logging.")
-        if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing (e.g., prometheus_client or opentelemetry). Enterprise code must be observable.")
+        if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing. Enterprise code must be observable.")
             
     except SyntaxError as e:
         violations.append(f"Syntax Error preventing AST audit: {e}")
@@ -100,7 +104,7 @@ def check_enterprise_compliance(code: str) -> list:
 
 def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
     prompt = [
-        {"role": "system", "content": "You are a Ruthless Site Reliability Engineer (SRE). Does this code represent a COMPLETE, CONCRETE, OBSERVABLE implementation? Or is it missing distributed systems guarantees (idempotency, locks, retries, circuit breakers)? Reply ONLY 'VETO' followed by a scathing critique, or 'APPROVED'."},
+        {"role": "system", "content": "You are a Ruthless Staff Engineer reviewing a PR for a critical distributed system. Does this code handle partial failures, network partitions, and malformed inputs safely? Reply ONLY 'VETO' followed by a scathing critique of what will break in production, or 'APPROVED'."},
         {"role": "user", "content": f"Task: {task}\n\nCode:\n{impl_code[:2000]}"}
     ]
     try:
@@ -111,7 +115,7 @@ def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
 
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
     prompt = [
-        {"role": "system", "content": "You are a ruthless Distributed Systems Engineer reviewing a PR. Does this code have real-world logic flaws? (e.g., race conditions, missing idempotency keys, split-brain states, missing timeouts, network partitions). Reply ONLY with a JSON list of strings. If perfect, reply []."},
+        {"role": "system", "content": "You are a Chaos Engineer. Does this code have real-world failure modes? (e.g., missing circuit breakers, retry storms, deadlocks, unhandled JSON decode errors). Reply ONLY with a JSON list of strings. If perfect, reply []."},
         {"role": "user", "content": f"Implementation:\n{impl_code[:1500]}\n\nTests:\n{test_code[:800]}"}
     ]
     try:
@@ -173,19 +177,19 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         ok, output = run_pytest(impl_code, test_code)
         
         if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
-            print(f"[Reflexion] SRE Audit passed & pytests 100% on round {round_num}")
+            print(f"[Reflexion] Chaos & SRE Audit passed & pytests 100% on round {round_num}")
             break
             
         failures = []
         if stubs: failures.append("CRITICAL FAILURE: AST detected empty function bodies or prototype phrases.")
         if enterprise_violations: failures.append("ENTERPRISE COMPLIANCE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
-        if "APPROVED" not in veto: failures.append(f"SRE PRINCIPAL VETO:\n{veto}")
-        if logic_flaws: failures.append("DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
+        if "APPROVED" not in veto: failures.append(f"STAFF ENGINEER VETO:\n{veto}")
+        if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
         if not ok: failures.append(f"Test/Execution Failures (Strict Mode & Resource Limits):\n{output[:800]}")
         if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
-        reflection = f"[REFLEXION ROUND {round_num} - SRE & DISTRIBUTED SYSTEMS AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
+        reflection = f"[REFLEXION ROUND {round_num} - CHAOS & PRODUCTION SAFETY AUDIT]\nExecution failed. Errors detected:\n{chr(10).join(failures)}\n\nRULE: You MUST rewrite the code from scratch if it was vetoed. Do not patch toy code. Output BOTH the corrected implementation AND the tests."
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
