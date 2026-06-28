@@ -149,9 +149,9 @@ CLAUDE_STYLE_DEFAULTS = {
 #   TIER 3 (SuperPod equivalent)     → hard/research, max capability
 # PUE target: 1.1 (Google TPU DC standard) — minimize redundant calls
 INFRA_TIERS = {
-    "tier1": {"models": ["mistral-medium-3.5"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
-    "tier2": {"models": ["mistral-medium-3.5"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
-    "tier3": {"models": ["mistral-medium-3.5"], "complexity": ["hard", "research"], "max_tokens": 8192, "label": "frontier"},
+    "tier1": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
+    "tier2": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
+    "tier3": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["hard", "research"], "max_tokens": 8192, "label": "frontier"},
 }
 
 CODING_SKILLS = {"coder", "code", "coding", "swe", "calculator", "debug", "refactor", "engineer"}
