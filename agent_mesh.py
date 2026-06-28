@@ -34,11 +34,17 @@ def inject_cot(system, skill, complexity, msg):
     return system + cot
 
 def strip_reasoning_artifacts(text):
-    # Upgraded: Strip the Zero-Shot Plan so the user only sees the final code/answer
+    # Upgraded: Strip Step-Back, Draft, and Critique blocks so the user only sees the final code/answer
+    text = re.sub(r'<step_back>.*?</step_back>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<plan>.*?</plan>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<draft>.*?</draft>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<critique>.*?</critique>', '', text, flags=re.DOTALL)
     text = re.sub(r'<zero_shot_plan>.*?</zero_shot_plan>', '', text, flags=re.DOTALL)
     for label in ['INTENT','AMBIGUITY','APPROACH','CONSTRAINTS','PLAN','SELF-CHECK','CORRECTION']:
-        text = re.sub(rf'{label}:.*?\n', '', text)
-    text = re.sub(r'DRAFT:.*?\n', '', text, flags=re.DOTALL)
+        text = re.sub(rf'{label}:.*?
+', '', text)
+    text = re.sub(r'DRAFT:.*?
+', '', text, flags=re.DOTALL)
     return text.strip()
 
 def cot_complexity_gate(msg, complexity):
