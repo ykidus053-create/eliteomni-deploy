@@ -25,6 +25,41 @@ except Exception as _e:
     reflexion_verify = None
 
 import re, math, time, os, asyncio
+
+# ── AUTO-WIRED MODULES ───────────────────────────────────────────────────────
+_wired = {}
+def _try_import(name, attrs):
+    try:
+        import importlib
+        mod = importlib.import_module(name)
+        for a in attrs:
+            if hasattr(mod, a):
+                _wired[f"{name}.{a}"] = getattr(mod, a)
+        print(f"[wire] {name} ok")
+    except Exception as e:
+        print(f"[wire] {name} skip: {e}")
+
+_try_import("agent_core",          ["run_agent", "agent_respond"])
+_try_import("agent_mesh",          ["run_mesh", "mesh_respond", "strip_internal_blocks"])
+_try_import("swarm_orchestrator",  ["run_swarm"])
+_try_import("reasoning_engine",    ["self_correcting_math", "execute_math_code"])
+_try_import("error_learner",       ["get_error_warnings", "post_process_check", "record_error"])
+_try_import("task_queue",          ["submit_task", "get_task_status", "should_use_async_task"])
+_try_import("refactor_daemon",     ["start_refactor_daemon"])
+_try_import("working_memory",      ["store", "retrieve", "clear"])
+_try_import("task_decomposer",     ["decompose_task"])
+_try_import("tool_composer",       ["compose_tools"])
+_try_import("tool_calling",        ["dispatch", "handle_tool_call"])
+_try_import("uncertainty_engine",  ["assess", "flag_uncertain"])
+_try_import("skill_library",       ["get_skill_prompt", "list_skills"])
+_try_import("reflection_engine",   ["reflect", "run_reflection"])
+_try_import("cot_engine",          ["run_cot", "chain_of_thought"])
+_try_import("autonomous_agent",    ["run", "autonomous_respond"])
+_try_import("intelligence_router", ["route", "select_model"])
+_try_import("planner",             ["plan", "make_plan"])
+_try_import("goal_engine",         ["set_goal", "get_goals", "track_goal"])
+# ─────────────────────────────────────────────────────────────────────────────
+
 import sqlite3 as _sqlite3
 
 from modules.core.http_client import (
