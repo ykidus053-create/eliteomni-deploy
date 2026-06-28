@@ -1473,12 +1473,12 @@ def pipeline_stream(msg: str, history: list):
         final = _clean(final)  # strip think blocks + reasoning preamble
         # strip zero-shot impl wrapper tags
         import re as _reclean
-        final = _reclean.sub(r'\[PYTHON IMPL START\]', '', final)
-        final = _reclean.sub(r'\[PYTHON IMPL END\]', '', final)
-        final = _reclean.sub(r'\[PYTHON TESTS START\]', '', final)
-        final = _reclean.sub(r'\[PYTHON TESTS END\]', '', final)
-        final = _reclean.sub(r'\[FORMAL PROOF START\]', '', final)
-        final = _reclean.sub(r'\[FORMAL PROOF END\]', '', final)
+        for _tag in ['[PYTHON IMPL START]','[PYTHON IMPL END]','[PYTHON TESTS START]',
+                        '[PYTHON TESTS END]','[FORMAL PROOF START]','[FORMAL PROOF END]',
+                        '<step_back>','</step_back>','<plan>','</plan>',
+                        '<draft>','</draft>','<critique>','</critique>',
+                        '<zero_shot_plan>','</zero_shot_plan>']:
+            final = final.replace(_tag, '')
         final = re.sub(r"^(Certainly!?|Absolutely!?|Great question!?|Sure!?)[,!.]?\s*", "", final, flags=re.IGNORECASE).strip()
         # ── VERIFICATION + SELF-CORRECTION ───────────────────────────────
         print(f"[Verify] skill={skill} len={len(final)}")
@@ -2078,7 +2078,18 @@ function _renderArtifacts(el) {
     b.closest('pre').insertAdjacentElement('afterend', art);
   });
 }
-function renderMd(text){console.log("[renderMd]",text.length,text.slice(0,60));
+function renderMd(text){
+  // Strip server-side planning blocks that leaked into stream
+  const _stripTags=['step_back','plan','draft','critique','zero_shot_plan','think','think_act_verify'];
+  _stripTags.forEach(t=>{text=text.replace(new RegExp('<'+t+'>[\\s\\S]*?</'+t+'>','gi'),'');});
+  _stripTags.forEach(t=>{text=text.replace(new RegExp('</?'+t+'>','gi'),'');});
+  ['[PYTHON IMPL START]','[PYTHON IMPL END]','[PYTHON TESTS START]','[PYTHON TESTS END]',
+   '[FORMAL PROOF START]','[FORMAL PROOF END]'].forEach(t=>{text=text.split(t).join('');});
+  // Strip plain-text internal reasoning labels
+  text=text.replace(/^(THINK|ACT|VERIFY|CRITIQUE|DRAFT|PLAN|OBSERVE|STEP \d+|PHASE \d+|INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|SELF-CHECK|CORRECTION|SEARCH\(.*?\)|CALC\(.*?\)|EXECUTE_INTERNAL:.*|VERIFY_INTERNAL:.*)[:\s][^\n]*/gm,'');
+  text=text.replace(/^(={3,}|\-{3,})\s*$/gm,'');
+  text=text.replace(/\n{3,}/g,'\n\n').trim();
+  console.log("[renderMd]",text.length,text.slice(0,60));
   try{
     const opens=(text.match(/```/g)||[]).length;
     if(opens%2!==0)text=text+'\n```';
