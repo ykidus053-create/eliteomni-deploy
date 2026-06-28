@@ -9,8 +9,12 @@ def _conn():
     if not hasattr(_local, "con"):
         _local.con = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
         _local.con.execute("PRAGMA journal_mode=WAL")
-        _local.con.execute("""CREATE TABLE IF NOT EXISTS memory
-                              (id INTEGER PRIMARY KEY, text TEXT, ts REAL, skill TEXT)""")
+        _local.con.execute("""CREATE TABLE IF NOT EXISTS memory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        ts REAL NOT NULL,
+        skill TEXT DEFAULT 'general'
+    )""")
         _local.con.execute("""CREATE TABLE IF NOT EXISTS episodic
                               (id INTEGER PRIMARY KEY, summary TEXT, ts REAL)""")
         _local.con.commit()

@@ -5253,22 +5253,3 @@ from apo_engine import start_apo_engine
 from refactor_daemon import start_refactor_daemon
 from self_healing import start_self_healing_daemon
 
-@app.on_event("startup")
-async def ultimate_startup():
-    print("[Startup] Initializing Ultimate Daemons...")
-    try:
-        from modules.core.http_client import mistral_generate
-        gen_fn = lambda p, **kw: mistral_generate(p, max_tokens=kw.get("max_tokens", 500), model=kw.get("model", "mistral-small-latest"))
-        
-        try: start_proactive_daemon()
-        except Exception as e: print(f"Proactive Daemon failed: {e}")
-        try: start_agi_emulation(gen_fn)
-        except Exception as e: print(f"AGI Emulation failed: {e}")
-        try: start_apo_engine(gen_fn)
-        except Exception as e: print(f"APO Engine failed: {e}")
-        try: start_refactor_daemon(gen_fn)
-        except Exception as e: print(f"Refactor Daemon failed: {e}")
-        try: start_self_healing_daemon(gen_fn)
-        except Exception as e: print(f"Self-Healing Daemon failed: {e}")
-    except Exception as e:
-        print(f"[Startup] Daemon init failed: {e}")
