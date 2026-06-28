@@ -10,7 +10,8 @@ def _ci_loop(generate_fn):
             # Run the actual project test suite
             r = subprocess.run(["python", "-m", "pytest", "tests/", "-v", "--tb=long"], capture_output=True, text=True, timeout=60)
             if r.returncode != 0:
-                log.error(f"[SelfHealing] CI Regression detected! Attempting autonomous fix...")
+                from context_compressor import log_subconscious_action
+            log_subconscious_action('SelfHealing', 'Detected a CI regression and attempted an autonomous fix.')
                 from reflexion_loop import reflexion_verify
                 # Feed the traceback to the AI to fix
                 task = "Fix the failing pytest regression in the test suite."

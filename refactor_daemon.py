@@ -34,7 +34,8 @@ def _refactor_loop(generate_fn):
         try:
             debt = _scan_codebase_for_debt()
             if debt:
-                log.info(f"[RefactorDaemon] Found {len(debt)} technical debt items. Generating suggestions...")
+                from context_compressor import log_subconscious_action
+                log_subconscious_action('RefactorDaemon', f'Found {len(debt)} technical debt items and generated suggestions.')
                 prompt = [
                     {"role": "system", "content": "You are an Autonomous Refactoring Engine. Output a JSON array of objects with 'file', 'func', and 'suggestion' keys describing how to fix the technical debt."},
                     {"role": "user", "content": f"Technical Debt Found:\n{str(debt)}"}

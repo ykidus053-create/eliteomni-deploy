@@ -498,6 +498,15 @@ def pipeline_sync(msg: str, history: list) -> dict:
     scratchpad_save(f"q_{int(time.time())}", msg[:120])
     clean_msg, search_ctx = extract_search_context(msg)
     
+    # Upgraded: Inject Subconscious Context (what daemons did) and compress history
+    try:
+        from context_compressor import get_subconscious_context, compress_history
+        _sub_ctx = get_subconscious_context()
+        if _sub_ctx: memory.insert(0, _sub_ctx)
+        # Compress history if it's getting too long
+        history = compress_history(history, lambda p, **kw: mistral_generate(p, max_tokens=kw.get("max_tokens", 300), model=kw.get("model", "mistral-small-latest")))
+    except: pass
+    
     # Upgraded: Cross-File Codebase RAG & Goal Tracker
     try:
         from code_rag import get_relevant_code_context
@@ -5253,3 +5262,9 @@ from apo_engine import start_apo_engine
 from refactor_daemon import start_refactor_daemon
 from self_healing import start_self_healing_daemon
 
+
+
+@app.get("/subconscious")
+async def subconscious_endpoint():
+    from context_compressor import get_subconscious_context
+    return JSONResponse({"log": get_subconscious_context()})
