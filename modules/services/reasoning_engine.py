@@ -580,4 +580,14 @@ def route_to_reasoning_engine(msg: str, skill: str, complexity: str,
         except Exception:
             pass
 
+    # ── DELIBERATE: execution-augmented planning for hard/medium ─────────
+    if complexity in ("hard", "medium") and skill in ("coder", "researcher", "calculator"):
+        try:
+            from reasoning_engine import deliberate as _deliberate
+            from modules.core.http_client import mistral_generate as _mg
+            _delib = _deliberate(msg, "", [], lambda p, **kw: _mg(p, max_tokens=kw.get("max_tokens",1500)), "mistral-large-latest", complexity=complexity, skill=skill)
+            if _delib:
+                result_parts.append("[Deliberate Reasoning]\n" + str(_delib)[:800])
+        except Exception as _de:
+            print("[deliberate]", _de)
     return "\n\n".join(result_parts)

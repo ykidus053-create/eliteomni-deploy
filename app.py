@@ -1471,6 +1471,14 @@ def pipeline_stream(msg: str, history: list):
     # ── Post-processing (after streaming) ─────────────────────────────────────
     if final:
         final = _clean(final)  # strip think blocks + reasoning preamble
+        # strip zero-shot impl wrapper tags
+        import re as _reclean
+        final = _reclean.sub(r'\[PYTHON IMPL START\]', '', final)
+        final = _reclean.sub(r'\[PYTHON IMPL END\]', '', final)
+        final = _reclean.sub(r'\[PYTHON TESTS START\]', '', final)
+        final = _reclean.sub(r'\[PYTHON TESTS END\]', '', final)
+        final = _reclean.sub(r'\[FORMAL PROOF START\]', '', final)
+        final = _reclean.sub(r'\[FORMAL PROOF END\]', '', final)
         final = re.sub(r"^(Certainly!?|Absolutely!?|Great question!?|Sure!?)[,!.]?\s*", "", final, flags=re.IGNORECASE).strip()
         # ── VERIFICATION + SELF-CORRECTION ───────────────────────────────
         print(f"[Verify] skill={skill} len={len(final)}")

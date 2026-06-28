@@ -1009,6 +1009,10 @@ def _strip_internal_blocks(text: str) -> str:
         text = _re.sub('<' + tag + '>.*?</' + tag + '>', '', text, flags=_re.DOTALL)
     for tag in ['step_back', 'plan', 'draft', 'critique', 'zero_shot_plan']:
         text = _re.sub('<' + tag + '>', '', text)
+    # strip impl wrapper tags
+    for _tag in ['PYTHON IMPL START', 'PYTHON IMPL END', 'PYTHON TESTS START',
+                 'PYTHON TESTS END', 'FORMAL PROOF START', 'FORMAL PROOF END']:
+        text = text.replace('[' + _tag + ']', '')
     text = _re.sub(r'\n{3,}', '\n\n', text).strip()
     return text
 
