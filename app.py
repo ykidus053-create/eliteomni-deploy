@@ -497,6 +497,18 @@ def pipeline_sync(msg: str, history: list) -> dict:
         episodic = [e for e in ([ctx_sum[:200]] + list(_mem_episodic or []))[:4] if not (e[:60] in seen_ep or seen_ep.add(e[:60]))]
     scratchpad_save(f"q_{int(time.time())}", msg[:120])
     clean_msg, search_ctx = extract_search_context(msg)
+    
+    # Upgraded: Cross-File Codebase RAG & Goal Tracker
+    try:
+        from code_rag import get_relevant_code_context
+        _code_ctx = get_relevant_code_context(msg, top_k=3)
+        if _code_ctx: memory.insert(0, _code_ctx)
+    except: pass
+    try:
+        from goal_engine import goals_get_context
+        _goal_ctx = goals_get_context(session_id="default")
+        if _goal_ctx: memory.insert(0, _goal_ctx)
+    except: pass
 
     # ── HUMAN-GAP SYSTEMS: pre-generation analysis ──────────────────────────
     _skill_pre = classify_skill(msg)
@@ -951,6 +963,15 @@ def pipeline_sync(msg: str, history: list) -> dict:
         pass
 
     # ── POWER UPGRADE: Pre-Output Execution Gate ─────────────────────
+    # Upgraded: Swarm Intelligence for massive multi-module tasks
+    if skill == "coder" and complexity == "hard" and len(msg.split()) > 15:
+        try:
+            from swarm_orchestrator import run_swarm
+            swarm_result = run_swarm(msg, lambda p, **kw: mistral_generate(p, **kw))
+            if swarm_result:
+                return JSONResponse({"response": swarm_result})
+        except: pass
+        
     if skill == "coder" and complexity == "hard":
         try:
             from reflexion_loop import reflexion_verify
@@ -5193,3 +5214,31 @@ async def global_exception_handler(request: Request, exc: Exception):
         record_error("unhandled_exception", "general", tb_str[:500])
     except: pass
     return JSONResponse(status_code=500, content={"error": "Internal Server Error", "detail": str(exc)})
+
+
+
+from proactive_daemon import start_proactive_daemon
+from agi_emulation_layer import start_agi_emulation
+from apo_engine import start_apo_engine
+from refactor_daemon import start_refactor_daemon
+from self_healing import start_self_healing_daemon
+
+@app.on_event("startup")
+async def ultimate_startup():
+    print("[Startup] Initializing Ultimate Daemons...")
+    try:
+        from modules.core.http_client import mistral_generate
+        gen_fn = lambda p, **kw: mistral_generate(p, max_tokens=kw.get("max_tokens", 500), model=kw.get("model", "mistral-small-latest"))
+        
+        try: start_proactive_daemon()
+        except Exception as e: print(f"Proactive Daemon failed: {e}")
+        try: start_agi_emulation(gen_fn)
+        except Exception as e: print(f"AGI Emulation failed: {e}")
+        try: start_apo_engine(gen_fn)
+        except Exception as e: print(f"APO Engine failed: {e}")
+        try: start_refactor_daemon(gen_fn)
+        except Exception as e: print(f"Refactor Daemon failed: {e}")
+        try: start_self_healing_daemon(gen_fn)
+        except Exception as e: print(f"Self-Healing Daemon failed: {e}")
+    except Exception as e:
+        print(f"[Startup] Daemon init failed: {e}")
