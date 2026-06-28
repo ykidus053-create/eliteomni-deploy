@@ -5179,6 +5179,16 @@ async def global_exception_handler(request: Request, exc: Exception):
     print(f"[Global Exception Intercept] {exc}")
     # Log the error to the error learner so the AI remembers it
     try:
+        # ── POST-GEN: reasoning_engine math extraction ───────────────────
+        try:
+            from reasoning_engine import extract_and_run_math
+            final = extract_and_run_math(final)
+        except Exception: pass
+        # ── POST-GEN: working_memory store ───────────────────────────────
+        try:
+            from working_memory import store as _wm_store
+            _wm_store(msg[:200], final[:400])
+        except Exception: pass
         from error_learner import record_error
         record_error("unhandled_exception", "general", tb_str[:500])
     except: pass
