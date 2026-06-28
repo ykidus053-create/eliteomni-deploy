@@ -1,7 +1,3 @@
-"""
-Deliberative Reasoning Engine — Absolute Frontier (o1 / AlphaProof Tier).
-Implements: Self-Consistency Voting, Prover-Skeptic-Judge Debate, and Programmatic Math Verification.
-"""
 import re, time, random, threading, subprocess, tempfile, os, resource, json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
@@ -63,61 +59,26 @@ def extract_and_run_math(response: str) -> str:
         else: final_response = final_response.replace(f"[PYTHON CALC START]{code}[PYTHON CALC END]", f"[Calc Error: {result}]")
     return final_response, has_math
 
-def self_consistency_voting(msg: str, system: str, history: list, generate_fn, model: str, n: int = 5) -> str:
-    """Upgraded: AlphaProof-style Self-Consistency. Solves 5 times independently and picks the majority answer."""
-    def _solve():
-        prompt = [{"role": "system", "content": system + "\nSolve the problem step-by-step. At the very end, output your final answer on a new line formatted as: [FINAL ANSWER: <answer>]"}] + history[-4:] + [{"role": "user", "content": msg}]
-        try: return generate_fn(prompt, max_tokens=1000, model=model)
-        except: return ""
-
-    futures = [_executor.submit(_solve) for _ in range(n)]
-    solutions = []
-    for fut in as_completed(futures, timeout=45):
-        try:
-            res = fut.result(timeout=10)
-            if res: solutions.append(res)
-        except: pass
-
-    if not solutions: return ""
-
-    # Extract final answers
-    answers = []
-    for sol in solutions:
-        match = re.search(r'\[FINAL ANSWER:\s*(.*?)\]', sol, re.IGNORECASE)
-        if match:
-            answers.append(match.group(1).strip())
-        else:
-            answers.append(sol.strip()[-50:]) # Fallback to last 50 chars
-
-    # Vote for the most common answer
-    counts = Counter(answers)
-    consensus_answer, top_count = counts.most_common(1)[0]
+def execution_guided_reasoning(msg: str, system: str, history: list, generate_fn, model: str) -> str:
+    """Upgraded: Mental Simulation. The AI traces the algorithm before writing it."""
+    trace_prompt = [
+        {"role": "system", "content": system + "\nYou are an Algorithmic Reasoning Engine. Before writing code, you MUST output a mental execution trace inside <trace> tags.\n<trace>\n1. Define the exact inputs and edge cases.\n2. Step through the algorithm manually with a concrete example.\n3. Identify any logic flaws or state mutations.\n</trace>\nAfter the trace, write the complete solution."},
+    ] + history[-6:] + [{"role": "user", "content": msg}]
     
-    # If we have a consensus (at least 2 agreed), return the full solution that matches the consensus
-    if top_count >= 2:
-        for sol in solutions:
-            if consensus_answer in sol:
-                return sol
-    return max(solutions, key=len)
+    return generate_fn(trace_prompt, max_tokens=3000, model=model)
 
 def prover_skeptic_judge(msg: str, system: str, history: list, generate_fn, model: str) -> str:
-    """Upgraded: Multi-Agent Debate. Prover writes, Skeptic attacks, Judge synthesizes."""
-    
-    # 1. Prover generates initial answer
-    prover_prompt = [{"role": "system", "content": system + "\nYou are the Prover. Provide a detailed, step-by-step solution. Use <decomposition> to plan your steps first."}] + history[-6:] + [{"role": "user", "content": msg}]
+    prover_prompt = [{"role": "system", "content": system + "\nYou are the Prover. Provide a detailed, step-by-step solution. Use <trace> to plan your steps first."}] + history[-6:] + [{"role": "user", "content": msg}]
     proposal = generate_fn(prover_prompt, max_tokens=1500, model=model)
     
-    # 2. Skeptic attacks the proposal
     skeptic_prompt = [
         {"role": "system", "content": "You are a Ruthless Skeptic. Find the exact logical flaw, missing edge case, or fallacy in the Prover's solution. If it is flawless, reply EXACTLY: FLAWLESS."},
         {"role": "user", "content": f"Question: {msg}\nProver's Solution:\n{proposal}"}
     ]
     critique = generate_fn(skeptic_prompt, max_tokens=300, model=model)
     
-    if "FLAWLESS" in critique.upper():
-        return proposal
+    if "FLAWLESS" in critique.upper(): return proposal
         
-    # 3. Judge synthesizes the final truth
     print(f"[Reasoning] Prover-Skeptic-Judge: Flaw found. Judge synthesizing...")
     judge_prompt = [
         {"role": "system", "content": system + "\nYou are the Judge. Synthesize a final, bulletproof solution that addresses the Skeptic's critique. Ensure no logical fallacies remain."},
@@ -128,7 +89,6 @@ def prover_skeptic_judge(msg: str, system: str, history: list, generate_fn, mode
 def deliberate(msg: str, system: str, history: list, generate_fn, model: str, complexity: str = "medium", skill: str = "general") -> str:
     t0 = time.time()
     
-    # Easy path: single generation
     if complexity == "easy":
         prompt = [{"role": "system", "content": system}] + history[-12:] + [{"role": "user", "content": msg}]
         resp = generate_fn(prompt, max_tokens=2500, model=model)
@@ -136,22 +96,14 @@ def deliberate(msg: str, system: str, history: list, generate_fn, model: str, co
             resp, _ = extract_and_run_math(resp)
         return resp
 
-    # Calculator / Math path: Self-Consistency + Math Execution
     if skill == "calculator":
         math_result = self_correcting_math(msg, generate_fn, model)
         winner = f"{math_result}\n\n"
     else:
-        # Hard/Medium path: Prover-Skeptic-Judge Debate
+        # Hard/Medium path: Execution-Guided Reasoning + Debate
+        winner = execution_guided_reasoning(msg, system, history, generate_fn, model)
         winner = prover_skeptic_judge(msg, system, history, generate_fn, model)
-        
-        # Run Self-Consistency as a secondary verification for logic problems
-        if complexity == "hard" and skill != "coder":
-            consensus_sol = self_consistency_voting(msg, system, history, generate_fn, model, n=5)
-            if consensus_sol:
-                winner = f"{winner}\n\n[VERIFIED VIA SELF-CONSISTENCY]:\n{consensus_sol}"
 
-    # Still run any embedded math in the general/researcher response
     winner, _ = extract_and_run_math(winner)
-
-    print(f"[Deliberate] Absolute Frontier Reasoning (Debate + Self-Consistency) done, t={int((time.time()-t0)*1000)}ms")
+    print(f"[Deliberate] Execution-Guided Reasoning + Debate done, t={int((time.time()-t0)*1000)}ms")
     return winner

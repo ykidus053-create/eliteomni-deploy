@@ -145,6 +145,10 @@ def extract_code_blocks(text: str) -> dict:
     if not test_code and len(matches) == 1: impl_code = matches[0].strip()
     return {"implementation": impl_code, "tests": test_code}
 
+def _set_limits():
+    resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+    resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
+
 def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str]:
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -174,34 +178,20 @@ def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str
         sys.stderr = old_stderr
     return success, output[:1000]
 
-def execute_swe_agent_action(action_text: str) -> str:
-    """Upgraded: SWE-Agent Autonomous Tool Execution."""
+def generate_adversarial_tests(task: str, impl_code: str, generate_fn) -> str:
+    """Upgraded: Spawns an independent agent to write tests designed to break the code."""
+    prompt = [
+        {"role": "system", "content": "You are a Ruthless QA Engineer. Your job is to BREAK the provided implementation. Write `pytest` unit tests that target edge cases, null inputs, race conditions, and maximum limits. Do not write trivial tests. Output ONLY the python code inside [PYTHON TESTS START]...[PYTHON TESTS END] tags."},
+        {"role": "user", "content": f"Task: {task}\n\nImplementation to break:\n{impl_code[:2000]}"}
+    ]
     try:
-        # Action format: <action: read_file("app.py")> or <action: run_command("grep -r bug .")>
-        match = re.search(r'<action:\s*(\w+)\("(.+?)"\)>', action_text)
-        if not match: return "[Tool Error: Invalid action format]"
-        
-        tool_name, arg = match.groups()
-        
-        if tool_name == "read_file":
-            if os.path.exists(arg):
-                with open(arg, 'r', encoding='utf-8', errors='ignore') as f:
-                    return f.read()[:2000]
-            return f"[Tool Error: File '{arg}' not found]"
-            
-        elif tool_name == "run_command":
-            # Block dangerous commands
-            blocked = ['rm -rf', 'sudo', 'shutdown', 'reboot', 'mkfs']
-            if any(b in arg for b in blocked): return "[Tool Error: Command blocked for safety]"
-            r = subprocess.run(arg, shell=True, capture_output=True, text=True, timeout=10)
-            return (r.stdout + r.stderr)[:2000]
-            
-        return f"[Tool Error: Unknown tool '{tool_name}']"
-    except Exception as e:
-        return f"[Tool Error: {str(e)}]"
+        raw = generate_fn(prompt, max_tokens=1000)
+        match = re.search(r'\[PYTHON TESTS START\](.*?)\[PYTHON TESTS END\]', raw, re.DOTALL)
+        return match.group(1).strip() if match else ""
+    except:
+        return ""
 
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
-    """Upgraded: Autonomous SWE-Agent ReAct Loop."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -211,10 +201,14 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         enterprise_violations, is_cutoff = check_enterprise_compliance(impl_code)
         veto = principal_engineer_veto(impl_code, task, generate_fn) if not is_cutoff else "APPROVED"
         logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn) if not is_cutoff else []
-        ok, output = run_in_persistent_sandbox(impl_code, test_code)
         
-        if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok:
-            print(f"[Reflexion] SOTA Agentic Loop: Sandbox Tests 100% passed on round {round_num}")
+        # Upgraded: Run both the AI's tests AND the adversarial tests
+        ok, output = run_in_persistent_sandbox(impl_code, test_code)
+        adv_test_code = generate_adversarial_tests(task, impl_code, generate_fn) if ok else ""
+        adv_ok, adv_output = run_in_persistent_sandbox(impl_code, adv_test_code) if adv_test_code else (True, "")
+        
+        if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok and adv_ok:
+            print(f"[Reflexion] SOTA Agentic Loop: Pytests & Adversarial Tests 100% passed on round {round_num}")
             break
             
         failures = []
@@ -226,6 +220,7 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if "APPROVED" not in veto: failures.append(f"PRINCIPAL ARCHITECT VETO:\n{veto}")
             if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
             if not ok: failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
+            if not adv_ok: failures.append(f"ADVERSARIAL TESTS FAILED: An independent agent wrote tests to break your code, and it failed them:\n{adv_output[:800]}")
             if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
@@ -233,7 +228,6 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         print(reflection)
         memory = (memory + [reflection])[-3:]
         
-        # Upgraded: Persistent Goal Tracker & Cross-File Codebase RAG
         codebase_ctx = get_relevant_code_context(task, top_k=3)
         goal_reminder = f"\n[GOAL REMINDER] Do not forget the original user request: '{task}'\n"
         
@@ -245,27 +239,14 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if new_blocks["implementation"]:
                 impl_code = impl_code + "\n" + new_blocks["implementation"]
         else:
-            # Upgraded: SWE-Agent Prompt. Tell the AI it can use tools to investigate the bug.
-            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nYou have two options:\n1. Provide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags.\n2. If you need to investigate the codebase to find the bug, output an action tag like <action: read_file(\"app.py\")> or <action: run_command(\"grep -r 'def calculate' .\")>. I will execute it and give you the result."
+            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags. You only need to output the functions that need fixing, but they must be complete."
             msgs = [{"role": "user", "content": prompt}]
             new_output = generate_fn(msgs, max_tokens=4000)
-            
-            # Upgraded: Intercept SWE-Agent Actions
-            if "<action:" in new_output:
-                tool_result = execute_swe_agent_action(new_output)
-                print(f"[SWE-Agent] Executed action, result: {tool_result[:100]}...")
-                # Feed the tool result back to the AI and ask for the code fix
-                react_prompt = f"You requested an action and received this result:\n[TOOL RESULT]\n{tool_result}\n[/TOOL RESULT]\n\nBased on this, output the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
-                react_output = generate_fn([{"role": "user", "content": react_prompt}], max_tokens=4000)
-                new_blocks = extract_code_blocks(react_output)
-                if new_blocks["implementation"]:
-                    impl_code = impl_code + "\n" + new_blocks["implementation"]
-            else:
-                new_blocks = extract_code_blocks(new_output)
-                if new_blocks["implementation"]:
-                    impl_code = impl_code + "\n" + new_blocks["implementation"]
-                if new_blocks["tests"]:
-                    test_code = new_blocks["tests"]
+            new_blocks = extract_code_blocks(new_output)
+            if new_blocks["implementation"]:
+                impl_code = impl_code + "\n" + new_blocks["implementation"]
+            if new_blocks["tests"]:
+                test_code = new_blocks["tests"]
 
     return impl_code
 
