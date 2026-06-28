@@ -5128,6 +5128,6 @@ from refactor_daemon import start_refactor_daemon
 async def refactor_startup():
     try:
         from modules.core.http_client import mistral_generate
-        start_refactor_daemon(lambda p, m="": mistral_generate(p, max_tokens=500, model="mistral-small-latest"))
+        start_refactor_daemon(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 500), model=kwargs.get("model", "mistral-small-latest")))
     except Exception as e:
         print(f"[Startup] Refactor Daemon failed: {e}")
