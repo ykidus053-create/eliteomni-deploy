@@ -5131,3 +5131,28 @@ async def refactor_startup():
         start_refactor_daemon(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 500), model=kwargs.get("model", "mistral-small-latest")))
     except Exception as e:
         print(f"[Startup] Refactor Daemon failed: {e}")
+
+
+
+from task_queue import submit_task, get_task_status, should_use_async_task
+
+@app.post("/async_task")
+async def async_task_endpoint(request: Request):
+    data = await request.json()
+    msg = data.get("message", "")
+    history = data.get("history", [])
+    
+    from skill_router import classify_skill, route_complexity
+    from modules.services.search import extract_search_context
+    from modules.core.http_client import mistral_generate
+    
+    skill = classify_skill(msg)
+    complexity = route_complexity(msg)
+    clean_msg, search_ctx = extract_search_context(msg)
+    
+    task_id = submit_task(msg, history, skill, complexity, search_ctx, lambda p, **kw: mistral_generate(p, **kw))
+    return {"task_id": task_id, "status": "running"}
+
+@app.get("/task_status/{task_id}")
+async def task_status_endpoint(task_id: str):
+    return get_task_status(task_id)
