@@ -5116,7 +5116,7 @@ from apo_engine import start_apo_engine
 async def apo_startup():
     try:
         from modules.core.http_client import mistral_generate
-        start_apo_engine(lambda p, m="": mistral_generate(p, max_tokens=500, model="mistral-small-latest"))
+        start_apo_engine(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 500), model=kwargs.get("model", "mistral-small-latest")))
     except Exception as e:
         print(f"[Startup] APO Engine failed: {e}")
 
