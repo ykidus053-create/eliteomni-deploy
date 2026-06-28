@@ -2085,6 +2085,17 @@ function renderMd(text){
   _stripTags.forEach(t=>{text=text.replace(new RegExp('</?'+t+'>','gi'),'');});
   ['[PYTHON IMPL START]','[PYTHON IMPL END]','[PYTHON TESTS START]','[PYTHON TESTS END]',
    '[FORMAL PROOF START]','[FORMAL PROOF END]'].forEach(t=>{text=text.split(t).join('');});
+  // Strip bracketed context injections that leak from server
+  text=text.replace(/\[KNOWLEDGE BASE\][\s\S]*?\[\/END KNOWLEDGE BASE\]/g,'');
+  text=text.replace(/\[WEB - REAL CURRENT RESULTS[\s\S]*?\[\/WEB\]/g,'');
+  text=text.replace(/\[Pre-executed tools\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Statistical Pre-Analysis\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Deliberate Reasoning\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Hypothesis Analysis\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Code Proof\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Self-Consistency[^\]]*\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[project_file_map\][\s\S]*?\[\/project_file_map\]/g,'');
+  text=text.replace(/<project_file_map>[\s\S]*?<\/project_file_map>/g,'');
   // Strip plain-text internal reasoning labels
   text=text.replace(/^(THINK|ACT|VERIFY|CRITIQUE|DRAFT|PLAN|OBSERVE|STEP \d+|PHASE \d+|INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|SELF-CHECK|CORRECTION|SEARCH\(.*?\)|CALC\(.*?\)|EXECUTE_INTERNAL:.*|VERIFY_INTERNAL:.*)[:\s][^\n]*/gm,'');
   text=text.replace(/^(={3,}|\-{3,})\s*$/gm,'');

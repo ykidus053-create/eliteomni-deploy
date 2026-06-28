@@ -1009,6 +1009,13 @@ def _strip_internal_blocks(text: str) -> str:
         text = _re.sub('<' + tag + '>.*?</' + tag + '>', '', text, flags=_re.DOTALL)
     for tag in ['step_back', 'plan', 'draft', 'critique', 'zero_shot_plan']:
         text = _re.sub('<' + tag + '>', '', text)
+    # strip THOUGHT/ACT/OBSERVE labels from REACT loop
+    text = _re.sub(r'^THOUGHT \d+:.*$', '', text, flags=_re.MULTILINE)
+    text = _re.sub(r'^(ACT|OBSERVE|PHASE \d+|STEP \d+|VERDICT|PROVER|SKEPTIC|JUDGE):.*$', '', text, flags=_re.MULTILINE)
+    text = _re.sub(r'\[KNOWLEDGE BASE\][\s\S]*?\[END KNOWLEDGE BASE\]', '', text)
+    text = _re.sub(r'\[WEB - REAL CURRENT RESULTS[\s\S]*?\[/WEB\]', '', text)
+    text = _re.sub(r'\[(Statistical Pre-Analysis|Deliberate Reasoning|Hypothesis Analysis|Code Proof|Self-Consistency[^\]]*)\][^\[]*', '', text)
+    text = _re.sub(r'<project_file_map>[\s\S]*?</project_file_map>', '', text)
     # strip impl wrapper tags
     for _tag in ['PYTHON IMPL START', 'PYTHON IMPL END', 'PYTHON TESTS START',
                  'PYTHON TESTS END', 'FORMAL PROOF START', 'FORMAL PROOF END']:
