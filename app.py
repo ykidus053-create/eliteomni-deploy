@@ -5156,3 +5156,30 @@ async def async_task_endpoint(request: Request):
 @app.get("/task_status/{task_id}")
 async def task_status_endpoint(task_id: str):
     return get_task_status(task_id)
+
+
+
+from self_healing import start_self_healing_daemon
+
+@app.on_event("startup")
+async def self_healing_startup():
+    try:
+        from modules.core.http_client import mistral_generate
+        start_self_healing_daemon(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 4000), model=kwargs.get("model", "mistral-small-latest")))
+    except Exception as e:
+        print(f"[Startup] Self-Healing Daemon failed: {e}")
+
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback as _tb
+    from fastapi.responses import JSONResponse
+    tb_str = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+    print(f"[Global Exception Intercept] {exc}")
+    # Log the error to the error learner so the AI remembers it
+    try:
+        from error_learner import record_error
+        record_error("unhandled_exception", "general", tb_str[:500])
+    except: pass
+    return JSONResponse(status_code=500, content={"error": "Internal Server Error", "detail": str(exc)})
