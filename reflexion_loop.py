@@ -174,7 +174,34 @@ def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str
         sys.stderr = old_stderr
     return success, output[:1000]
 
+def execute_swe_agent_action(action_text: str) -> str:
+    """Upgraded: SWE-Agent Autonomous Tool Execution."""
+    try:
+        # Action format: <action: read_file("app.py")> or <action: run_command("grep -r bug .")>
+        match = re.search(r'<action:\s*(\w+)\("(.+?)"\)>', action_text)
+        if not match: return "[Tool Error: Invalid action format]"
+        
+        tool_name, arg = match.groups()
+        
+        if tool_name == "read_file":
+            if os.path.exists(arg):
+                with open(arg, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()[:2000]
+            return f"[Tool Error: File '{arg}' not found]"
+            
+        elif tool_name == "run_command":
+            # Block dangerous commands
+            blocked = ['rm -rf', 'sudo', 'shutdown', 'reboot', 'mkfs']
+            if any(b in arg for b in blocked): return "[Tool Error: Command blocked for safety]"
+            r = subprocess.run(arg, shell=True, capture_output=True, text=True, timeout=10)
+            return (r.stdout + r.stderr)[:2000]
+            
+        return f"[Tool Error: Unknown tool '{tool_name}']"
+    except Exception as e:
+        return f"[Tool Error: {str(e)}]"
+
 def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
+    """Upgraded: Autonomous SWE-Agent ReAct Loop."""
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -218,14 +245,27 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if new_blocks["implementation"]:
                 impl_code = impl_code + "\n" + new_blocks["implementation"]
         else:
-            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags. You only need to output the functions that need fixing, but they must be complete."
+            # Upgraded: SWE-Agent Prompt. Tell the AI it can use tools to investigate the bug.
+            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nYou have two options:\n1. Provide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags.\n2. If you need to investigate the codebase to find the bug, output an action tag like <action: read_file(\"app.py\")> or <action: run_command(\"grep -r 'def calculate' .\")>. I will execute it and give you the result."
             msgs = [{"role": "user", "content": prompt}]
             new_output = generate_fn(msgs, max_tokens=4000)
-            new_blocks = extract_code_blocks(new_output)
-            if new_blocks["implementation"]:
-                impl_code = impl_code + "\n" + new_blocks["implementation"]
-            if new_blocks["tests"]:
-                test_code = new_blocks["tests"]
+            
+            # Upgraded: Intercept SWE-Agent Actions
+            if "<action:" in new_output:
+                tool_result = execute_swe_agent_action(new_output)
+                print(f"[SWE-Agent] Executed action, result: {tool_result[:100]}...")
+                # Feed the tool result back to the AI and ask for the code fix
+                react_prompt = f"You requested an action and received this result:\n[TOOL RESULT]\n{tool_result}\n[/TOOL RESULT]\n\nBased on this, output the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+                react_output = generate_fn([{"role": "user", "content": react_prompt}], max_tokens=4000)
+                new_blocks = extract_code_blocks(react_output)
+                if new_blocks["implementation"]:
+                    impl_code = impl_code + "\n" + new_blocks["implementation"]
+            else:
+                new_blocks = extract_code_blocks(new_output)
+                if new_blocks["implementation"]:
+                    impl_code = impl_code + "\n" + new_blocks["implementation"]
+                if new_blocks["tests"]:
+                    test_code = new_blocks["tests"]
 
     return impl_code
 
