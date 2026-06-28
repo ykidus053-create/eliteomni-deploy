@@ -588,8 +588,8 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     _code_rag_ctx = ""
     if skill == "coder":
         try:
-            from modules.code_rag import get_reference_context
-            _code_rag_ctx = get_reference_context(msg or ctx_summary or "")
+            from modules.code_rag import get_relevant_code_context
+            _code_rag_ctx = get_relevant_code_context(msg or ctx_summary or "")
             if _code_rag_ctx:
                 print(f"[CodeRAG] injected {len(_code_rag_ctx)} chars of reference patterns")
         except Exception as _e:
