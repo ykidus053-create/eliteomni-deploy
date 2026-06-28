@@ -1002,7 +1002,18 @@ def build_chatml(system: str, history: list, user_msg: str,
     msgs.append({"role": "user", "content": user_msg[:6000]})
     return msgs
 
+def _strip_internal_blocks(text: str) -> str:
+    """Strip zero-shot planning blocks that leaked into final output."""
+    import re as _re
+    for tag in ['think', 'step_back', 'plan', 'draft', 'critique', 'zero_shot_plan', 'think_act_verify']:
+        text = _re.sub('<' + tag + '>.*?</' + tag + '>', '', text, flags=_re.DOTALL)
+    for tag in ['step_back', 'plan', 'draft', 'critique', 'zero_shot_plan']:
+        text = _re.sub('<' + tag + '>', '', text)
+    text = _re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text
+
 def _clean(text: str) -> str:
+    text = _strip_internal_blocks(text)
     for s in _STOPS:
         if s in text:
             text = text.split(s)[0]
