@@ -257,28 +257,57 @@ class AgentMesh:
         return fixed if fixed and len(fixed) > len(draft) * 0.4 else draft
 
     def _hard_pipeline(self, msg, draft, skill, search_ctx):
-        """Upgraded: Multi-Agent Debate Loop (Critic <-> Synthesizer)."""
+        """Upgraded: Fully Autonomous Plan-and-Solve Agent."""
         t0 = time.time()
+        
+        # 1. Run the Autonomous Agent to gather context and plan
+        try:
+            from autonomous_agent import run_autonomous_task
+            from system_prompts import build_adaptive_prompt
+            autonomous_system = build_adaptive_prompt(skill, msg)
+            autonomous_result = run_autonomous_task(msg, autonomous_system, [], self._gen, "", max_steps=4)
+            draft = autonomous_result
+            print(f"[AgentMesh:hard] Autonomous Agent completed, t={int((time.time()-t0)*1000)}ms")
+        except Exception as e:
+            print(f"[AgentMesh:hard] Autonomous Agent failed ({e}), falling back to draft.")
+
+        # 2. Run the Multi-Agent Debate on the autonomous result
         research_future = self._pool.submit(self._call, "researcher",
             f"Provide key facts and context for: {msg[:400]}"
-            + (f"\n\nSearch context:\n{search_ctx[:600]}" if search_ctx else ""))
-        
+            + (f"
+
+Search context:
+{search_ctx[:600]}" if search_ctx else ""))
+
         current_draft = draft
         research_ctx = research_future.result(timeout=20) or ""
-        
-        # Upgraded: Debate loop (max 3 rounds)
-        for debate_round in range(3):
-            critique = self._call("critic", f"Question: {msg[:200]}\nDraft:\n{current_draft[:800]}")
+
+        for debate_round in range(2):
+            critique = self._call("critic", f"Question: {msg[:200]}
+Draft:
+{current_draft[:800]}")
             if not critique or "APPROVED" in critique.upper():
                 print(f"[AgentMesh:hard] Critic APPROVED at round {debate_round+1}")
                 break
-                
+
             print(f"[AgentMesh:hard] Debate round {debate_round+1}: {critique[:60]}")
             synth_input = (
-                f"ORIGINAL QUESTION:\n{msg[:400]}\n\n"
-                f"DRAFT RESPONSE:\n{current_draft[:1200]}\n\n"
-                + (f"RESEARCH CONTEXT:\n{research_ctx[:400]}\n\n" if research_ctx else "")
-                + f"CRITIC FLAGGED:\n{critique}\n\n"
+                f"ORIGINAL QUESTION:
+{msg[:400]}
+
+"
+                f"DRAFT RESPONSE:
+{current_draft[:1200]}
+
+"
+                + (f"RESEARCH CONTEXT:
+{research_ctx[:400]}
+
+" if research_ctx else "")
+                + f"CRITIC FLAGGED:
+{critique}
+
+"
                 + "Produce the final response incorporating the above feedback."
             )
             new_draft = self._call("synthesizer", synth_input)
@@ -289,28 +318,32 @@ class AgentMesh:
 
         final = current_draft
         print(f"[AgentMesh:hard] done in {int((time.time()-t0)*1000)}ms")
-        
+
         if skill == "coder":
             from reflexion_loop import reflexion_verify
             def _gen_fn(prompt, model=""):
                 return self._call("synthesizer", prompt) or final
             final = reflexion_verify(final, _gen_fn, model="", max_rounds=5)
-            
+
         _score = self_eval_score(final, msg, self._gen)
         print(f"[self_eval] score={_score:.2f}")
         if _score < 0.7:
             print(f"[self_eval] below threshold — forcing rewrite")
             _rewrite = self._call("synthesizer",
                 f"Your previous response scored {_score:.2f}/1.0 on quality. "
-                f"Rewrite with complete implementations, no stubs, no placeholders.\n"
-                f"Task: {msg[:300]}\nPrevious attempt:\n{final[:2000]}")
+                f"Rewrite with complete implementations, no stubs, no placeholders.
+"
+                f"Task: {msg[:300]}
+Previous attempt:
+{final[:2000]}")
             if _rewrite and len(_rewrite) > len(final) * 0.3:
                 final = _rewrite
 
         _max_iters = 5
         for _iter in range(_max_iters):
             import re, subprocess, tempfile, os
-            _blocks = re.findall(r"```(?:python)?\n(.*?)```", final, re.DOTALL)
+            _blocks = re.findall(r"```(?:python)?
+(.*?)```", final, re.DOTALL)
             if not _blocks: break
             _block = _blocks[0]
             try:
@@ -323,10 +356,14 @@ class AgentMesh:
                     print(f"[loop] PASSES iter {_iter+1}"); break
                 _err = _r.stderr[:300] if _r.returncode != 0 else f"{len(_stubs)} stubs found"
                 print(f"[loop] iter {_iter+1} FAILS: {_err[:80]}")
-                _fix = self._call("synthesizer", f"Fix this code error. No stubs. Real code only.\nERROR: {_err}\nCODE:\n{final[:2000]}")
+                _fix = self._call("synthesizer", f"Fix this code error. No stubs. Real code only.
+ERROR: {_err}
+CODE:
+{final[:2000]}")
                 if _fix and len(_fix) > len(final) * 0.3: final = _fix
             except Exception as _le: print(f"[loop] error: {_le}"); break
         return final
+
 
 def production_generate(msg, skill, complexity, history, search_ctx, generate_fn, max_tokens=2000):
     t0 = time.time()
