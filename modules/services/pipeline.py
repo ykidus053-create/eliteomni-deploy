@@ -613,6 +613,14 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     )
 
     parts.append(UNCERTAINTY_PROMPT.strip())
+    # ── ZERO-SHOT PERFECTION: inject skill-specific system prompt ────────────
+    try:
+        from system_prompts import SYSTEM_PROMPTS
+        _zs = SYSTEM_PROMPTS.get(skill) or SYSTEM_PROMPTS.get("general", "")
+        if _zs:
+            parts.insert(0, _zs.strip())
+    except Exception as _zse:
+        print(f"[zero-shot] system_prompts load failed: {_zse}")
     parts.insert(0, GENERAL_REACT_PROMPT.strip())  # base loop for all skills
     try:
         from modules.hallucination_guard import build_hallucination_guard_prompt
