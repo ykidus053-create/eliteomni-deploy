@@ -203,6 +203,16 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn) if not is_cutoff else []
         
         # Upgraded: Run both the AI's tests AND the adversarial tests
+        # Upgraded: Predictive AST Mutation
+        try:
+            from ast_mutator import predict_error_lines
+            from rlef_engine import get_relevant_traces
+            rlef_ctx = get_relevant_traces(output) if not ok else ""
+            suspicious = predict_error_lines(impl_code, rlef_ctx)
+            if suspicious and round_num == 1:
+                print(f"[Predictive] Pre-emptively scanning suspicious lines: {suspicious}")
+        except: pass
+        
         ok, output = run_in_persistent_sandbox(impl_code, test_code)
         adv_test_code = generate_adversarial_tests(task, impl_code, generate_fn) if ok else ""
         adv_ok, adv_output = run_in_persistent_sandbox(impl_code, adv_test_code) if adv_test_code else (True, "")
@@ -256,12 +266,41 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if new_blocks["implementation"]:
                 impl_code = impl_code + "\n" + new_blocks["implementation"]
         else:
-            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags. You only need to output the functions that need fixing, but they must be complete."
+            # Upgraded: Ask the AI for an AST Mutation directive instead of a full rewrite
+            prompt = "\n".join(memory) + f"{goal_reminder}\n{codebase_ctx}\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide a SURGICAL AST MUTATION in JSON format to fix the error. Format: {{\"line\": <int>, \"action\": \"replace\" or \"wrap_try_except\", \"new_code\": \"...\"}}. Output ONLY the JSON."
             msgs = [{"role": "user", "content": prompt}]
-            new_output = generate_fn(msgs, max_tokens=4000)
-            new_blocks = extract_code_blocks(new_output)
-            if new_blocks["implementation"]:
-                impl_code = impl_code + "\n" + new_blocks["implementation"]
+            mutation_output = generate_fn(msgs, max_tokens=200)
+            
+            # Try to apply the AST mutation
+            try:
+                from ast_mutator import apply_ast_mutation
+                import json as _json
+                # Extract JSON from output
+                import re as _re
+                match = _re.search(r'\{.*\}', mutation_output, _re.DOTALL)
+                if match:
+                    new_impl = apply_ast_mutation(impl_code, match.group())
+                    if new_impl != impl_code:
+                        impl_code = new_impl
+                        print("[Reflexion] Applied AST Mutation successfully. Skipping full rewrite.")
+                    else:
+                        # Fallback to full rewrite if mutation failed
+                        prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+                        new_output = generate_fn([{"role": "user", "content": prompt}], max_tokens=4000)
+                        new_blocks = extract_code_blocks(new_output)
+                        if new_blocks["implementation"]: impl_code = impl_code + "\n" + new_blocks["implementation"]
+                else:
+                    # Fallback to full rewrite if no JSON found
+                    prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+                    new_output = generate_fn([{"role": "user", "content": prompt}], max_tokens=4000)
+                    new_blocks = extract_code_blocks(new_output)
+                    if new_blocks["implementation"]: impl_code = impl_code + "\n" + new_blocks["implementation"]
+            except Exception as _e:
+                print(f"[Reflexion] AST Mutation failed ({_e}), falling back to full rewrite.")
+                prompt = "\n".join(memory) + f"\n\nCurrent Implementation:\n{impl_code}\n\nFailed Tests Output:\n{output[:500]}\n\nProvide the corrected functions inside [PYTHON IMPL START]...[PYTHON IMPL END] tags."
+                new_output = generate_fn([{"role": "user", "content": prompt}], max_tokens=4000)
+                new_blocks = extract_code_blocks(new_output)
+                if new_blocks["implementation"]: impl_code = impl_code + "\n" + new_blocks["implementation"]
             if new_blocks["tests"]:
                 test_code = new_blocks["tests"]
 
