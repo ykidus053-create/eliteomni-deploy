@@ -31,3 +31,4 @@ aiosqlite>=0.20
 qdrant-client>=1.18
 pydantic-settings>=2.0
 brotli>=1.1
+faiss-cpu
