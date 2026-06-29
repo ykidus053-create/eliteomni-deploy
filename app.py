@@ -4900,7 +4900,10 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     def _do_rlhf():
         return get_rlhf_note(skill)
 
-    _bsc_ex = ThreadPoolExecutor(max_workers=8)
+    def _do_cache():
+        return cache_get(msg, skill)
+    _bsc_ex = ThreadPoolExecutor(max_workers=9)
+    f_cache   = _bsc_ex.submit(_do_cache)
     f_search  = _bsc_ex.submit(_do_search)
     f_hist    = _bsc_ex.submit(_do_history)
     f_mem     = _bsc_ex.submit(_do_mem)
@@ -4912,6 +4915,11 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     def _sr(f, default, name):
         try: return f.result(timeout=4)
         except Exception as _e: print("[bsc] " + name + " failed: " + str(_e)); return default
+    cached = _sr(f_cache, None, "cache")
+    if cached and complexity == "easy":
+        _bsc_ex.shutdown(wait=False)
+        return {"cached": cached, "skill": skill, "complexity": complexity,
+                "mode": "cached", "effort": effort, "msgs": [], "max_t": 0}
     clean_msg, search_ctx = _sr(f_search, (msg, ""), "search")
     recent, ctx_sum  = _sr(f_hist,  ([], ""),  "hist")
     _mem_working     = _sr(f_mem,   [],         "mem")
