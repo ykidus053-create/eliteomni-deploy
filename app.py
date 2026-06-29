@@ -1,3 +1,4 @@
+from groq_client import cerebras_stream
 from self_verify import self_verify
 from structured_output import inject_template
 import sys
@@ -3275,7 +3276,7 @@ async def stream_chat(req: Request):
 
         def _worker():
             try:
-                for tok in mistral_stream_traced(ctx["msgs"], max_tokens=ctx["max_t"], model=ctx.get("model", "accounts/fireworks/models/deepseek-v4-pro"), tools=ctx.get("mcp_tools"), label="main_gen"):
+                for tok in cerebras_stream(ctx["msgs"], max_tokens=ctx["max_t"], model="zai-glm-4.7"):
                     loop.call_soon_threadsafe(tok_q.put_nowait, tok)
             except Exception as e:
                 print(f"[stream worker] {e}")
