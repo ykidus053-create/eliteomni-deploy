@@ -3333,7 +3333,6 @@ async def stream_chat(req: Request):
                         _closed = True
                         break
                 if not _closed:
-                    buf = ""
                     continue
             _label_re = _re_s.compile(
                 r"(?m)^\s*(INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|PLAN|DRAFT"
