@@ -501,7 +501,7 @@ def tool_search_multi(user_msg: str) -> str:
     user_msg = _re.sub(r"SEARCH\\([^)]*\\)", lambda m: m.group(0)[7:-1], user_msg).strip()
 
     # Tavily once — skip multi-query loop if it succeeds
-    _t = tavily_search(user_msg, max_results=5)
+    _t = tavily_search(user_msg[:380], max_results=5)
     if _t:
         return _t
 
