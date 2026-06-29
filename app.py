@@ -498,6 +498,18 @@ def pipeline_sync(msg: str, history: list) -> dict:
     scratchpad_save(f"q_{int(time.time())}", msg[:120])
     clean_msg, search_ctx = extract_search_context(msg)
     
+    # Upgraded: Inject Global God Prompt and OS State
+    try:
+        from god_prompt import get_god_prompt
+        _god = get_god_prompt()
+        if _god: memory.insert(0, _god)
+    except: pass
+    try:
+        from system_perception import get_os_state
+        _os = get_os_state()
+        if _os: memory.insert(0, _os)
+    except: pass
+    
     # Upgraded: Inject Subconscious Context (what daemons did) and compress history
     try:
         from context_compressor import get_subconscious_context, compress_history
@@ -5282,3 +5294,14 @@ async def subconscious_endpoint():
 async def rlef_stats_endpoint():
     from rlef_engine import get_error_frequency
     return JSONResponse({"error_frequency": get_error_frequency()})
+
+
+@app.post("/update_god_prompt")
+async def update_god_prompt_endpoint(request: Request):
+    from god_prompt import update_god_prompt
+    data = await request.json()
+    rule = data.get("rule", "")
+    if rule:
+        update_god_prompt(rule)
+        return {"status": "success", "message": "Global rule permanently added."}
+    return JSONResponse({"error": "Missing rule"}, status_code=400)

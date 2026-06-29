@@ -60,6 +60,8 @@ _try_import("planner",             ["plan", "make_plan"])
 _try_import("goal_engine",         ["set_goal", "get_goals", "track_goal"])
 _try_import("rlef_engine",         ["record_execution_trace", "get_relevant_traces", "get_error_frequency"])
 _try_import("ast_mutator",         ["predict_error_lines", "apply_ast_mutation"])
+_try_import("system_perception",   ["get_os_state"])
+_try_import("god_prompt",          ["get_god_prompt"])
 # ─────────────────────────────────────────────────────────────────────────────
 
 import sqlite3 as _sqlite3
