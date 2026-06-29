@@ -1,5 +1,5 @@
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+cmds = ["pip install -r requirements.txt --break-system-packages"]
 
 [start]
-cmd = "/app/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port $PORT"
+cmd = "python -m uvicorn app:app --host 0.0.0.0 --port $PORT"
