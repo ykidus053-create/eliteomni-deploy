@@ -16,14 +16,14 @@ if _env_path.exists():
 # ── KEYS & CONSTANTS ──────────────────────────────────────────────────────────
 MISTRAL_API_KEY     = os.environ.get("MISTRAL_API_KEY", "")
 MISTRAL_URL         = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL       = "mistral-medium-3.5"  # reasoning default
+MISTRAL_MODEL = "cerebras/zai-glm-4.7"  # reasoning default
 GROQ_API_KEY        = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL          = "llama-3.3-70b-versatile"
 GROQ_URL            = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_CRITIC_MODEL   = "llama-3.3-70b-versatile"
 
 # ── CODESTRAL ROUTING ─────────────────────────────────────────────────────────
-CODESTRAL_MODEL = "mistral-medium-3.5"
+CODESTRAL_MODEL = "cerebras/zai-glm-4.7"
 CODESTRAL_URL   = "https://api.mistral.ai/v1/chat/completions"
 
 CODING_SKILLS = {"coder", "code", "coding", "swe", "calculator", "debug", "refactor", "engineer"}

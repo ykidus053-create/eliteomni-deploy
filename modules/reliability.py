@@ -12,27 +12,27 @@ from typing import Optional
 
 # ── FIX 5: REAL MODEL ROUTING ─────────────────────────────────────────────────
 _ROUTING_TABLE = {
-    ("general",    "easy"):   "mistral-medium-3.5",
-    ("general",    "medium"): "mistral-medium-3.5",
-    ("general",    "hard"):   "mistral-medium-3.5",
+    ("general",    "easy"):   "cerebras/zai-glm-4.7",
+    ("general",    "medium"): "cerebras/zai-glm-4.7",
+    ("general",    "hard"):   "cerebras/zai-glm-4.7",
     ("researcher", "easy"):   "cerebras/zai-glm-4.7",
     ("researcher", "medium"): "cerebras/zai-glm-4.7",
     ("researcher", "hard"):   "cerebras/zai-glm-4.7",
     ("coder",      "easy"):   "cerebras/zai-glm-4.7",
     ("coder",      "medium"): "cerebras/zai-glm-4.7",
     ("coder",      "hard"):   "cerebras/zai-glm-4.7",
-    ("calculator", "easy"):   "mistral-medium-3.5",
-    ("calculator", "medium"): "mistral-medium-3.5",
-    ("calculator", "hard"):   "mistral-medium-3.5",
-    ("safety",     "easy"):   "mistral-medium-3.5",
-    ("safety",     "medium"): "mistral-medium-3.5",
-    ("safety",     "hard"):   "mistral-medium-3.5",
+    ("calculator", "easy"):   "cerebras/zai-glm-4.7",
+    ("calculator", "medium"): "cerebras/zai-glm-4.7",
+    ("calculator", "hard"):   "cerebras/zai-glm-4.7",
+    ("safety",     "easy"):   "cerebras/zai-glm-4.7",
+    ("safety",     "medium"): "cerebras/zai-glm-4.7",
+    ("safety",     "hard"):   "cerebras/zai-glm-4.7",
 }
 
 def route_model_v3(skill: str, complexity: str) -> tuple:
     model = _ROUTING_TABLE.get(
         (skill, complexity),
-        "mistral-medium-3.5" if complexity == "easy" else "mistral-medium-3.5"
+        "cerebras/zai-glm-4.7" if complexity == "easy" else "cerebras/zai-glm-4.7"
     )
     print(f"[route_model_v3] skill={skill} complexity={complexity} -> {model}")
     provider = "cerebras" if str(model).startswith("cerebras/") else "mistral"

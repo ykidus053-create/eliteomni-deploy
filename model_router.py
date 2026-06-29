@@ -1,10 +1,10 @@
 import re, time, logging
 log = logging.getLogger(__name__)
 
-MISTRAL_SMALL  = "mistral-medium-3.5"
-MISTRAL_MEDIUM = "mistral-medium-3.5"
-MISTRAL_LARGE  = "mistral-medium-3.5"
-MAGISTRAL      = "mistral-medium-3.5"
+MISTRAL_SMALL  = "cerebras/zai-glm-4.7"
+MISTRAL_MEDIUM = "cerebras/zai-glm-4.7"
+MISTRAL_LARGE  = "cerebras/zai-glm-4.7"
+MAGISTRAL      = "cerebras/zai-glm-4.7"
 CODESTRAL      = "cerebras/qwen-3-235b"   # coding → Cerebras
 REASONING_EFFORT = "high"
 
