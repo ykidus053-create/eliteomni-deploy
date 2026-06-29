@@ -219,11 +219,28 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if enterprise_violations: failures.append("ARCHITECTURAL & ENTERPRISE VIOLATIONS:\n- " + "\n- ".join(enterprise_violations[:5]))
             if "APPROVED" not in veto: failures.append(f"PRINCIPAL ARCHITECT VETO:\n{veto}")
             if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
-            if not ok: failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
+            if not ok:
+            # Upgraded: Retrieve past fixes for this error type
+            try:
+                from rlef_engine import get_relevant_traces
+                past_fixes = get_relevant_traces(output)
+                if past_fixes:
+                    failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}\n\n{past_fixes}")
+                else:
+                    failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
+            except:
+                failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
             if not adv_ok: failures.append(f"ADVERSARIAL TESTS FAILED: An independent agent wrote tests to break your code, and it failed them:\n{adv_output[:800]}")
             if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break
 
+        # Upgraded: Record the execution trace for RLEF
+        try:
+            from rlef_engine import record_execution_trace
+            if not ok:
+                record_execution_trace(task, output, impl_code[:500], "", False)
+        except: pass
+        
         reflection = f"[REFLEXION ROUND {round_num} - SWE-AGENT LOOP]\nExecution failed. Errors detected:\n{chr(10).join(failures)}"
         print(reflection)
         memory = (memory + [reflection])[-3:]

@@ -5276,3 +5276,9 @@ from self_healing import start_self_healing_daemon
 async def subconscious_endpoint():
     from context_compressor import get_subconscious_context
     return JSONResponse({"log": get_subconscious_context()})
+
+
+@app.get("/rlef_stats")
+async def rlef_stats_endpoint():
+    from rlef_engine import get_error_frequency
+    return JSONResponse({"error_frequency": get_error_frequency()})
