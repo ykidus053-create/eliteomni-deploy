@@ -593,7 +593,7 @@ def groq_stream(msgs: list, max_tokens: int = 0, model: str = None):
                     continue
                 try:
                     chunk = _json.loads(line[6:])
-                    token = delta.get("content", "")
+                    token = delta.get("content") or delta.get("reasoning_content") or ""
                     channel = delta.get("channel", "")
                     # skip reasoning/analysis channel, only yield actual content
                     if token and channel != "analysis":
@@ -891,7 +891,7 @@ def mistral_stream(msgs: list, max_tokens: int = 4000, model: str = None):
                     try:
                         chunk = json.loads(line[6:])
                         delta = chunk["choices"][0].get("delta", {})
-                        token = delta.get("content", "")
+                        token = delta.get("content") or delta.get("reasoning_content") or ""
                         if not token:
                             continue
                         _buf += token
@@ -1010,7 +1010,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                     try:
                         chunk = _json.loads(line[6:])
                         delta = chunk["choices"][0].get("delta", {})
-                        token = delta.get("content", "")
+                        token = delta.get("content") or delta.get("reasoning_content") or ""
                         if not token:
                             continue
                         _buf += token
