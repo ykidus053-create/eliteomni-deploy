@@ -58,6 +58,8 @@ _try_import("autonomous_agent",    ["run", "autonomous_respond"])
 _try_import("intelligence_router", ["route", "select_model"])
 _try_import("planner",             ["plan", "make_plan"])
 _try_import("goal_engine",         ["set_goal", "get_goals", "track_goal"])
+_try_import("rlef_engine",         ["record_execution_trace", "get_relevant_traces", "get_error_frequency"])
+_try_import("ast_mutator",         ["predict_error_lines", "apply_ast_mutation"])
 # ─────────────────────────────────────────────────────────────────────────────
 
 import sqlite3 as _sqlite3
@@ -663,6 +665,13 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         if _hg: parts.append(_hg)
     except Exception as _hge2: print("[HallucinationGuard] inject failed: " + str(_hge2))
     try:
+        # inject RLEF traces for coder skill
+        if skill == "coder":
+            try:
+                from rlef_engine import get_relevant_traces
+                _rlef = get_relevant_traces("", limit=3)
+                if _rlef: parts.append("[PAST ERROR FIXES -- avoid repeating these]\n" + _rlef)
+            except Exception: pass
         from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
