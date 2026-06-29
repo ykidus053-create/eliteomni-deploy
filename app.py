@@ -1187,7 +1187,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     except Exception:
         pass
 
-    # agent enrichment runs inside _build_stream_context_fast
+    # agent enrichment runs inside _build_stream_context
 
     msg_lower = msg.lower()
     forced = []
@@ -1209,7 +1209,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     if forced:
         search_ctx += "\n[Pre-executed tools]\n" + "\n".join(forced)
 
-    # ── agent context defaults (enrichment runs in _build_stream_context_fast) ──
+    # ── agent context defaults (enrichment runs in _build_stream_context) ──
     _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = _neg_space = ""
     _tom_ctx = _constraints = _narrative_ctx = _rel_ctx = _prior_ctx = _depth_warn = ""
     _stakes = "low"
@@ -3230,7 +3230,7 @@ async def stream_chat(req: Request):
         return StreamingResponse(_veto(), media_type="text/plain")
 
     clean_msg, search_ctx = extract_search_context(msg)
-    # agent enrichment runs inside _build_stream_context_fast
+    # agent enrichment runs inside _build_stream_context
 
     # ── Self-critique: flag if answer needs web grounding ──────────────────
     _critique_triggers = ["is it true", "fact check", "are you sure", "verify", "confirm", "really?", "prove"]
@@ -3240,7 +3240,7 @@ async def stream_chat(req: Request):
     async def _gen():
         import asyncio as _asyncio
         _loop = _asyncio.get_event_loop()
-        _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist))
+        _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
             ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=6)
         except _asyncio.TimeoutError:
@@ -4800,8 +4800,8 @@ def pgd_get_active_prompt_injection() -> str:
 
 
 # ── TTFT PATCH: parallel pre-processing ─────────────────────────────────────
-def _build_stream_context_fast(msg: str, hist: list) -> dict:
-    print("[ENTER _build_stream_context_fast]")
+def _build_stream_context(msg: str, hist: list) -> dict:
+    print("[ENTER _build_stream_context]")
     """Drop-in replacement for _build_stream_context with parallel enrichment."""
     from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     from modules.core.constants import get_infra_tier
