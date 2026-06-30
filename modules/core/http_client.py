@@ -371,8 +371,9 @@ def _vision_call(msgs: list, max_tokens: int = 800, model: str = "mistral-small-
         ) if _USE_SESSION else None
         if _r and _r.status_code == 200:
             return _r.json()["choices"][0]["message"]["content"].strip()
+        _live_key = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
         _r2 = _req.post("https://api.mistral.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json",
+            headers={"Authorization": f"Bearer {_live_key}", "Content-Type": "application/json",
                      "Accept": "application/json"},
             json={"model": model, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.3},
             timeout=30)
