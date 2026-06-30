@@ -777,12 +777,12 @@ def extract_search_context(msg: str) -> tuple:
                 context = "[LIVE RESULTS]\n" + result[:4000] + "\n[END RESULTS]\nAnswer using ONLY these."
                 return clean_msg, context
 
-    # SearXNG up but no results — tell model to use knowledge
+    # SearXNG up but no results — force explicit honesty disclaimer
     if _searxng_healthy:
-        return clean_msg, "\n[WEB SEARCH: No results found. Answer from your knowledge.]\n"
+        return clean_msg, "\n[WEB SEARCH FAILED: No results found for this time-sensitive query. Your training data has a knowledge cutoff and may be outdated. You MUST tell the user that live search failed and that your answer may be out of date, rather than presenting old information as current.]\n"
 
-    # SearXNG down — inject nothing; model answers naturally without disclaimers
-    return clean_msg, ""
+    # SearXNG down — same honesty requirement, do not silently fall back
+    return clean_msg, "\n[WEB SEARCH UNAVAILABLE: This appears to be a time-sensitive query but live search could not run. Your training data has a knowledge cutoff and may be outdated. You MUST explicitly tell the user search is unavailable and that your answer may not reflect current information, before answering from what you know.]\n"
 
 _fe_model = None
 def _get_fe():
