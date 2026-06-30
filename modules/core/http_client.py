@@ -164,11 +164,12 @@ def _cbrs_rate_wait():
 
 # ── MISTRAL STREAM ────────────────────────────────────────────────────────────
 def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill: str = None, tools: list = None):
-    if model and str(model).startswith("cerebras/"):
-        from groq_client import cerebras_stream
-        _cbrs_rate_wait()
-        yield from cerebras_stream(msgs, max_tokens=max_tokens, model=model.replace("cerebras/", ""))
-        return
+    # All text generation routes to Cerebras now — Mistral is reserved for vision only.
+    from groq_client import cerebras_stream
+    _cbrs_rate_wait()
+    _mdl = (model or "").replace("cerebras/", "") or "zai-glm-4.7"
+    yield from cerebras_stream(msgs, max_tokens=max_tokens, model=_mdl)
+    return
     if not MISTRAL_API_KEY:
         yield "[MISTRAL_API_KEY not set]"; return
 
