@@ -3341,7 +3341,7 @@ async def stream_chat(req: Request):
                 yield out
                 buf = ""
 
-        if buf and not in_think[0]:
+        if buf:
             out = _re_s.sub(
                 r"(?m)^(INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|PLAN|DRAFT"
                 r"|SELF-CHECK|CORRECTION|VERIFY|EXECUTE|IMPROVE|SEARCH|ANALYSIS):[^\n]*\n",
