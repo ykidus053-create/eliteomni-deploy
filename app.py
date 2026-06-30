@@ -1971,10 +1971,7 @@ textarea#inp::placeholder{color:var(--text-3)}
           </div>
           <div style="flex:1;position:relative">
             <textarea id="inp" placeholder="Message EliteOmni…" rows="1"></textarea>
-            <div id="imgpreview" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;background:#222;border:1px solid var(--border);border-radius:8px;padding:6px;z-index:10">
-              <img id="imgthumb" style="max-height:80px;max-width:140px;border-radius:4px;display:block">
-              <button onclick="clearImg()" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:11px;width:100%;text-align:center;margin-top:4px">Remove</button>
-            </div>
+
           </div>
           <button id="stop" onclick="stopGen()" title="Stop">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
@@ -2455,15 +2452,15 @@ function clearAttachments(){_pendingFiles=[];_pendingImg=null;renderAttachPrevie
 function handleImgFile(input){
   const f=input.files[0];if(!f)return;
   const r=new FileReader();
-  r.onload=(e)=>{const d=e.target.result;_pendingImg=d.split(',')[1];_pendingFiles.push({name:f.name,type:'image',data:d,b64:d.split(',')[1]||null,text:null});renderAttachPreview();document.getElementById('imgthumb').src=d;document.getElementById('imgpreview').style.display='block';};
+  r.onload=(e)=>{const d=e.target.result;_pendingImg=d.split(',')[1];_pendingFiles.push({name:f.name,type:'image',data:d,b64:d.split(',')[1]||null,text:null});renderAttachPreview();};
   r.readAsDataURL(f);
 }
-function clearImg(){_pendingImg=null;document.getElementById('imgpreview').style.display='none';document.getElementById('imgfile').value='';}
+function clearImg(){_pendingImg=null;document.getElementById('imgfile').value='';}
 document.addEventListener('paste',(e)=>{
   const items=e.clipboardData?.items;if(!items)return;
   for(const item of items){
     if(item.type.startsWith('image/')){
-      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];document.getElementById('imgthumb').src=ev.target.result;document.getElementById('imgpreview').style.display='block';};
+      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];};
       r.readAsDataURL(f);e.preventDefault();break;
     }
   }
@@ -2471,7 +2468,7 @@ document.addEventListener('paste',(e)=>{
 document.addEventListener('paste',(e)=>{
   for(const item of items){
     if(item.type.startsWith('image/')){
-      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];document.getElementById('imgthumb').src=ev.target.result;document.getElementById('imgpreview').style.display='block';};
+      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];};
       r.readAsDataURL(f);e.preventDefault();break;
     }
   }
