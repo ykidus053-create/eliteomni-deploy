@@ -1960,7 +1960,15 @@ textarea#inp::placeholder{color:var(--text-3)}
         <div id="attach-preview-inner"></div>
         <div class="irow">
           <input type="file" id="imgfile" accept="image/*,application/pdf,.doc,.docx,.txt,.csv,.md" style="display:none" onchange="handleImgFile(this)">
-          <button id="plusbtn" onclick="document.getElementById('imgfile').click()" title="Attach file" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;transition:background .15s">+</button>
+          <div style="position:relative">
+            <button id="plusbtn" onclick="togglePlusMenu(event)" title="Attach or search" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;transition:background .15s">+</button>
+            <div id="plusmenu" style="display:none;position:absolute;bottom:calc(100% + 8px);left:0;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;padding:6px;z-index:20;min-width:200px;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+              <button onclick="document.getElementById('imgfile').click();closePlusMenu()" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:none;color:var(--text-1);padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit">📎 Add files or photos</button>
+              <button onclick="toggleWebSearch();" id="websearchToggle" style="display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:none;border:none;color:var(--text-1);padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit">
+                <span>🌐 Web search</span><span id="websearchCheck" style="display:none">✓</span>
+              </button>
+            </div>
+          </div>
           <div style="flex:1;position:relative">
             <textarea id="inp" placeholder="Message EliteOmni…" rows="1"></textarea>
             <div id="imgpreview" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;background:#222;border:1px solid var(--border);border-radius:8px;padding:6px;z-index:10">
@@ -2043,7 +2051,29 @@ function _makeReactArtifact(code) {
     '\nconst root=ReactDOM.createRoot(document.getElementById("root"));' +
     '\nconst AppToRender=typeof App!=="undefined"?App:()=>React.createElement("div",null,"Component loaded");' +
     '\nroot.render(React.createElement(AppToRender));' +
-    '<\/script></body></html>';
+    '<\/script><script>
+let _webSearchEnabled = false;
+function togglePlusMenu(e){
+  e.stopPropagation();
+  const m = document.getElementById('plusmenu');
+  m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none';
+}
+function closePlusMenu(){
+  document.getElementById('plusmenu').style.display = 'none';
+}
+function toggleWebSearch(){
+  _webSearchEnabled = !_webSearchEnabled;
+  document.getElementById('websearchCheck').style.display = _webSearchEnabled ? 'inline' : 'none';
+  closePlusMenu();
+}
+document.addEventListener('click', function(e){
+  const menu = document.getElementById('plusmenu');
+  const btn = document.getElementById('plusbtn');
+  if(menu && menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn){
+    menu.style.display = 'none';
+  }
+});
+</script></body></html>';
   fr.srcdoc = srcdoc;
   openBtn.onclick = () => { const w = window.open('about:blank','_blank'); w.document.write(srcdoc); w.document.close(); };
   wrap.appendChild(bar); wrap.appendChild(fr); return wrap;
@@ -2627,7 +2657,7 @@ async function send(){
   // Build payload
   const imgs=(_filesToSend||[]).filter(f=>f.type==='image');
   const docs=(_filesToSend||[]).filter(f=>f.type==='doc');
-  const payload={message:msg,history:hist};
+  const payload={message:msg,history:hist,force_search:_webSearchEnabled};
   if(imgs.length)payload.image_b64=imgs[0].b64;
   if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.b64||null}));
 
@@ -3164,6 +3194,7 @@ async def stream_chat(req: Request):
 
     msg          = data.get("message", "").strip()
     hist         = data.get("history", [])
+    force_search = bool(data.get("force_search", False))
     image_b64    = data.get("image_b64", "")
     image_prompt = data.get("image_prompt", msg or "Describe this image in detail.")
     print(f"[DEBUG image_b64] received={bool(image_b64)}, length={len(image_b64) if image_b64 else 0}")
@@ -3210,7 +3241,7 @@ async def stream_chat(req: Request):
     # Don't auto-search on vision-only queries
     # Skip auto-search only if THIS message is purely vision with no user question
     _vision_only = '[VISION_CONTEXT:' in msg and not msg.split('User question:')[-1].strip()
-    _skip_search = _vision_only
+    _skip_search = _vision_only and not force_search
     _veto_target = msg.split('User question:')[-1].strip() if '[VISION_CONTEXT:' in msg else msg
     vetoed, veto_reason = topological_veto(_veto_target)
     if vetoed:
@@ -3219,6 +3250,8 @@ async def stream_chat(req: Request):
             yield veto_reason
         return StreamingResponse(_veto(), media_type="text/plain")
 
+    if force_search and not _skip_search:
+        msg = f"[FORCE WEB SEARCH REQUESTED] {msg}"
     clean_msg, search_ctx = extract_search_context(msg)
     # agent enrichment runs inside _build_stream_context
 
