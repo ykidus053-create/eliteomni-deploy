@@ -1769,7 +1769,7 @@ body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sa
 /* INPUT */
 #foot{flex-shrink:0;padding:12px 16px 20px;background:var(--main-bg)}
 #iw{max-width:720px;margin:0 auto}
-#box{background:var(--input-bg);border:1px solid var(--border);border-radius:26px;overflow:hidden;transition:border-color .15s}
+#box{background:var(--input-bg);border:1px solid var(--border);border-radius:26px;overflow:visible;transition:border-color .15s}
 #box:focus-within{border-color:var(--border-light)}
 .irow{display:flex;align-items:flex-end;gap:6px;padding:10px 12px 8px}
 textarea#inp{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:15px;font-family:inherit;resize:none;max-height:160px;line-height:1.6;padding:2px 0;min-height:24px;caret-color:var(--text)}
