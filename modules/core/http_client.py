@@ -399,9 +399,10 @@ def ocr_document(file_b64: str, filename: str = "document.pdf") -> str:
             "type": "image_url",
             "image_url": f"data:image/jpeg;base64,{file_b64}"
         }
+        _live_key = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
         resp = _req.post(
             "https://api.mistral.ai/v1/ocr",
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {_live_key}", "Content-Type": "application/json"},
             json={"model": "mistral-ocr-latest", "document": doc_payload},
             timeout=45,
         )
