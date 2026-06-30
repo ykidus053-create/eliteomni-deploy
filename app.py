@@ -2051,29 +2051,7 @@ function _makeReactArtifact(code) {
     '\nconst root=ReactDOM.createRoot(document.getElementById("root"));' +
     '\nconst AppToRender=typeof App!=="undefined"?App:()=>React.createElement("div",null,"Component loaded");' +
     '\nroot.render(React.createElement(AppToRender));' +
-    '<\/script><script>
-let _webSearchEnabled = false;
-function togglePlusMenu(e){
-  e.stopPropagation();
-  const m = document.getElementById('plusmenu');
-  m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none';
-}
-function closePlusMenu(){
-  document.getElementById('plusmenu').style.display = 'none';
-}
-function toggleWebSearch(){
-  _webSearchEnabled = !_webSearchEnabled;
-  document.getElementById('websearchCheck').style.display = _webSearchEnabled ? 'inline' : 'none';
-  closePlusMenu();
-}
-document.addEventListener('click', function(e){
-  const menu = document.getElementById('plusmenu');
-  const btn = document.getElementById('plusbtn');
-  if(menu && menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn){
-    menu.style.display = 'none';
-  }
-});
-</script></body></html>';
+    '<\/script></body></html>';
   fr.srcdoc = srcdoc;
   openBtn.onclick = () => { const w = window.open('about:blank','_blank'); w.document.write(srcdoc); w.document.close(); };
   wrap.appendChild(bar); wrap.appendChild(fr); return wrap;
@@ -2867,6 +2845,30 @@ function submitFbReason(reason){document.getElementById('fb-modal').classList.re
 
 // ARTIFACT FULLSCREEN
 function artifactFullscreen(iframe){const m=document.createElement('div');m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center';const bar=document.createElement('div');bar.style.cssText='width:100%;display:flex;justify-content:flex-end;padding:8px 16px';const cl=document.createElement('button');cl.textContent='✕ Close';cl.style.cssText='background:none;border:1px solid #555;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:.8rem';cl.onclick=()=>document.body.removeChild(m);bar.appendChild(cl);const fr=document.createElement('iframe');fr.srcdoc=iframe.srcdoc;fr.style.cssText='width:95vw;height:90vh;border:none;border-radius:8px;background:#fff';m.appendChild(bar);m.appendChild(fr);document.body.appendChild(m);}
+
+let _webSearchEnabled = false;
+function togglePlusMenu(e){
+  e.stopPropagation();
+  const m = document.getElementById('plusmenu');
+  m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none';
+}
+function closePlusMenu(){
+  const m = document.getElementById('plusmenu');
+  if(m) m.style.display = 'none';
+}
+function toggleWebSearch(){
+  _webSearchEnabled = !_webSearchEnabled;
+  const chk = document.getElementById('websearchCheck');
+  if(chk) chk.style.display = _webSearchEnabled ? 'inline' : 'none';
+  closePlusMenu();
+}
+document.addEventListener('click', function(e){
+  const menu = document.getElementById('plusmenu');
+  const btn = document.getElementById('plusbtn');
+  if(menu && menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn){
+    menu.style.display = 'none';
+  }
+});
 </script>
 """
 
