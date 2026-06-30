@@ -1769,15 +1769,15 @@ body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sa
 /* INPUT */
 #foot{flex-shrink:0;padding:12px 16px 20px;background:var(--main-bg)}
 #iw{max-width:720px;margin:0 auto}
-#box{background:var(--input-bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
+#box{background:var(--input-bg);border:1px solid var(--border);border-radius:26px;overflow:hidden;transition:border-color .15s}
 #box:focus-within{border-color:var(--border-light)}
 .irow{display:flex;align-items:flex-end;gap:6px;padding:10px 12px 8px}
 textarea#inp{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:15px;font-family:inherit;resize:none;max-height:160px;line-height:1.6;padding:2px 0;min-height:24px;caret-color:var(--text)}
 textarea#inp::placeholder{color:var(--text-3)}
-#send{width:32px;height:32px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background .15s,opacity .15s}
+#send{width:32px;height:32px;border:none;border-radius:50%;background:var(--accent);color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background .15s,opacity .15s}
 #send:hover{background:var(--accent-hover)}
 #send:disabled{opacity:.25;cursor:not-allowed}
-#stop{width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:none;align-items:center;justify-content:center;transition:background .15s}
+#stop{width:32px;height:32px;border:1px solid var(--border);border-radius:50%;background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:none;align-items:center;justify-content:center;transition:background .15s}
 #stop:hover{background:var(--hover)}
 .ibot{display:flex;align-items:center;justify-content:space-between;padding:4px 12px 8px;gap:6px}
 .itools{display:flex;gap:4px;flex-wrap:wrap}
@@ -1959,9 +1959,8 @@ textarea#inp::placeholder{color:var(--text-3)}
       <div id="box">
         <div id="attach-preview-inner"></div>
         <div class="irow">
-          <input type="file" id="imgfile" accept="image/*" style="display:none" onchange="handleImgFile(this)">
-          <button class="itl" onclick="document.getElementById('imgfile').click()" title="Attach image" style="padding:4px 6px;font-size:16px">🖼️</button>
-          <button class="itl" onclick="document.getElementById('file-doc').click()" title="Attach document" style="padding:4px 6px;font-size:16px">📎</button>
+          <input type="file" id="imgfile" accept="image/*,application/pdf,.doc,.docx,.txt,.csv,.md" style="display:none" onchange="handleImgFile(this)">
+          <button id="plusbtn" onclick="document.getElementById('imgfile').click()" title="Attach file" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;transition:background .15s">+</button>
           <div style="flex:1;position:relative">
             <textarea id="inp" placeholder="Message EliteOmni…" rows="1"></textarea>
             <div id="imgpreview" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;background:#222;border:1px solid var(--border);border-radius:8px;padding:6px;z-index:10">
@@ -1977,16 +1976,6 @@ textarea#inp::placeholder{color:var(--text-3)}
           </button>
         </div>
         <div class="ibot">
-          <div class="itools">
-            <button class="itl" onclick="ins('SEARCH(')">Search</button>
-            <button class="itl" onclick="ins('CALC(')">Calculate</button>
-            <button class="itl" onclick="ins('BROWSER(scrape:')">Browser</button>
-            <button class="itl" onclick="ins('WEATHER(')">Weather</button>
-            <button class="itl" onclick="ins('FETCH(')">Fetch</button>
-            <button class="itl" onclick="ins('TIME()')">Time</button>
-            <button class="itl" onclick="window.open('/benchmark','_blank')">Benchmark</button>
-            <button class="itl" onclick="document.getElementById('imgfile').click()">Vision</button>
-          </div>
           <span class="hint">Enter to send · Shift+Enter for newline</span>
         </div>
       </div>
