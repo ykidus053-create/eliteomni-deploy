@@ -671,7 +671,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         _search_future = _search_executor.submit(multi_search, msg)
     if _search_future:
         try:
-            search_ctx = _search_future.result(timeout=6)
+            search_ctx = _search_future.result(timeout=2)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
     if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
@@ -3243,7 +3243,7 @@ async def stream_chat(req: Request):
         _loop = _asyncio.get_event_loop()
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
-            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=6)
+            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=2)
         except _asyncio.TimeoutError:
             print("[stream_chat] ctx timeout — fast first token with minimal ctx")
             from modules.core.constants import get_infra_tier
