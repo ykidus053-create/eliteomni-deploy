@@ -2025,7 +2025,15 @@ textarea#inp::placeholder{color:var(--text-3)}
   </div>
 </div>
 <script>
-marked.setOptions({highlight(code,lang){if(lang&&hljs.getLanguage(lang))return hljs.highlight(code,{language:lang}).value;return hljs.highlightAuto(code).value;},breaks:true,gfm:true});
+function _escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+marked.setOptions({breaks:true,gfm:true});
+const _origRenderer=new marked.Renderer();
+_origRenderer.code=function(code,lang){
+  const escaped=_escapeHtml(typeof code==='string'?code:String(code));
+  const validLang=lang&&hljs.getLanguage(lang)?lang:null;
+  return `<pre><code class="language-${validLang||'plaintext'}">${escaped}</code></pre>`;
+};
+marked.setOptions({renderer:_origRenderer});
 function _makeReactArtifact(code) {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'margin:.8em 0;border:1px solid var(--bd);border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.35)';
