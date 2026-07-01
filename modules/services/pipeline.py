@@ -530,7 +530,7 @@ BEHAVIORAL LOCK:
 WORKFLOWS = {
     "researcher": (
         "1. DECOMPOSE: break the question into sub-questions. State what you know vs what needs verification. "
-        "2. SEARCH: use SEARCH() for any fact that could have changed since 2023 or that you are less than 90% confident about. "
+        "2. SEARCH: use SEARCH() for any fact that could have changed since mid-2025 or that you are less than 90% confident about. "
         "3. SYNTHESIZE: write structured answer using ## headers. Lead with the direct answer, then supporting evidence. "
         "4. CITE: mark every factual claim as [VERIFIED: source] or [UNCERTAIN: reason]. Never present uncertain claims as fact. "
         "5. SUMMARIZE: end with **Summary** — 2-3 sentences capturing the core answer. "
@@ -616,7 +616,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     if complexity == "easy" and skill == "general":
         parts = [
             "## ROLE\n" + " ".join(HIERARCHY["system"]) + " " + HIERARCHY["operator"][0],
-            f"Today is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after 2023.",
+            f"Today is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after mid-2025.",
             "Tools: SEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) — results appear as [= result].",
             "Be direct. Lead with the answer. No sycophantic openers. Flag uncertainty explicitly.",
         ]
@@ -624,7 +624,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         parts = [
             "## ROLE\n" + " ".join(HIERARCHY["system"]) + " " + HIERARCHY["operator"][0],
             f"## TASK\nSKILL: {SKILLS[skill]['prompt']}\nWORKFLOW: {WORKFLOWS.get(skill, WORKFLOWS['general'])}",
-            f"## CONTEXT\nToday is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after 2023.",
+            f"## CONTEXT\nToday is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after mid-2025.",
             "## TOOLS\nSEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) BROWSER(url) GREP(p). Never say you cannot search. BROWSER(url) fetches live web pages.",
         ]
 
@@ -677,6 +677,14 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+    if complexity == "hard":
+        parts.append(
+            "## RIGOR REQUIREMENT (hard complexity)\n"
+            "Before finalizing your answer: (1) re-check your reasoning for logical gaps, "
+            "(2) test edge cases explicitly if this involves code or math, "
+            "(3) if multiple valid interpretations exist, state which one you chose and why, "
+            "(4) if you are not fully certain, say so rather than presenting a guess as fact."
+        )
     parts.append(RESPONSE_STYLE_PROMPT.strip())
 
     if complexity in ("medium", "hard"):
