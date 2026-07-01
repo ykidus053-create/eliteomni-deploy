@@ -375,8 +375,10 @@ def _get_cached_system(skill, memory, episodic, rlhf_note, ctx_sum, complexity):
 
 
 def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, skill: str) -> str:
-    """If code has lint errors, do one correction pass."""
+    """If code has lint errors OR fails at runtime, do one correction pass.
+    Real execution catches bugs that syntax checking alone misses."""
     from modules.services.tools import _extract_code_blocks, tool_lint
+    from modules.tools import numpy_exec_safe
     blocks = _extract_code_blocks(code_response)
     if not blocks:
         return code_response
@@ -384,13 +386,26 @@ def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, s
     for block in blocks[:2]:
         lint = tool_lint(block)
         if lint != "OK":
-            issues.append(lint)
+            issues.append(f"SYNTAX ERROR: {lint}")
+            continue
+        # Syntax is valid — actually run it to catch runtime bugs.
+        # Skip execution for code that clearly needs external deps/services
+        # (network calls, file I/O paths, etc.) to avoid false failures.
+        _skip_exec_markers = ["socket.", "requests.", "urllib.request", "open(",
+                               "input(", "sys.argv", "argparse", "flask", "fastapi",
+                               "django", "os.environ", "subprocess.", "threading.Thread"]
+        if any(m in block for m in _skip_exec_markers):
+            continue
+        exec_result = numpy_exec_safe(block)
+        if exec_result.startswith("[EXECUTION FAILED]"):
+            issues.append(f"RUNTIME ERROR: {exec_result}")
     if not issues:
         return code_response
+    print(f"[LintFeedback] found {len(issues)} issue(s), forcing correction pass")
     correction_prompt = build_chatml(
         system, [],
-        f"Your previous code had these issues:\n{chr(10).join(issues)}\n\n"
-        f"Rewrite the code fixing all issues. Original request: {msg[:300]}"
+        f"Your previous code had these issues when actually executed:\n{chr(10).join(issues)}\n\n"
+        f"Rewrite the code fixing ALL issues so it runs correctly. Original request: {msg[:300]}"
     )
     from modules.services.pipeline import generate_sync
     fixed = generate_sync(correction_prompt, max_t, skill, len(msg))
