@@ -756,8 +756,16 @@ def extract_search_context(msg: str) -> tuple:
         return msg, ""
     print(f"[search] running multi-step search for: {msg[:80]}")
     result = tool_search_multi(msg)
-
-    if result:
+    _news_query = any(t in msg.lower() for t in ["news", "today", "latest", "current", "right now", "breaking"])
+    _result_is_junk = False
+    if result and _news_query:
+        _lower_result = result.lower()
+        _junk_markers = ["wikipedia", "merriam-webster", "dictionary", "definition of"]
+        _has_junk = any(j in _lower_result for j in _junk_markers)
+        _has_news_signal = any(w in _lower_result for w in ["headline", "reported", "announced", "yesterday", "this week"])
+        if _has_junk and not _has_news_signal:
+            _result_is_junk = True
+    if result and not _result_is_junk:
         import datetime as _dt
         _today = str(_dt.date.today())
         result_capped = result[:4000]
