@@ -230,16 +230,16 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if "APPROVED" not in veto: failures.append(f"PRINCIPAL ARCHITECT VETO:\n{veto}")
             if logic_flaws: failures.append("CHAOS / DISTRIBUTED SYSTEMS FLAWS DETECTED:\n- " + "\n- ".join(logic_flaws[:5]))
             if not ok:
-            # Upgraded: Retrieve past fixes for this error type
-            try:
-                from rlef_engine import get_relevant_traces
-                past_fixes = get_relevant_traces(output)
-                if past_fixes:
-                    failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}\n\n{past_fixes}")
-                else:
+                # Upgraded: Retrieve past fixes for this error type
+                try:
+                    from rlef_engine import get_relevant_traces
+                    past_fixes = get_relevant_traces(output)
+                    if past_fixes:
+                        failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}\n\n{past_fixes}")
+                    else:
+                        failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
+                except:
                     failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
-            except:
-                failures.append(f"Test/Execution Failures (Persistent Sandbox):\n{output[:800]}")
             if not adv_ok: failures.append(f"ADVERSARIAL TESTS FAILED: An independent agent wrote tests to break your code, and it failed them:\n{adv_output[:800]}")
             if not test_code: failures.append("CRITICAL FAILURE: You did not provide any pytest unit tests.")
         if not failures: break

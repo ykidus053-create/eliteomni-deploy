@@ -151,7 +151,7 @@ CLAUDE_STYLE_DEFAULTS = {
 INFRA_TIERS = {
     "tier1": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
     "tier2": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
-    "tier3": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["hard", "research"], "max_tokens": 8192, "label": "frontier"},
+    "tier3": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["hard", "research"], "max_tokens": 4096, "label": "frontier"},
 }
 
 CODING_SKILLS = {"coder", "code", "coding", "swe", "calculator", "debug", "refactor", "engineer"}
@@ -163,7 +163,7 @@ def get_infra_tier(complexity: str, skill: str = "") -> dict:
     is_code = skill and skill.lower() in CODING_SKILLS
     is_research = skill and skill.lower() in ("researcher", "research")
     if is_code or is_research:
-        return {"models": ["cerebras/zai-glm-4.7"], "complexity": [complexity], "max_tokens": 8192, "label": "code-inference"}
+        return {"models": ["cerebras/zai-glm-4.7"], "complexity": [complexity], "max_tokens": 4096, "label": "code-inference"}
     if complexity == "easy":   return INFRA_TIERS["tier1"]
     if complexity == "hard":   return INFRA_TIERS["tier3"]
     return INFRA_TIERS["tier2"]
