@@ -1182,26 +1182,45 @@ def _build_stream_context(msg: str, hist: list) -> dict:
             _search_msg = f"{_user_q} {_vision_desc}"
     clean_msg, search_ctx = extract_search_context(_search_msg)
 
-    # ── POWER UPGRADE: Real-Time RAG & Knowledge Graph ──────────────
-    try:
-        from knowledge_rag import get_knowledge_context
-        _rag_ctx = get_knowledge_context(clean_msg, max_tokens=1000)
-        if _rag_ctx:
-            memory.insert(0, _rag_ctx)
-    except Exception:
-        pass
-        
-    try:
-        from knowledge_graph import extract_and_store, get_graph_context
-        # Learn relationships from the user's message in real-time
-        extract_and_store(msg)
-        # Extract capitalized entities to query the graph
-        _entities = [w.strip('.,!?') for w in msg.split() if w[0].isupper()]
-        _graph_ctx = get_graph_context(_entities[:3])
-        if _graph_ctx:
-            memory.insert(0, _graph_ctx)
-    except Exception:
-        pass
+    # ── POWER UPGRADE: Real-Time RAG & Knowledge Graph (TTFT-safe, 400ms budget) ──
+    import concurrent.futures as _cf
+    def _rag_lookup():
+        try:
+            from knowledge_rag import get_knowledge_context
+            return get_knowledge_context(clean_msg, max_tokens=1000)
+        except Exception:
+            return None
+    def _graph_lookup():
+        try:
+            from knowledge_graph import get_graph_context
+            _entities = [w.strip('.,!?') for w in msg.split() if w and w[0].isupper()]
+            return get_graph_context(_entities[:3])
+        except Exception:
+            return None
+    def _graph_write():
+        try:
+            from knowledge_graph import extract_and_store
+            extract_and_store(msg)
+        except Exception:
+            pass
+    import threading as _thr_bg
+    _thr_bg.Thread(target=_graph_write, daemon=True).start()
+    with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
+        _rag_f = _ex.submit(_rag_lookup)
+        _graph_f = _ex.submit(_graph_lookup)
+        try:
+            _rag_ctx = _rag_f.result(timeout=0.4)
+            if _rag_ctx:
+                memory.insert(0, _rag_ctx)
+        except _cf.TimeoutError:
+            print("[TTFT] RAG lookup skipped — exceeded 400ms budget")
+        try:
+            _graph_ctx = _graph_f.result(timeout=0.2)
+            if _graph_ctx:
+                memory.insert(0, _graph_ctx)
+        except _cf.TimeoutError:
+            print("[TTFT] Graph lookup skipped — exceeded 200ms budget")
+
 
     # agent enrichment runs inside _build_stream_context
 
@@ -1211,8 +1230,14 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     for tool_name, triggers in FORCE_TOOL_PATTERNS.items():
         if any(t in _msg_lower_ft for t in triggers):
             if tool_name == "SEARCH" and not search_ctx and complexity != "easy":
-                r = tool_search(msg[:300])
-                if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
+                import concurrent.futures as _cf_s
+                with _cf_s.ThreadPoolExecutor(max_workers=1) as _sex:
+                    _sf = _sex.submit(tool_search, msg[:300])
+                    try:
+                        r = _sf.result(timeout=2.5)
+                        if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
+                    except _cf_s.TimeoutError:
+                        print("[TTFT] Search skipped — exceeded 2.5s budget")
             elif tool_name == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
                 import re as _rce
                 nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)

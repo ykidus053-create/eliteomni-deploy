@@ -248,8 +248,7 @@ PRIVACY:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUDIT_LOG_PATH = "/home/kidus/eliteomni_audit.jsonl"
 
-def audit_log(event: str, data: dict):
-    """Append an audit event to the compliance log."""
+def _audit_log_sync(event: str, data: dict):
     try:
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -260,6 +259,11 @@ def audit_log(event: str, data: dict):
             f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
+
+def audit_log(event: str, data: dict):
+    """Append an audit event to the compliance log — fire-and-forget (TTFT-safe)."""
+    import threading as _thr_audit
+    _thr_audit.Thread(target=_audit_log_sync, args=(event, data), daemon=True).start()
 
 def audit_request(msg: str, skill: str, blocked: bool = False, reason: str = ""):
     """Log every request for compliance."""
