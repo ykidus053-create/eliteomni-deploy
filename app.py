@@ -3377,7 +3377,7 @@ async def stream_chat(req: Request):
                 ]
                 def _tool_cont_worker():
                     try:
-                        for t2 in mistral_stream(_cont_msgs3, max_tokens=4096, model=ctx.get("model"), tools=ctx.get("mcp_tools")):
+                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=4096, model="zai-glm-4.7"):
                             loop.call_soon_threadsafe(tok_q.put_nowait, t2)
                     except Exception as e:
                         print(f"[tool cont] {e}")
@@ -3409,6 +3409,7 @@ async def stream_chat(req: Request):
                 chunks.append(out)
                 yield out
                 buf = ""
+                await asyncio.sleep(0)
 
         if buf:
             out = _re_s.sub(
