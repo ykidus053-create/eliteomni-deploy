@@ -3334,7 +3334,7 @@ async def stream_chat(req: Request):
             ])
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
-            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=8)
+            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=10)
         except _asyncio.TimeoutError:
             print("[stream_chat] ctx timeout — fast first token with minimal ctx (history preserved)")
             from modules.core.constants import get_infra_tier
