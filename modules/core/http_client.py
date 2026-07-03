@@ -16,14 +16,14 @@ if _env_path.exists():
 # ── KEYS & CONSTANTS ──────────────────────────────────────────────────────────
 MISTRAL_API_KEY     = os.environ.get("MISTRAL_API_KEY", "")
 MISTRAL_URL         = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL       = "mistral-medium-3.5"  # reasoning default
+MISTRAL_MODEL = "cerebras/zai-glm-4.7"  # reasoning default
 GROQ_API_KEY        = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL          = "llama-3.3-70b-versatile"
 GROQ_URL            = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_CRITIC_MODEL   = "llama-3.3-70b-versatile"
 
 # ── CODESTRAL ROUTING ─────────────────────────────────────────────────────────
-CODESTRAL_MODEL = "mistral-medium-3.5"
+CODESTRAL_MODEL = "cerebras/zai-glm-4.7"
 CODESTRAL_URL   = "https://api.mistral.ai/v1/chat/completions"
 
 CODING_SKILLS = {"coder", "code", "coding", "swe", "calculator", "debug", "refactor", "engineer"}
@@ -59,11 +59,11 @@ def _audit(event: str, data: dict):
         pass
 
 # ── MESSAGE TRIMMER ───────────────────────────────────────────────────────────
-def _trim_msgs(msgs: list, max_chars: int = 40000) -> list:
+def _trim_msgs(msgs: list, max_chars: int = 180000) -> list:
     system      = [m for m in msgs if m.get("role") == "system"]
     others      = [m for m in msgs if m.get("role") != "system"]
-    sys_trimmed = [{**m, "content": m.get("content","")[:4000]} for m in system]
-    oth_trimmed = [{**m, "content": m.get("content","")[:2000]} for m in others]
+    sys_trimmed = [{**m, "content": m.get("content","")[:40000]} for m in system]
+    oth_trimmed = [{**m, "content": m.get("content","")[:30000]} for m in others]
     budget = max_chars - sum(len(m.get("content","")) for m in sys_trimmed)
     kept = []
     for m in reversed(oth_trimmed):
@@ -93,7 +93,7 @@ try:
     _session.mount("https://", adapter)
     _session.mount("http://", adapter)
     _session.headers.update({
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Connection": "keep-alive",
         "Accept": "text/event-stream",
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
@@ -115,13 +115,25 @@ _mistral_semaphore = _threading.Semaphore(2)
 _rate_lock         = _threading.Lock()
 _last_call_time    = 0.0
 
+# Token bucket: 5 RPM = 1 token per 12s, burst up to 3
+_bucket_tokens     = 3.0
+_bucket_last_refill = time.time()
+_BUCKET_RATE       = 1.0 / 12.0  # tokens per second
+_BUCKET_MAX        = 3.0
+
 def _rate_wait():
-    global _last_call_time
+    global _bucket_tokens, _bucket_last_refill, _last_call_time
     with _rate_lock:
-        elapsed = time.time() - _last_call_time
-        gap = 12.0  # free tier ~5 RPM — 12s gap stays safe
-        if elapsed < gap:
-            time.sleep(gap - elapsed)
+        now = time.time()
+        elapsed = now - _bucket_last_refill
+        _bucket_tokens = min(_BUCKET_MAX, _bucket_tokens + elapsed * _BUCKET_RATE)
+        _bucket_last_refill = now
+        if _bucket_tokens >= 1.0:
+            _bucket_tokens -= 1.0
+        else:
+            wait = (1.0 - _bucket_tokens) / _BUCKET_RATE
+            time.sleep(wait)
+            _bucket_tokens = 0.0
         _last_call_time = time.time()
 
 def _rate_on_success():
@@ -129,13 +141,40 @@ def _rate_on_success():
     with _rate_lock:
         _last_call_time = time.time()
 
+# ── CEREBRAS RATE LIMITER ────────────────────────────────────────────────────
+_cbrs_rate_lock        = _threading.Lock()
+_cbrs_bucket_tokens    = 3.0
+_cbrs_bucket_last      = time.time()
+_CBRS_BUCKET_RATE      = 1.0 / 12.0  # 5 RPM = 1 token per 12s
+_CBRS_BUCKET_MAX       = 3.0
+
+def _cbrs_rate_wait():
+    global _cbrs_bucket_tokens, _cbrs_bucket_last
+    with _cbrs_rate_lock:
+        now = time.time()
+        elapsed = now - _cbrs_bucket_last
+        _cbrs_bucket_tokens = min(_CBRS_BUCKET_MAX, _cbrs_bucket_tokens + elapsed * _CBRS_BUCKET_RATE)
+        _cbrs_bucket_last = now
+        if _cbrs_bucket_tokens >= 1.0:
+            _cbrs_bucket_tokens -= 1.0
+        else:
+            wait = (1.0 - _cbrs_bucket_tokens) / _CBRS_BUCKET_RATE
+            time.sleep(wait)
+            _cbrs_bucket_tokens = 0.0
+
 # ── MISTRAL STREAM ────────────────────────────────────────────────────────────
 def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill: str = None, tools: list = None):
+    # All text generation routes to Cerebras now — Mistral is reserved for vision only.
+    from groq_client import cerebras_stream
+    _cbrs_rate_wait()
+    _mdl = (model or "").replace("cerebras/", "") or "zai-glm-4.7"
+    yield from cerebras_stream(msgs, max_tokens=max_tokens, model=_mdl)
+    return
     if not MISTRAL_API_KEY:
         yield "[MISTRAL_API_KEY not set]"; return
 
     mdl      = get_model_for_skill(skill, model)
-    trimmed  = _trim_msgs(msgs, max_chars=40000)
+    trimmed  = _trim_msgs(msgs, max_chars=180000)
 
     # Route to correct endpoint based on model name
     if mdl.startswith("mistral-") or mdl.startswith("codestral-") or mdl.startswith("devstral-") or mdl.startswith("magistral-"):
@@ -147,20 +186,16 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
         _url = MISTRAL_URL  # fireworks
         _key = MISTRAL_API_KEY
 
-    _is_reasoning = skill and skill.lower() in CODING_SKILLS
     payload = {
         "model":      mdl,
         "messages":   trimmed,
         "max_tokens": min(max_tokens, 16000),
-        "temperature": 0.1 if _is_reasoning else 0.3,
+        "temperature": 0.1 if (skill and skill.lower() in CODING_SKILLS) else 0.7,
+        "top_p": 0.95,
         "stream":     True,
     }
-    # Enable reasoning mode for coder/hard tasks — Medium 3.5 supports configurable thinking
-    if _is_reasoning:
-        try:
-            payload["thinking"] = {"type": "enabled", "budget_tokens": 4000}
-        except Exception:
-            pass
+    if mdl.startswith("mistral-medium") or mdl.startswith("mistral-large"):
+        payload["reasoning_effort"] = "high" if (skill and skill.lower() in CODING_SKILLS) else "none"
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -289,7 +324,14 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
 
             # Non-429: don't retry
             if status and 400 <= status < 500:
-                print(f"[Mistral stream error] HTTP {status}: {e}")
+                _body = None
+                try:
+                    _resp = getattr(e, "response", None)
+                    if _resp is not None:
+                        _body = _resp.text[:1000]
+                except Exception:
+                    pass
+                print(f"[Mistral stream error] HTTP {status}: {e} | BODY: {_body}")
                 yield f"[Stream error: HTTP {status}]"; return
             print(f"[Mistral stream error] {e}")
             yield f"[Stream error: {e}]"; return
@@ -319,20 +361,60 @@ def _vision_call(msgs: list, max_tokens: int = 800, model: str = "mistral-small-
     """Raw vision API call — mistral-medium-latest."""
     import requests as _req
     try:
+        # Override session's default Accept: text/event-stream header — this
+        # is a non-streaming call and must receive a single JSON response,
+        # not SSE chunks.
+        _live_key_early = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
         _r = _session.post(
             "https://api.mistral.ai/v1/chat/completions",
             json={"model": model, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.3},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {_live_key_early}", "Content-Type": "application/json"},
             timeout=30,
         ) if _USE_SESSION else None
         if _r and _r.status_code == 200:
             return _r.json()["choices"][0]["message"]["content"].strip()
+        _live_key = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
         _r2 = _req.post("https://api.mistral.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {_live_key}", "Content-Type": "application/json",
+                     "Accept": "application/json"},
             json={"model": model, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.3},
             timeout=30)
+        if _r2.status_code != 200:
+            return f"[vision_call error: HTTP {_r2.status_code}: {_r2.text[:300]}]"
         return _r2.json()["choices"][0]["message"]["content"].strip()
     except Exception as _e:
         return f"[vision_call error: {_e}]"
+
+def ocr_document(file_b64: str, filename: str = "document.pdf") -> str:
+    """
+    Extract text from a PDF/document using Mistral's dedicated OCR model.
+    Returns markdown-formatted extracted text, or an error string.
+    """
+    import requests as _req
+    try:
+        is_pdf = filename.lower().endswith(".pdf")
+        doc_payload = {
+            "type": "document_url",
+            "document_url": f"data:application/pdf;base64,{file_b64}"
+        } if is_pdf else {
+            "type": "image_url",
+            "image_url": f"data:image/jpeg;base64,{file_b64}"
+        }
+        _live_key = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
+        resp = _req.post(
+            "https://api.mistral.ai/v1/ocr",
+            headers={"Authorization": f"Bearer {_live_key}", "Content-Type": "application/json"},
+            json={"model": "mistral-ocr-latest", "document": doc_payload},
+            timeout=45,
+        )
+        if resp.status_code != 200:
+            return f"[OCR error: HTTP {resp.status_code}: {resp.text[:300]}]"
+        data = resp.json()
+        pages = data.get("pages", [])
+        text = "\n\n".join(p.get("markdown", "") for p in pages)
+        return text.strip() or "[OCR returned no text]"
+    except Exception as _e:
+        return f"[OCR error: {type(_e).__name__}: {_e}]"
 
 def _img_content(image_b64: str) -> dict:
     """Build image content block — auto-detect JPEG vs PNG."""
@@ -365,15 +447,13 @@ PURPOSE: What is the likely function or purpose of what you see?"""
         }]}]
         return _vision_call(msgs, max_tokens=400)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        f1 = ex.submit(_stage1)
-        f2 = ex.submit(_stage2)
-        spatial = f1.result()
-        world   = f2.result()
-
     user_question = prompt or "What is shown in this image?"
-    stage3_msgs = [{"role": "user", "content": [img, {"type": "text", "text":
-        f"""Using the visual analysis below, answer this specific question using cross-modal reasoning.
+
+    # Run all 4 stages in parallel — stages 3+4 use stage 1+2 results but we
+    # pre-build their prompts optimistically with placeholders and swap in results
+    def _stage3(spatial, world):
+        msgs = [{"role": "user", "content": [img, {"type": "text", "text":
+            f"""Using the visual analysis below, answer this specific question using cross-modal reasoning.
 
 QUESTION: {user_question}
 
@@ -382,11 +462,12 @@ Visual context:
 - World model: {world[:250]}
 
 Answer the question directly. Use only what is visually present."""
-    }]}]
-    cross_modal = _vision_call(stage3_msgs, max_tokens=500)
+        }]}]
+        return _vision_call(msgs, max_tokens=500)
 
-    stage4_msgs = [{"role": "user", "content": [img, {"type": "text", "text":
-        f"""You are a vision verifier. A model produced this answer about the image:
+    def _stage4(cross_modal):
+        msgs = [{"role": "user", "content": [img, {"type": "text", "text":
+            f"""You are a vision verifier. A model produced this answer about the image:
 
 ANSWER: {cross_modal}
 
@@ -394,10 +475,32 @@ Look at the image directly and verify this answer.
 - Correct any hallucinations or unsupported claims
 - Output only the final verified, concise description (2-4 sentences max)
 - Do not add lists, bullet points, or explanations"""
-    }]}]
-    final = _vision_call(stage4_msgs, max_tokens=300)
+        }]}]
+        return _vision_call(msgs, max_tokens=300)
 
-    return final if not final.startswith("[vision_call error") else cross_modal
+    # Wave 1: stages 1+2 in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f1 = ex.submit(_stage1)
+        f2 = ex.submit(_stage2)
+        spatial = f1.result()
+        world   = f2.result()
+
+    # Wave 2: stages 3+4 in parallel (stage 4 runs a direct verify pass in parallel with stage 3)
+    def _direct_verify():
+        msgs = [{"role": "user", "content": [img, {"type": "text", "text":
+            f"Answer this question about the image concisely: {user_question}"
+        }]}]
+        return _vision_call(msgs, max_tokens=400)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f3 = ex.submit(_stage3, spatial, world)
+        f4 = ex.submit(_direct_verify)
+        cross_modal = f3.result()
+        direct      = f4.result()
+
+    # Pick best result: prefer cross_modal if valid, fall back to direct
+    final = cross_modal if not cross_modal.startswith("[vision_call error") else direct
+    return final
 
 # ── MODEL ROUTER ──────────────────────────────────────────────────────────────
 def route_model_v3(skill: str, complexity: str) -> tuple:
@@ -501,9 +604,11 @@ def mistral_ocr(file_b64: str, filename: str = "document.pdf") -> str:
     """Extract text from a PDF or image using mistral-ocr-latest."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "pdf"
     mime = "application/pdf" if ext == "pdf" else f"image/{ext}"
+    _live_key = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
     try:
         resp = _session.post(
             "https://api.mistral.ai/v1/ocr",
+            headers={"Authorization": f"Bearer {_live_key}", "Content-Type": "application/json"},
             json={
                 "model": "mistral-ocr-latest",
                 "document": {
@@ -522,3 +627,151 @@ def mistral_ocr(file_b64: str, filename: str = "document.pdf") -> str:
     except Exception as e:
         print(f"[OCR error] {e}")
         return f"[OCR failed: {e}]"
+
+
+def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
+                           skill: str = None, tools: list = None, label: str = "default"):
+    """
+    Thin tracing wrapper around mistral_stream. Logs prompt/response/latency
+    to eliteomni.db via modules.langchain_tracing, without changing any
+    existing generation behavior. Drop-in replacement: same signature + yields.
+    """
+    if model and str(model).startswith("cerebras/"):
+        from groq_client import cerebras_stream
+        mdl = model.replace("cerebras/", "")
+        _cbrs_rate_wait()
+        yield from cerebras_stream(msgs, max_tokens=max_tokens, model=mdl)
+        return
+    import time as _time_tr
+    try:
+        from modules.langchain_tracing import trace_call
+    except Exception:
+        trace_call = None
+
+    _t0 = _time_tr.time()
+    _prompt_preview = ""
+    try:
+        _last_user = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
+        _prompt_preview = str(_last_user)[:500]
+    except Exception:
+        pass
+
+    _chunks = []
+    _error = None
+    try:
+        for tok in mistral_stream(msgs, max_tokens=max_tokens, model=model, skill=skill, tools=tools):
+            _chunks.append(tok if isinstance(tok, str) else "")
+            yield tok
+    except Exception as _e:
+        _error = str(_e)[:500]
+        raise
+    finally:
+        if trace_call:
+            _latency_ms = (_time_tr.time() - _t0) * 1000
+            _response_text = "".join(_chunks)
+            try:
+                trace_call(
+                    label=label, skill=skill or "", complexity="", model=model or "",
+                    prompt_text=_prompt_preview, response_text=_response_text,
+                    latency_ms=_latency_ms, error=_error
+                )
+            except Exception as _te:
+                print(f"[LangChainTrace] wrapper log failed: {_te}")
+
+
+def mistral_stream_traced(msgs: list, max_tokens: int = 2000, model: str = None,
+                           skill: str = None, tools: list = None, label: str = "default"):
+    """
+    Thin tracing wrapper around mistral_stream. Logs prompt/response/latency
+    to eliteomni.db via modules.langchain_tracing, without changing any
+    existing generation behavior. Drop-in replacement: same signature + yields.
+    """
+    if model and str(model).startswith("cerebras/"):
+        from groq_client import cerebras_stream
+        mdl = model.replace("cerebras/", "")
+        _cbrs_rate_wait()
+        yield from cerebras_stream(msgs, max_tokens=max_tokens, model=mdl)
+        return
+    import time as _time_tr
+    try:
+        from modules.langchain_tracing import trace_call
+    except Exception:
+        trace_call = None
+
+    _t0 = _time_tr.time()
+    _prompt_preview = ""
+    try:
+        _last_user = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
+        _prompt_preview = str(_last_user)[:500]
+    except Exception:
+        pass
+
+    _chunks = []
+    _error = None
+    try:
+        for tok in mistral_stream(msgs, max_tokens=max_tokens, model=model, skill=skill, tools=tools):
+            _chunks.append(tok if isinstance(tok, str) else "")
+            yield tok
+    except Exception as _e:
+        _error = str(_e)[:500]
+        raise
+    finally:
+        if trace_call:
+            _latency_ms = (_time_tr.time() - _t0) * 1000
+            _response_text = "".join(_chunks)
+            try:
+                trace_call(
+                    label=label, skill=skill or "", complexity="", model=model or "",
+                    prompt_text=_prompt_preview, response_text=_response_text,
+                    latency_ms=_latency_ms, error=_error
+                )
+            except Exception as _te:
+                print(f"[LangChainTrace] wrapper log failed: {_te}")
+
+# ── BEST-OF-N GENERATE (Chip Huyen Ch.2 — Test Time Compute) ─────────────────
+def mistral_generate_best_of(
+    msgs: list,
+    max_tokens: int = 2000,
+    model: str = None,
+    skill: str = None,
+    n: int = 2,
+    critique: bool = False,
+) -> str:
+    """
+    Generate N outputs, pick the best by score (length + no error markers).
+    If critique=True, runs a self-critique pass on the winner (Ch.5).
+    n=2 is the sweet spot — noticeable quality gain at ~2x cost.
+    """
+    import concurrent.futures
+
+    def _score(text: str) -> float:
+        if not text or text.startswith("["):  # error marker
+            return -1.0
+        # Penalize very short or very long responses
+        length = len(text)
+        score = min(length, 3000) / 3000.0
+        # Penalize uncertainty markers
+        hedges = ["i'm not sure", "i don't know", "i cannot", "i can't", "unclear"]
+        for h in hedges:
+            if h in text.lower():
+                score -= 0.15
+        return score
+
+    # Generate N outputs in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as ex:
+        futures = [ex.submit(mistral_generate, msgs, max_tokens, model, skill) for _ in range(n)]
+        outputs = [f.result() for f in futures]
+
+    # Pick best
+    best = max(outputs, key=_score)
+
+    # Optional self-critique pass (Ch.5)
+    if critique:
+        try:
+            from modules.prompts import self_critique_msgs
+            critique_msgs = self_critique_msgs(msgs, best)
+            best = mistral_generate(critique_msgs, max_tokens=max_tokens, model=model, skill=skill)
+        except Exception as _e:
+            print(f"[best_of_n] critique pass failed: {_e}")
+
+    return best
