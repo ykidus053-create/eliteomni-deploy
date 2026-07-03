@@ -3324,6 +3324,14 @@ async def stream_chat(req: Request):
     async def _gen():
         import asyncio as _asyncio
         _loop = _asyncio.get_event_loop()
+        # ── Visible "thinking" indicator while context/reasoning builds ────
+        _quick_skill_guess = classify_skill(msg) if 'classify_skill' in dir() else "general"
+        if len(msg) > 100 or _quick_skill_guess in ("coder", "researcher", "calculator"):
+            import random as _rthink0
+            yield _rthink0.choice([
+                "🤔 *Thinking...*\n\n",
+                "🧠 *Working through this...*\n\n",
+            ])
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
             ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=8)
