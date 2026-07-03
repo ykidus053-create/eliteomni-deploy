@@ -1451,6 +1451,20 @@ def pipeline_stream(msg: str, history: list):
     rlhf_note             = _safe(_f_rlhf,  "",         "rlhf")
     _mem_ctx              = _safe(_f_memctx, "",        "memctx")
     _ex2.shutdown(wait=False)
+
+    # ── Visible "thinking" indicator before the slow deliberate pipeline ────
+    # Matches the exact condition in route_to_reasoning_engine that triggers
+    # the multi-stage prover/skeptic/judge pipeline, so the user sees progress
+    # instead of silence during that blocking call.
+    if complexity in ("hard", "medium") and skill in ("coder", "researcher", "calculator"):
+        import random as _rthink
+        _thinking_msgs = [
+            "🤔 *Thinking through this carefully...*\n\n",
+            "🧠 *Working through the details...*\n\n",
+            "🔍 *Reasoning step by step...*\n\n",
+        ]
+        yield _rthink.choice(_thinking_msgs)
+
     system          = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
     if _mem_ctx: system += _mem_ctx
     system          = trim_system_prompt(system, complexity)

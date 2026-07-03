@@ -167,7 +167,10 @@ def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill:
     # All text generation routes to Cerebras now — Mistral is reserved for vision only.
     from groq_client import cerebras_stream
     _cbrs_rate_wait()
-    _mdl = (model or "").replace("cerebras/", "") or "zai-glm-4.7"
+    _CEREBRAS_VALID_MODELS = {"zai-glm-4.7", "llama3.1-8b", "llama-3.3-70b", "qwen-3-32b"}
+    _raw_mdl = (model or "").replace("cerebras/", "")
+    # Reject any non-Cerebras model name (e.g. leftover Mistral model strings) — fall back to default
+    _mdl = _raw_mdl if _raw_mdl in _CEREBRAS_VALID_MODELS else "zai-glm-4.7"
     yield from cerebras_stream(msgs, max_tokens=max_tokens, model=_mdl)
     return
     if not MISTRAL_API_KEY:
