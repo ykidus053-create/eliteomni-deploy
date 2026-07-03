@@ -377,21 +377,21 @@ def _dynamic_max_tokens(msgs: list) -> int:
     if is_short:
         base = 256
     elif msg_len < 80:
-        base = 512
-    elif msg_len < 200:
         base = 1024
+    elif msg_len < 200:
+        base = 2048
     else:
-        base = 1500
+        base = 3000
 
     # ── Multipliers ──────────────────────────────────────────────────────
     multiplier = 1.0
-    if is_code:        multiplier += 0.8
-    if is_long_form:   multiplier += 1.0
+    if is_code:        multiplier += 1.2
+    if is_long_form:   multiplier += 1.5
     if is_list:        multiplier += 0.4
-    if is_multi_part:  multiplier += 0.5
+    if is_multi_part:  multiplier += 0.7
     if is_creative:    multiplier += 0.7
     if is_math:        multiplier += 0.4
-    if is_analysis:    multiplier += 0.6
+    if is_analysis:    multiplier += 0.8
 
     # ── Conversation depth bonus ─────────────────────────────────────────
     non_system = [m for m in msgs if m.get("role") != "system"]
@@ -400,8 +400,8 @@ def _dynamic_max_tokens(msgs: list) -> int:
 
     budget = int(base * multiplier)
 
-    # ── Hard clamp: never below 512, never above 8000 ────────────────────
-    return max(512, min(budget, 8000))
+    # ── Hard clamp: never below 512, never above 15500 (GLM-4.7 ceiling minus safety margin) ──
+    return max(512, min(budget, 15500))
 
 
 def _groq_thinking_effort(complexity: str) -> str:

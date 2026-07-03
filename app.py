@@ -3319,7 +3319,7 @@ async def stream_chat(req: Request):
             _infra_t = get_infra_tier("medium")
             _fallback_msgs = [{"role": h.get("role","user"), "content": h.get("content","")} for h in (hist or [])[-10:] if h.get("content")]
             _fallback_msgs.append({"role": "user", "content": msg})
-            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
+            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 7500, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
         yield ""
 
         if False: yield
