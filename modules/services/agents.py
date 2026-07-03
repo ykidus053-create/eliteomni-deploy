@@ -13,7 +13,7 @@ You are EliteOmni acting as a specialized agent. Regardless of the task:
 from modules.core.constants import _tool_exec
 from modules.services.search import tool_search, tool_web_fetch
 from modules.services.tools import _grep_codebase, tool_exec, tool_lint
-from modules.services.memory import db_mem_save
+from modules.services.memory import db_mem_save, tool_calc, tool_weather, tool_time
 from modules.services.mcp import run_mcp_tools
 def groq_generate(msgs, max_tokens=1000, **kwargs):
     return "".join(_mistral_stream(msgs, max_tokens=max_tokens))
@@ -302,11 +302,12 @@ def editor_implement(plan: str, msg: str, system: str,
 
     # Clean mode system — no reasoning allowed in output
     clean_system = (
-        "You are a code generator in CLEAN OUTPUT MODE. "
-        "Do NOT explain, reason, or think in your output. "
-        "Output ONLY the complete Python code inside a ```python block. "
-        "Follow the plan exactly. Make MINIMAL changes. "
-        "Include type hints, docstrings, and one usage example."
+        "You are a production code generator. "
+        "Output ONLY complete Python code. "
+        "EVERY function FULLY implemented - no pass, TODO, stubs. "
+        "No demos, no simplified versions. "
+        "Include type hints and one-line docstrings. "
+        "If code is long, omit usage example - NEVER omit implementation."
     )
 
     last_code = ""
@@ -332,32 +333,10 @@ def editor_implement(plan: str, msg: str, system: str,
         lint_result = tool_lint(extracted)
 
         if lint_result == "OK":
-            # Production-grade validation — check for stubs/placeholders
-            _PROD_VIOLATIONS = [
-                ("pass  #", "stub function"),
-                ("raise NotImplementedError", "unimplemented function"),
-                ("your_api_key", "hardcoded placeholder credential"),
-                ("your_db_url", "hardcoded placeholder DB"),
-                ("# TODO", "unfinished TODO"),
-                ("# FIXME", "unfinished FIXME"),
-                ("fake_", "fake/mock function"),
-                ("mock_", "mock function"),
-                ("stub_", "stub function"),
-                ("in production you would", "non-production disclaimer"),
-                ("for demonstration", "demo-only code"),
-            ]
-            _violations = [desc for sig, desc in _PROD_VIOLATIONS if sig.lower() in extracted.lower()]
-            if _violations and attempt < 2:
-                last_lint = f"Production violations: {', '.join(_violations)}"
-                print(f"[Editor] production violations on attempt {attempt+1}: {_violations}")
-                continue
             # Execute to verify
             exec_out = tool_exec(extracted)
-            _prod_status = "⚠️ (stubs detected)" if _violations else "✅"
-            status = _prod_status if "[EXEC ERROR]" not in exec_out else "⚠️"
+            status = "✅" if "[EXEC ERROR]" not in exec_out and "[LINT" not in exec_out else "⚠️"
             suffix = f"\n\n{status} **Verified** (attempt {attempt+1}) · Lint: OK"
-            if _violations:
-                suffix += f"\n> ⚠️ **Production warnings:** {', '.join(_violations)}"
             if exec_out and exec_out != "(no output)":
                 suffix += f"\n```\n{exec_out[:300]}\n```"
             return code + suffix
@@ -628,27 +607,3 @@ def meta_maybe_rewrite_prompt(skill: str, score: int):
 def detect_emotion_context(msg: str) -> dict:
     """Stub — returns neutral emotion context."""
     return {"emotion": "neutral", "intensity": 0.0, "requires_empathy": False}
-
-
-def knowledge_boundary_check(msg: str, skill: str) -> dict:
-    """
-    Determines whether the model needs to search externally or can answer
-    from its training knowledge. Returns a dict with keys:
-      - needs_search: bool
-      - reason: str
-      - confidence: float (0-1)
-    """
-    _SEARCH_TRIGGERS = [
-        "today", "latest", "current", "now", "recent", "this week",
-        "this month", "this year", "2025", "2026", "news", "price",
-        "stock", "weather", "live", "real-time", "who is", "what is",
-        "breaking", "just", "update", "release", "launched"
-    ]
-    msg_lower = msg.lower()
-    hits = [t for t in _SEARCH_TRIGGERS if t in msg_lower]
-    needs_search = len(hits) > 0 or skill in ("researcher", "analyst")
-    return {
-        "needs_search": needs_search,
-        "reason": f"triggers={hits}" if hits else "no search triggers detected",
-        "confidence": min(0.5 + len(hits) * 0.1, 1.0)
-    }

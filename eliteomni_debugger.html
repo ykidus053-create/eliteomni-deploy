@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EliteOmni — 1000IQ Debugger</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #080b10;
+    --surface: #0d1117;
+    --border: #1a2133;
+    --accent: #00e5ff;
+    --red: #ff3b5c;
+    --yellow: #ffd600;
+    --green: #00e676;
+    --purple: #c77dff;
+    --text: #e0e8f0;
+    --muted: #4a5568;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  header {
+    background: linear-gradient(135deg, #0d1117 0%, #111827 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: -0.5px;
+  }
+
+  .logo span { color: var(--text); }
+
+  .badge {
+    background: linear-gradient(135deg, #00e5ff22, #c77dff22);
+    border: 1px solid #00e5ff44;
+    color: var(--accent);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: 1px;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    height: calc(100vh - 65px);
+  }
+
+  .left-panel {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  textarea {
+    flex: 1;
+    background: var(--surface);
+    border: none;
+    color: #7ec8e3;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    padding: 20px 24px;
+    resize: none;
+    outline: none;
+  }
+
+  textarea::placeholder { color: #2a3545; }
+
+  .analyze-btn {
+    margin: 16px 24px;
+    padding: 14px;
+    background: linear-gradient(135deg, #00e5ff, #c77dff);
+    border: none;
+    border-radius: 6px;
+    color: #000;
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    text-transform: uppercase;
+  }
+
+  .analyze-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+  .analyze-btn:active { transform: translateY(0); }
+
+  .right-panel {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .results {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    color: var(--muted);
+  }
+
+  .empty-icon {
+    font-size: 48px;
+    opacity: 0.3;
+  }
+
+  .empty-state p {
+    font-size: 12px;
+    text-align: center;
+    max-width: 240px;
+    line-height: 1.8;
+  }
+
+  /* Issue card */
+  .issue-card {
+    background: var(--surface);
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    animation: slideIn 0.3s ease forwards;
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  @keyframes slideIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .issue-header {
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .severity-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .sev-critical { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .sev-warning  { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+  .sev-info     { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .sev-ok       { background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+  .issue-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    flex: 1;
+  }
+
+  .issue-code {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .chevron {
+    color: var(--muted);
+    font-size: 12px;
+    transition: transform 0.2s;
+  }
+
+  .issue-card.expanded .chevron { transform: rotate(90deg); }
+
+  .issue-body {
+    display: none;
+    padding: 0 18px 16px;
+    border-top: 1px solid var(--border);
+    margin-top: 0;
+  }
+
+  .issue-card.expanded .issue-body { display: block; }
+
+  .section-label {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin: 14px 0 8px;
+  }
+
+  .cause-text {
+    font-size: 12px;
+    line-height: 1.8;
+    color: #a0b0c0;
+  }
+
+  .fix-block {
+    background: #0a1628;
+    border: 1px solid #1a2a44;
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 12px 14px;
+    font-size: 11px;
+    line-height: 1.8;
+    color: #7ec8e3;
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .fix-block.cmd {
+    border-left-color: var(--green);
+    color: #a0ffb0;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .fix-block.cmd::after {
+    content: 'COPY';
+    position: absolute;
+    top: 8px; right: 10px;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .fix-block.cmd:hover::after { color: var(--green); }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .tag {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+  }
+
+  .tag-red    { background: #ff3b5c22; color: var(--red); border: 1px solid #ff3b5c33; }
+  .tag-yellow { background: #ffd60022; color: var(--yellow); border: 1px solid #ffd60033; }
+  .tag-cyan   { background: #00e5ff22; color: var(--accent); border: 1px solid #00e5ff33; }
+  .tag-purple { background: #c77dff22; color: var(--purple); border: 1px solid #c77dff33; }
+  .tag-green  { background: #00e67622; color: var(--green); border: 1px solid #00e67633; }
+
+  /* Summary bar */
+  .summary-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .summary-cell {
+    background: var(--surface);
+    padding: 14px 18px;
+    text-align: center;
+  }
+
+  .summary-count {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+  }
+
+  .summary-label {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .pulse {
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .loading-bar {
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--purple));
+    width: 0%;
+    transition: width 0.5s ease;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Elite<span>Omni</span> // DEBUGGER</div>
+  <div class="badge">1000IQ DIAGNOSTICS</div>
+  <div style="margin-left:auto; font-size:11px; color:var(--muted);" id="ts"></div>
+</header>
+
+<div class="loading-bar" id="loadingBar"></div>
+
+<div class="main">
+  <div class="left-panel">
+    <div class="panel-header">
+      <span>// PASTE LOG OUTPUT</span>
+      <span id="lineCount">0 lines</span>
+    </div>
+    <textarea id="logInput" placeholder="Paste your app.py server logs here...
+
+Example:
+[ERROR] HTTP Error 413: Payload Too Large
+[ERROR] reasoning_effort is not supported
+Model: llama-3.3-70b-versatile
+Connection refused localhost:3001
+..."></textarea>
+    <button class="analyze-btn" onclick="analyze()">⚡ ANALYZE & DIAGNOSE</button>
+  </div>
+
+  <div class="right-panel" id="rightPanel">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">🧠</div>
+      <p>Paste your server logs on the left and hit ANALYZE to get precise root-cause diagnosis + fixes</p>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('ts').textContent = new Date().toLocaleTimeString();
+
+const logInput = document.getElementById('logInput');
+logInput.addEventListener('input', () => {
+  const lines = logInput.value.split('\n').filter(l => l.trim()).length;
+  document.getElementById('lineCount').textContent = `${lines} lines`;
+});
+
+// ─── RULE ENGINE ─────────────────────────────────────────────────────────────
+const RULES = [
+  {
+    id: 'HTTP_413',
+    severity: 'critical',
+    title: 'HTTP 413 — Payload Too Large',
+    match: log => log.includes('413') || log.includes('Payload Too Large') || log.includes('request_too_large'),
+    diagnose: log => {
+      const causes = [];
+      const fixes = [];
+
+      if (log.includes('urllib') || log.includes('python')) {
+        causes.push('Python urllib sends Transfer-Encoding: chunked by default, which Groq rejects with a false 413. The actual payload may be tiny.');
+        fixes.push({ type: 'cmd', text: `# Add Content-Length header to all Groq requests\nsed -i 's/headers={"Authorization".*"Accept": "application\\/json"}/&, "Content-Length": str(len(data))}/g' app.py` });
+      }
+      if (log.includes('reasoning_effort') || log.includes('compound')) {
+        causes.push('groq/compound does not support reasoning_effort parameter — sending it causes rejection.');
+        fixes.push({ type: 'cmd', text: `sed -i 's/if mdl in.*compound.*:/if mdl in ("never-match",):/' app.py` });
+      }
+      if (log.includes('system') && log.includes('role')) {
+        causes.push('Multiple system-role messages in payload — groq/compound only accepts one system message.');
+        fixes.push({ type: 'info', text: 'Merge all system messages into one before sending. Digest summaries must be appended to the first system message, not added as a new one.' });
+      }
+      if (!causes.length) {
+        causes.push('Payload genuinely too large OR urllib chunked encoding issue.');
+        fixes.push({ type: 'cmd', text: `# Trim messages more aggressively for compound\nsed -i 's/max_chars=5000/max_chars=800/' app.py` });
+      }
+      return { causes, fixes, tags: ['groq/compound', 'urllib', 'headers'] };
+    }
+  },
+  {
+    id: 'REASONING_EFFORT',
+    severity: 'critical',
+    title: '400 Bad Request — reasoning_effort not supported',
+    match: log => log.includes('reasoning_effort') && (log.includes('not supported') || log.includes('400')),
+    diagnose: log => ({
+      causes: ['groq/compound and compound-beta do NOT support the reasoning_effort parameter. It is only valid for GPT-OSS and Qwen models.'],
+      fixes: [
+        { type: 'cmd', text: `grep -n "reasoning_effort\\|GPT_OSS_MODELS" app.py` },
+        { type: 'cmd', text: `# Remove compound from models that get reasoning_effort\nsed -i 's/GPT_OSS_MODELS = {.*compound.*}/GPT_OSS_MODELS = {"llama-3.1-8b-instant"}/' app.py\nsed -i 's/if mdl in ("compound.*"):/if mdl in ("never-match",):/' app.py` }
+      ],
+      tags: ['groq/compound', 'reasoning_effort', '400']
+    })
+  },
+  {
+    id: 'MCP_REFUSED',
+    severity: 'warning',
+    title: 'MCP Servers — Connection Refused',
+    match: log => log.includes('Connection refused') && log.includes('MCP'),
+    diagnose: log => {
+      const ports = [...new Set([...log.matchAll(/localhost:(\d{4})/g)].map(m => m[1]))];
+      return {
+        causes: [`${ports.length} MCP server(s) are not running. Ports: ${ports.slice(0,8).join(', ')}. The app tries to connect on startup and fails silently.`],
+        fixes: [
+          { type: 'info', text: 'These errors are non-fatal — app continues without MCP tools. To fix, start the MCP servers or remove unused ones from the config.' },
+          { type: 'cmd', text: `# Check which MCP servers are configured\ngrep -n "localhost:30" app.py | head -20` }
+        ],
+        tags: ['mcp', 'non-fatal', 'startup']
+      };
+    }
+  },
+  {
+    id: 'WRONG_MODEL',
+    severity: 'critical',
+    title: 'Wrong Model Name in Production',
+    match: log => (log.includes('llama-3.3-70b') || log.includes('llama-3.1-8b')) && log.match(/Model\s*:\s*llama/),
+    diagnose: log => ({
+      causes: ['Server is still using llama-3.3-70b-versatile instead of groq/compound. The file was edited but the running process uses the old version.'],
+      fixes: [
+        { type: 'cmd', text: `# Verify the change took effect in the file\ngrep -n "GROQ_MODEL" app.py` },
+        { type: 'cmd', text: `# Kill and restart\npkill -f "python app.py"; sleep 2 && cd /home/kidus/eliteomni_app && ./start.sh` }
+      ],
+      tags: ['model', 'stale-process', 'restart-required']
+    })
+  },
+  {
+    id: 'PORT_IN_USE',
+    severity: 'critical',
+    title: 'Port 8000 Already In Use',
+    match: log => log.includes('address already in use') || log.includes('Errno 98'),
+    diagnose: log => ({
+      causes: ['A previous instance of the server is still running and bound to port 8000. Starting a new instance fails.'],
+      fixes: [
+        { type: 'cmd', text: `pkill -f "python app.py"; pkill -f uvicorn; sleep 2` },
+        { type: 'cmd', text: `# Verify port is free\nlsof -i :8000` }
+      ],
+      tags: ['port', 'process', 'restart']
+    })
+  },
+  {
+    id: 'STREAMING_EMPTY',
+    severity: 'critical',
+    title: 'Streaming Returns Empty — UI Shows No Output',
+    match: log => (log.includes('Stream') && log.includes('True') && log.includes('compound')) || log.includes('COMPOUND_MODELS'),
+    diagnose: log => ({
+      causes: ['groq/compound does not support SSE streaming. When stream=True is sent, it returns reasoning tokens only (not content), yielding nothing visible in the UI. The model must be called with stream=False and then fake-streamed word by word.'],
+      fixes: [
+        { type: 'cmd', text: `# Ensure compound is in COMPOUND_MODELS (non-streaming fallback)\ngrep -n "COMPOUND_MODELS" app.py` },
+        { type: 'cmd', text: `sed -i 's/COMPOUND_MODELS = {.*}/COMPOUND_MODELS = {"groq\\/compound", "compound-beta"}/' app.py` }
+      ],
+      tags: ['streaming', 'groq/compound', 'ui', 'empty-output']
+    })
+  },
+  {
+    id: 'SLOW_RESPONSE',
+    severity: 'warning',
+    title: 'Slow Response Times (>5s)',
+    match: log => {
+      const times = [...log.matchAll(/(\d{4,5})ms/g)].map(m => parseInt(m[1]));
+      return times.some(t => t > 5000);
+    },
+    diagnose: log => {
+      const times = [...log.matchAll(/(\d{4,5})ms/g)].map(m => parseInt(m[1])).filter(t => t > 5000);
+      return {
+        causes: [`Response times of ${times.join('ms, ')}ms detected. groq/compound does multi-step tool use internally (search + LLM) which adds latency. This is expected but can be optimized.`],
+        fixes: [
+          { type: 'info', text: 'For groq/compound, 8-15s is normal when web search is invoked. Use groq/compound-mini for faster responses on simple queries.' },
+          { type: 'cmd', text: `# Use compound-mini for easy/general queries\n# In generate_sync(), change skill routing:\n# mdl = "groq/compound-mini" if complexity == "easy" else "groq/compound"` }
+        ],
+        tags: ['latency', 'performance', 'expected']
+      };
+    }
+  },
+  {
+    id: 'SEARXNG_DOWN',
+    severity: 'warning',
+    title: 'SearXNG Search Engine Issues',
+    match: log => log.includes('SearXNG disabled') || (log.includes('SearXNG') && log.includes('error')),
+    diagnose: log => ({
+      causes: ['SearXNG search engine is disabled or unreachable. Web search queries will fail or return no results. The app auto-heals every 60s.'],
+      fixes: [
+        { type: 'cmd', text: `# Check SearXNG health\ncurl http://localhost:8888/healthz` },
+        { type: 'cmd', text: `# Restart SearXNG if needed\ndocker restart searxng` }
+      ],
+      tags: ['search', 'searxng', 'auto-heals']
+    })
+  },
+  {
+    id: 'DOUBLE_SYSTEM',
+    severity: 'critical',
+    title: 'Multiple System Messages — API Rejection',
+    match: log => {
+      const sysMatches = [...log.matchAll(/role.*system/g)];
+      return sysMatches.length > 1;
+    },
+    diagnose: log => ({
+      causes: ['More than one system-role message is being sent in the payload. groq/compound strictly requires exactly one system message. The second system message is likely the conversation digest/summary being appended as a new message instead of merged.'],
+      fixes: [
+        { type: 'cmd', text: `grep -n "digest\\|sys_trimmed" app.py | head -10` },
+        { type: 'cmd', text: `# Merge digest into first system message\nsed -i 's/sys_trimmed = sys_trimmed + \\[{"role":"system","content":digest}\\]/sys_trimmed[0]["content"] += "\\\\n" + digest if sys_trimmed else None/' app.py` }
+      ],
+      tags: ['system-message', 'groq/compound', '413', 'payload']
+    })
+  },
+  {
+    id: 'DEPRECATION',
+    severity: 'info',
+    title: 'FastAPI on_event Deprecation Warning',
+    match: log => log.includes('on_event is deprecated'),
+    diagnose: log => ({
+      causes: ['FastAPI deprecated @app.on_event() in favor of lifespan context managers. Non-breaking for now but will be removed in a future FastAPI version.'],
+      fixes: [
+        { type: 'info', text: 'Replace @app.on_event("startup") with the lifespan pattern:\n\nfrom contextlib import asynccontextmanager\n\n@asynccontextmanager\nasync def lifespan(app):\n    # startup code here\n    yield\n    # shutdown code here\n\napp = FastAPI(lifespan=lifespan)' }
+      ],
+      tags: ['deprecation', 'fastapi', 'non-breaking']
+    })
+  },
+  {
+    id: 'ALL_GOOD',
+    severity: 'ok',
+    title: 'No Critical Issues Detected',
+    match: log => !log.includes('ERROR') && !log.includes('413') && log.includes('200'),
+    diagnose: log => {
+      const models = [...new Set([...log.matchAll(/Model\s*:\s*(\S+)/g)].map(m => m[1]))];
+      const latencies = [...log.matchAll(/✓ (\d+)ms/g)].map(m => parseInt(m[1]));
+      const avg = latencies.length ? Math.round(latencies.reduce((a,b)=>a+b,0)/latencies.length) : null;
+      return {
+        causes: [`System running normally. ${models.length ? 'Models: ' + models.join(', ') : ''} ${avg ? '— avg latency: ' + avg + 'ms' : ''}`],
+        fixes: [{ type: 'info', text: '✅ All requests completing successfully. No action needed.' }],
+        tags: ['healthy', 'ok']
+      };
+    }
+  }
+];
+
+function analyze() {
+  const log = logInput.value;
+  if (!log.trim()) return;
+
+  const bar = document.getElementById('loadingBar');
+  bar.style.width = '60%';
+  setTimeout(() => bar.style.width = '100%', 300);
+  setTimeout(() => bar.style.width = '0%', 800);
+
+  const matched = RULES.filter(r => r.match(log));
+  const results = matched.map(r => ({ ...r, ...r.diagnose(log) }));
+
+  const critical = results.filter(r => r.severity === 'critical').length;
+  const warnings = results.filter(r => r.severity === 'warning').length;
+  const infos    = results.filter(r => r.severity === 'info').length;
+  const oks      = results.filter(r => r.severity === 'ok').length;
+
+  const panel = document.getElementById('rightPanel');
+  panel.innerHTML = `
+    <div class="summary-bar">
+      <div class="summary-cell">
+        <div class="summary-count" style="color:var(--red)">${critical}</div>
+        <div class="summary-label">Critical</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-count" style="color:var(--yellow)">${warnings}</div>
+        <div class="summary-label">Warnings</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-count" style="color:var(--accent)">${infos}</div>
+        <div class="summary-label">Info</div>
+      </div>
+      <div class="summary-cell">
+        <div class="summary-count" style="color:var(--green)">${oks}</div>
+        <div class="summary-label">OK</div>
+      </div>
+    </div>
+    <div class="results" id="resultsContainer"></div>
+  `;
+
+  const container = document.getElementById('resultsContainer');
+
+  if (results.length === 0) {
+    container.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:20px 0">No known patterns matched. Log may contain unknown errors.</div>`;
+    return;
+  }
+
+  // Sort: critical first
+  const order = { critical: 0, warning: 1, info: 2, ok: 3 };
+  results.sort((a, b) => order[a.severity] - order[b.severity]);
+
+  results.forEach((r, i) => {
+    const card = document.createElement('div');
+    card.className = 'issue-card';
+    card.style.animationDelay = `${i * 60}ms`;
+
+    const sevClass = { critical: 'sev-critical', warning: 'sev-warning', info: 'sev-info', ok: 'sev-ok' }[r.severity];
+    const tagClass = { critical: 'tag-red', warning: 'tag-yellow', info: 'tag-cyan', ok: 'tag-green' }[r.severity];
+
+    const fixesHtml = r.fixes.map(f => {
+      const cls = f.type === 'cmd' ? 'fix-block cmd' : 'fix-block';
+      return `<div class="${cls}" onclick="copyFix(this)">${escHtml(f.text)}</div>`;
+    }).join('');
+
+    const tagsHtml = (r.tags || []).map(t => `<span class="tag ${tagClass}">${t}</span>`).join('');
+
+    card.innerHTML = `
+      <div class="issue-header" onclick="toggleCard(this)">
+        <div class="severity-dot ${sevClass}"></div>
+        <div class="issue-title">${r.title}</div>
+        <div class="issue-code">${r.id}</div>
+        <div class="chevron">▶</div>
+      </div>
+      <div class="issue-body">
+        <div class="section-label">// Root Cause</div>
+        ${r.causes.map(c => `<div class="cause-text">→ ${c}</div>`).join('')}
+        <div class="section-label">// Fix</div>
+        ${fixesHtml}
+        <div class="tags">${tagsHtml}</div>
+      </div>
+    `;
+
+    container.appendChild(card);
+
+    // Auto-expand critical
+    if (r.severity === 'critical') {
+      setTimeout(() => card.classList.add('expanded'), i * 60 + 100);
+    }
+  });
+}
+
+function toggleCard(header) {
+  header.parentElement.classList.toggle('expanded');
+}
+
+function copyFix(el) {
+  const text = el.textContent.replace(/COPY$/, '').trim();
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = el.style.borderLeftColor;
+    el.style.borderLeftColor = 'var(--yellow)';
+    setTimeout(() => el.style.borderLeftColor = orig, 600);
+  });
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Update clock
+setInterval(() => {
+  document.getElementById('ts').textContent = new Date().toLocaleTimeString();
+}, 1000);
+</script>
+</body>
+</html>

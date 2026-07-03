@@ -51,9 +51,9 @@ def _repair(name, err):
     # Name/import error — try reloading module
     if "nameerror" in err_lower or "importerror" in err_lower or "is not defined" in err_lower:
         print(f"  [Guardian] import/name error in {name} — clearing pycache")
-        subprocess.run(["find", "/home/kidus/eliteomni_app", "-name", "*.pyc",
+        subprocess.run(["find", os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "-name", "*.pyc",
                         "-delete"], capture_output=True)
-        subprocess.run(["find", "/home/kidus/eliteomni_app", "-name",
+        subprocess.run(["find", os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "-name",
                         "__pycache__", "-type", "d", "-exec", "rm", "-rf", "{}", "+"],
                        capture_output=True)
         return True

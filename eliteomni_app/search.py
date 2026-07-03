@@ -1,0 +1,669 @@
+# module-level flag
+_searxng_healthy = True
+
+from modules.config import _ensure_searxng, episodic_store, mem_store, SEARXNG_URL, CTX_WINDOW, MAX_MEM
+from modules.finetune import FINETUNE_DB
+from modules.memory import _rlaif_log, _rag_index, _rag_store, _load_rag_from_db, CTX_TOKEN_BUDGET, _DB_PATH, _feedback, _save_feedback, _sft_store, _load_rag_from_db, _rag_index, _rag_store, tool_weather
+try:
+    import faiss
+    _faiss_ok = True
+except ImportError:
+    _faiss_ok = False
+    faiss = None
+
+faiss_index = None
+faiss_texts = []
+
+# AUTO-SPLIT FROM app.py lines 1124-1707
+import os, re, time, math, json, asyncio, random, ast, subprocess, sys, tempfile
+from threading import Lock
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+import urllib.request, urllib.parse
+
+import requests
+
+def _dynamic_filter_results(results: list, query: str) -> list:
+    """
+    Dynamic Filtering (web_search_20260209): score and re-rank results by
+    keyword relevance BEFORE injecting into context — reduces wasted tokens.
+    """
+    keywords = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
+    if not keywords:
+        return results
+    scored = []
+    for item in results:
+        text = (item.get("title", "") + " " + item.get("content", "")).lower()
+        score = sum(1 for kw in keywords if kw in text)
+        scored.append((score, item))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored]
+
+
+def _news_query(user_msg: str) -> list:
+    """Generate targeted news queries that avoid homepage results."""
+    import datetime
+    now = datetime.datetime.now()
+    month = now.strftime("%B")
+    year  = now.year
+    day   = now.day
+
+    m = user_msg.lower()
+    if any(x in m for x in ["ai news", "artificial intelligence news"]):
+        return [
+            f"artificial intelligence news {month} {day} {year}",
+            f"AI announcements {month} {year} site:techcrunch.com OR site:theverge.com OR site:wired.com",
+            f"LLM model release {month} {year}",
+        ]
+    if "news" in m or "latest" in m:
+        topic = user_msg.replace("latest","").replace("news","").replace("today","").strip()
+        return [
+            f"{topic} {month} {day} {year}",
+            f"{topic} announcement {year}",
+        ]
+    return [user_msg]
+
+
+def _formulate_queries(user_msg: str) -> list:
+    """
+    Dynamic Query Formulation: convert the user message into 1-3 targeted
+    search queries. Mirrors Claude's own query-formulation step so SearXNG
+    gets clean, specific queries instead of raw user text.
+    """
+    msg = user_msg.strip()
+    base = re.sub(
+        r'\b(please|can you|could you|tell me|what is|who is|where is'
+        r'|find me|look up|search for|i want to know|give me)\b',
+        '', msg, flags=re.IGNORECASE
+    ).strip(" ?.,!")
+    base = re.sub(r'\s+', ' ', base)[:120]
+    queries = [base] if base else []
+    # Comparison query
+    if re.search(r'\bvs\.?\b|\bversus\b|\bcompare\b|\bdifference between\b', msg, re.IGNORECASE):
+        parts = re.split(r'\bvs\.?\b|\bversus\b|\bcompare\b|\bdifference between\b', msg, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            queries.append(f"{parts[0].strip()} {parts[1].strip()} comparison")
+    # Recency-biased query for news/current events
+    if re.search(r'\blatest|current|today|recent|news|2025|2026\b', msg, re.IGNORECASE):
+        queries.append(f"{base} 2026")
+    seen, unique = set(), []
+    for q in queries:
+        if q not in seen and len(q) > 3:
+            seen.add(q); unique.append(q)
+    return unique[:3]
+
+def _cite_results(results: list) -> str:
+    """
+    Source Attribution: format results with [1][2] citation markers and
+    append a Sources block — mirrors Claude's RAG citation output style.
+    """
+    if not results:
+        return ""
+    body_lines, source_lines = [], ["\n**Sources:**"]
+    idx = 1
+    for item in results:
+        title   = item.get("title", "")
+        snippet = item.get("content", "") or item.get("snippet", "")
+        url     = item.get("url", "")
+        if snippet:
+            body_lines.append(f"[{idx}] {title+': ' if title else ''}{snippet[:60]}")
+            if url:
+                source_lines.append(f"[{idx}] {title or url} — {url[:80]}")
+            idx += 1
+    cited = "\n".join(body_lines) + "\n".join(source_lines) if body_lines else ""
+    # Enforcement: append mandatory instruction so model cannot skip citations
+    if cited:
+        cited += "\n[Cite sources as [1][2]]"
+    return cited
+
+def tool_web_fetch(url: str, max_chars: int = 400) -> str:
+    """
+    WebFetch (web_fetch_20260209): fetch a full page when snippets are
+    insufficient. Split from WebSearch per Claude Code architecture for
+    safety + injection surface control. Strips scripts/styles/HTML.
+    """
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}, timeout=7)
+        r.raise_for_status()
+        text = re.sub(r'<(script|style)[^>]*>.*?</(script|style)>', ' ', r.text, flags=re.DOTALL)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:max_chars]
+    except Exception:
+        return None  # never leak error strings into model context
+
+def tool_search(query: str, _raw: bool = False) -> str:
+    """
+    WebSearch (web_search_20260209 architecture):
+    - Health-gated: checks SearXNG is up before every call
+    - Dynamic filtering: relevance-ranks results before context injection
+    - WebFetch fallback: fetches top URL when snippets are empty
+    - Citation formatted: returns [1][2] cited output by default
+    - Returns None on failure — never leaks error strings into model context
+    _raw=True returns the raw results list for multi-step chaining.
+    """
+    if not _ensure_searxng():
+        print("[tool_search] SearXNG unavailable — skipping")
+        return None
+
+    try:
+        params  = {"q": query, "format": "json", "categories": "general", "language": "en"}
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
+        r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=8)
+        r.raise_for_status()
+        raw = r.json().get("results", [])
+        results = _dynamic_filter_results(raw, query)
+
+        if _raw:
+            return results  # caller handles formatting
+
+        # Try citation-formatted output first
+        cited = _cite_results(results[:6])
+        if cited:
+            return cited
+
+        # WebFetch disabled — saves tokens
+        pass
+
+        return None
+
+    except requests.exceptions.ConnectionError:
+        global _searxng_healthy
+        _searxng_healthy = False
+        print("[tool_search] ConnectionError — marked SearXNG unhealthy")
+        return None
+    except Exception as e:
+        print(f"[tool_search] error: {e}")
+        return None
+
+def _results_quality(results: list, query: str) -> float:
+    """
+    Score result pool quality 0.0-1.0.
+    Low score triggers a follow-up search (iterative chaining).
+    """
+    if not results:
+        return 0.0
+    keywords = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
+    if not keywords:
+        return 1.0
+    hits = 0
+    for item in results[:6]:
+        text = (item.get("title","") + " " + item.get("content","")).lower()
+        hits += sum(1 for kw in keywords if kw in text)
+    return min(1.0, hits / (len(keywords) * 2))
+
+def tool_search_multi(user_msg: str, max_results: int = 5) -> str:
+    import datetime
+    m = user_msg.lower()
+    if any(x in m for x in ['news','latest','today','current','recent']):
+        queries = _news_query(user_msg)
+        all_results = []
+        for q in queries[:2]:
+            r = tool_search(q, _raw=True)
+            if isinstance(r, list): all_results.extend(r)
+        if all_results:
+            filtered = _dynamic_filter_results(all_results, user_msg)
+            return _cite_results(filtered[:6])
+
+    """
+    Multi-Step Agentic Search (web_search_20260209 architecture):
+    1. Formulates dynamic queries from user message
+    2. Runs queries in parallel via ThreadPoolExecutor
+    3. Scores result quality — chains a follow-up search if weak
+    4. Merges + deduplicates across all queries
+    5. WebFetches top URL when snippets are empty (WebSearch/WebFetch split)
+    6. Returns citation-formatted [1][2] output
+    """
+    import re as _re
+    user_msg = _re.sub(r"SEARCH\\([^)]*\\)", lambda m: m.group(0)[7:-1], user_msg).strip()
+    queries = _formulate_queries(user_msg)
+    all_results = []
+    seen_urls   = set()
+
+    # ── Step 1: parallel search across all formulated queries ─────────────────
+    def _run_query(q):
+        print(f"[multi-search] query: {q}")
+        return tool_search(q, _raw=True) or []
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = {ex.submit(_run_query, q): q for q in queries}
+        for fut in as_completed(futures):
+            raw = fut.result()
+            if isinstance(raw, list):
+                for item in raw:
+                    url = item.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        all_results.append(item)
+
+    # ── Step 2: iterative re-search if quality is low ─────────────────────────
+    quality = _results_quality(all_results, user_msg)
+    if quality < 0.4 and all_results:
+        # Reformulate with more specific terms and retry once
+        keywords = re.findall(r'\b[A-Za-z]{5,}\b', user_msg)
+        if keywords:
+            refined = " ".join(keywords[:5]) + " explained"
+            print(f"[multi-search] low quality ({quality:.2f}), re-searching: {refined}")
+            extra = tool_search(refined, _raw=True) or []
+            for item in extra:
+                url = item.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_results.append(item)
+
+    if not all_results:
+        return None
+
+    # ── Step 3: re-rank merged pool against full user message ─────────────────
+    ranked = _dynamic_filter_results(all_results, user_msg)
+
+    # ── Step 4: WebFetch top results that have no snippet (visual/JS pages) ───
+    for item in ranked[:3]:
+        if not item.get("content") and not item.get("snippet"):
+            url = item.get("url", "")
+            if url:
+                fetched = tool_web_fetch(url, max_chars=400)
+                if fetched:
+                    item["content"] = fetched
+
+    # ── Step 5: citation-formatted output ─────────────────────────────────────
+    cited = _cite_results(ranked[:2])
+    if cited:
+        return cited
+
+    # Last resort: WebFetch the top URL directly
+    top_url = ranked[0].get("url", "") if ranked else ""
+    if top_url:
+        fetched = tool_web_fetch(top_url)
+        if fetched:
+            return f"[WebFetch: {top_url[:70]}]\n{fetched}"
+
+    return None
+
+def _few_shot_examples(query: str, k: int = 2) -> str:
+    if not _rlaif_log or len(query) < 10: return ""
+    q_kws = set(re.findall(r'[a-z]{4,}', query.lower()))
+    if not q_kws: return ""
+    scored = []
+    for entry in _rlaif_log:
+        prompt = entry.get("prompt", ""); winner = entry.get("winner", "")
+        hhh    = entry.get("hhh", {})
+        if not prompt or not winner: continue
+        if hhh and hhh.get("total", 0) < 10: continue
+        p_kws   = set(re.findall(r'[a-z]{4,}', prompt.lower()))
+        overlap = len(q_kws & p_kws) / max(len(q_kws), 1)
+        if overlap > 0.2: scored.append((overlap, prompt, winner))
+    if not scored: return ""
+    scored.sort(key=lambda x: x[0], reverse=True)
+    examples = [f"Example:\nUser: {p[:120]}\nEliteOmni: {w[:300]}" for _, p, w in scored[:k]]
+    return "\n[FEW-SHOT EXAMPLES]\n" + "\n---\n".join(examples) + "\n[END FEW-SHOT]\n"
+
+def rag_add(text: str, source: str = "upload"):
+    global _rag_index
+    chunk = {"text": text[:1200], "source": source}
+    _rag_store.append(chunk)
+    # Persist to SQLite
+    try:
+        import sqlite3
+        con = sqlite3.connect(_DB_PATH)
+        con.execute("CREATE TABLE IF NOT EXISTS rag (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, source TEXT, ts REAL)")
+        con.execute("INSERT INTO rag (text, source, ts) VALUES (?,?,?)", (text[:1200], source, __import__('time').time()))
+        con.commit(); con.close()
+    except Exception as e:
+        pass
+    vec = _embed(text)
+    if vec is not None:
+        if _rag_index is None:
+            import faiss as _faiss
+            _rag_index = _faiss.IndexFlatIP(_EMBED_DIM)
+        _rag_index.add(vec)
+
+def rag_get(query: str, k: int = 3) -> list:
+    global _rag_index
+    if _rag_index is None and _faiss_ok:
+        import threading
+        threading.Thread(target=_load_rag_from_db, daemon=True, name='rag_init').start()
+        return []
+    if not _faiss_ok or not _rag_store: return []
+    pass  # _ensure_rag_indexed removed — RAG loaded at startup
+    if _rag_index is None or _rag_index.ntotal == 0: return []
+    q = _embed(query)
+    if q is None: return []
+    import faiss as _faiss
+    D, I = _rag_index.search(q, min(k, _rag_index.ntotal))
+    return [_rag_store[i] for i, d in zip(I[0], D[0]) if 0 <= i < len(_rag_store) and d > 0.3]
+
+def extract_search_context(msg: str) -> tuple:
+    """
+    Agentic Search Context Injection (web_search_20260209 architecture):
+    - Uses tool_search_multi for dynamic query formulation + multi-step chaining
+    - Injects cited [1][2] results into system context
+    - Never injects error strings — model answers from knowledge when search fails
+    - SEARCH(query) syntax still supported for explicit tool calls
+    Returns (clean_msg, context_string).
+    """
+    search_pat = re.compile(r'SEARCH\(([^)]+)\)')
+    explicit_queries = search_pat.findall(msg)
+
+    # Pre-execute weather tool and inject result directly
+    m = msg.lower()
+    weather_words = ["weather", "temperature", "forecast", "how hot", "how cold", "raining", "sunny", "climate"]
+    _is_weather = (
+        any(w in m for w in weather_words)
+        and len(msg) < 200
+        and not any(skip in m for skip in [
+            "benchmark", "stress test", "pipeline", "incident", "diagnostic",
+            "hypothesis", "falsif", "step 1", "step 2", "step 3", "step 4",
+            "step 5", "step 6", "step 7", "converge", "counterfactual",
+            "hallucination", "gpu", "cache_hit", "p99", "latency", "cluster",
+            "deploy", "autoscal", "evaluate", "production llm"
+        ])
+    )
+    if _is_weather:
+        loc = m
+        for w in weather_words + ["what", "is", "the", "in", "today", "current", "now", "like"]:
+            loc = loc.replace(w, " ")
+        loc = loc.strip().strip("?").strip()
+        if loc:
+            wx = tool_weather(loc)
+            return msg, f"\n[REAL-TIME TOOL RESULT — use ONLY this data, ignore prior knowledge]\n{wx}\n[END TOOL RESULT]\n"
+
+    # Skip search entirely for benchmark/diagnostic prompts
+    _skip_search = any(x in m for x in [
+        "diagnostic stress test", "full pipeline required",
+        "you are being evaluated", "step 1 —", "step 2 —",
+        "step 3 —", "step 4 —", "step 5 —", "step 6 —", "step 7 —",
+        "falsif", "hypothes", "counterfactual", "causal loop",
+        "converge", "p = 0.", "score = 0.4e", "benchmark",
+        "incident report", "cache_hit", "hallucination rate",
+        "p99=", "gpu utilization"
+    ])
+    if _skip_search:
+        return msg, ""
+
+    auto_triggers = [
+        # Time-sensitive
+        "who is", "when did", "latest", "current", "news", "today",
+        "recently", "price of", "where is", "search for", "look up",
+        "find me", "tell me about", "what's happening", "what happened",
+        "when was", "who won", "what happened to", "is there a",
+        "are there any", "right now", "this week", "this month",
+        "this year", "2024", "2025", "2026", "live", "real-time",
+        # People & events
+        "who made", "who created", "who founded", "ceo of", "president of",
+        "prime minister", "election", "war", "conflict", "crisis",
+        # Tech & products
+        "release", "launched", "announced", "new model", "new version",
+        "update", "upgrade", "gpt", "claude", "gemini", "llama",
+        "openai", "anthropic", "google", "apple", "microsoft", "meta",
+        "tesla", "spacex", "nvidia", "stock", "crypto", "bitcoin",
+        # General research
+        "how does", "what is the best", "compare", "vs", "versus",
+        "review", "recommend", "should i", "is it worth",
+        "weather", "temperature", "forecast", "score", "result", "humidity", "wind", "rain", "sunny", "cloudy",
+        "standings", "schedule", "match", "game", "tournament",
+    ]
+    # Only skip search for pure math/code with no real-world context
+    no_search = any(t in msg.lower() for t in [
+        "calculate", "compute",
+        "def ", "print(", "hello world", "2+2",
+    ]) and len(msg) < 50 and not any(w in msg.lower() for w in [
+        "price", "stock", "weather", "news", "current", "latest"
+    ])
+    needs_search = bool(explicit_queries) or (
+        not no_search and
+        any(t in msg.lower() for t in auto_triggers) and len(msg) > 8
+    )
+
+    if not needs_search:
+        # Still inject few-shot examples and RAG context even without search
+        few_shot = _few_shot_examples(msg)
+        rag_hits = rag_get(msg, k=2)
+        rag_ctx  = ""
+        if rag_hits:
+            rag_ctx = "\n[KNOWLEDGE BASE]\n" + "\n".join(
+                f"- {r['text'][:200]}" for r in rag_hits
+            ) + "\n[END KNOWLEDGE BASE]\n"
+        extra = few_shot + rag_ctx
+        return msg, extra if extra.strip() else ""
+
+    clean_msg = search_pat.sub("", msg).strip() or msg
+
+    # ── Agentic multi-step search (formulates queries, chains, deduplicates) ──
+    if any(s in msg[:600] for s in ["⚠", "No tools", "No internet", "Final answers", "Show reasoning", "Precision matters"]):
+        return msg, ""
+    print(f"[search] running multi-step search for: {msg[:80]}")
+    result = tool_search_multi(msg)
+
+    if result:
+        # Hard token budget: cap search context to 800 chars (~200 tokens)
+        result_capped = result[:800] if len(result) > 800 else result
+        context = (
+            f"\n[WEB SEARCH RESULTS]\n{result_capped}\n[END SEARCH RESULTS]\n"
+            "Use the above results to answer. Cite sources as [1][2] where shown."
+        )
+        return clean_msg, context
+
+    # Explicit SEARCH() calls get a single targeted fallback
+    if explicit_queries:
+        for q in explicit_queries[:2]:
+            result = tool_search(q.strip())
+            if result:
+                context = f"\n[WEB SEARCH RESULTS]\n{result[:800]}\n[END SEARCH RESULTS]\n"
+                return clean_msg, context
+
+    # SearXNG up but no results — tell model to use knowledge
+    if _searxng_healthy:
+        return clean_msg, "\n[WEB SEARCH: No results found. Answer from your knowledge.]\n"
+
+    # SearXNG down — inject nothing; model answers naturally without disclaimers
+    return clean_msg, ""
+
+_fe_model = None
+def _get_fe():
+    global _fe_model
+    if _fe_model is None:
+        try:
+            from fastembed import TextEmbedding
+            _fe_model = TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/home/kidus/.fastembed_cache')
+            print('[Embed] fastembed loaded (384-dim)')
+        except Exception as e:
+            print(f'[Embed] fastembed failed: {e}')
+    return _fe_model
+_EMBED_DIM = 384
+
+# Reset FAISS index to match new embedding dimension
+if _faiss_ok and faiss_index is not None:
+    import faiss as _f
+    faiss_index = _f.IndexFlatIP(384)
+
+# Reset FAISS index to match new embedding dimension
+    pass  # FAISS already initialized above
+    pass
+    pass
+def _embed(text: str):
+    if not _faiss_ok or np is None: return None
+    m = _get_fe()
+    if m is not None:
+        try:
+            vec = list(m.embed([text[:512]]))[0]
+            vec = np.array(vec, dtype=np.float32).reshape(1,-1)
+            norm = np.linalg.norm(vec)
+            if norm > 0: vec /= norm
+            return vec
+        except Exception: pass
+    vec = np.zeros(384, dtype=np.float32)
+    t = text.lower()[:300]
+    for i in range(len(t)-1):
+        vec[(ord(t[i])*31+ord(t[i+1]))%384] += 1.0
+    norm = np.linalg.norm(vec)
+    if norm > 0: vec /= norm
+    return vec.reshape(1,-1)
+
+
+def mem_save(text: str, user_id: str = "default"):
+    global mem_store, faiss_index
+    if not _faiss_ok or faiss_index is None: return
+    v = _embed(text)
+    if v is None: return
+    faiss_index.add(v); mem_store.append(text)
+    if len(mem_store) > MAX_MEM:
+        mem_store = mem_store[-MAX_MEM:]
+        faiss_index = faiss.IndexFlatIP(_EMBED_DIM)
+        for m in mem_store:
+            vv = _embed(m)
+            if vv is not None: faiss_index.add(vv)
+
+def mem_get(query: str, k: int=3) -> list:
+    if len(query)<12 or not _faiss_ok or not mem_store: return []
+    if faiss_index is None or faiss_index.ntotal==0: return []
+    q = _embed(query)
+    if q is None: return []
+    D, I = faiss_index.search(q, min(k, faiss_index.ntotal))
+    return [mem_store[i] for i,d in zip(I[0],D[0]) if 0<=i<len(mem_store) and d>0.35]
+
+def mem_save_episodic(s: str):
+    episodic_store.append(s)
+    if len(episodic_store)>30: episodic_store.pop(0)
+
+def mem_get_episodic(query: str) -> list:
+    if not episodic_store or len(query) < 10: return []
+    kws = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
+    scored = [(len(kws & set(re.findall(r'\b[a-zA-Z]{4,}\b', ep.lower()))), ep)
+              for ep in episodic_store[-10:]]
+    return [ep for s, ep in sorted([(s,e) for s,e in scored if s>0], reverse=True)[:2]]
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token for English/code."""
+    return max(1, len(text) // 4)
+
+def _count_tokens(msgs: list) -> int:
+    """Estimate token count for a list of messages."""
+    return sum(len(m.get("content","")) // 4 for m in msgs)
+
+def _compact_history(history: list) -> list:
+    """
+    Automatic compaction — mirrors Claude Code compaction.
+    Summarizes old turns into a single compact summary message,
+    preserving only the most recent turns verbatim.
+    """
+    if len(history) <= 4:
+        return history
+    # Keep last 4 turns verbatim
+    recent = history[-4:]
+    old_turns = history[:-4]
+    # Build compact summary (strip thinking tokens, keep only facts)
+    facts = []
+    for i in range(0, len(old_turns)-1, 2):
+        if i+1 < len(old_turns):
+            q = old_turns[i].get("content","")[:60].replace("\n"," ")
+            a = old_turns[i+1].get("content","")[:80].replace("\n"," ")
+            # Strip any <think> blocks (thinking tokens) from summary
+            import re as _re
+            a = _re.sub(r"<think>.*?</think>", "", a, flags=_re.DOTALL).strip()
+            facts.append(f"Q:{q}→A:{a}")
+    if facts:
+        summary = {"role": "user", "content": f"[Compacted history]: {' | '.join(facts[:4])}"}
+        return [summary] + recent
+    return recent
+
+def _strip_thinking_from_history(history: list) -> list:
+    """Claude never includes <think> blocks in conversation history."""
+    import re as _re
+    clean = []
+    for h in history:
+        content = h.get("content", "")
+        # Strip thinking blocks before storing as history
+        content = _re.sub(r'<think>.*?</think>', '', content, flags=_re.DOTALL).strip()
+        content = _re.sub(r'<reasoning>.*?</reasoning>', '', content, flags=_re.DOTALL).strip()
+        if content:
+            clean.append({**h, "content": content})
+    return clean
+
+def compress_history(history: list):
+    """
+    FIFO Context Engineering (Anthropic 4.6: prevents context rot).
+    Evicts oldest turns when token budget exceeded; preserves KEY_FACTS summary.
+    Falls back to simple window if budget fits.
+    """
+    if not history:
+        return [], None
+
+    # FIFO budget check: sum token estimates of all turns
+    total_tokens = sum(_estimate_tokens(h.get("content","")) for h in history)
+
+    if total_tokens <= CTX_TOKEN_BUDGET and len(history) <= CTX_WINDOW * 2:
+        return history, None  # fits — no compression needed
+
+    # Evict oldest turns until within budget, preserving recent window
+    recent = history[-(CTX_WINDOW * 2):]
+    old    = history[:-(CTX_WINDOW * 2)]
+
+    # Extract KEY_FACTS from evicted turns (survive FIFO eviction)
+    key_facts = []
+    for i in range(0, len(old) - 1, 2):
+        if i + 1 < len(old):
+            q = old[i].get("content", "")[:50].replace("\n", " ")
+            a = old[i + 1].get("content", "")[:60].replace("\n", " ")
+            key_facts.append(f"Q:{q}→A:{a}")
+
+    summary = "Prior context [FIFO compressed]: " + " | ".join(key_facts[:5]) if key_facts else None
+    return recent, summary
+
+def record_feedback(skill: str, msg: str, response: str, rating: int):
+    _feedback[skill]["good" if rating==1 else "bad"] += 1
+    # Save highly rated as SFT demonstrations
+    if rating == 1 and msg and response and len(response) > 50:
+        _sft_store.append({"skill": skill, "msg": msg[:200], "response": response[:500]})
+        if len(_sft_store) > 200:
+            _sft_store.pop(0)
+    _save_feedback()  # persist to disk immediately
+    # Update fine-tune DB rating so thumbs-up responses get higher weight in training
+    try:
+        con = _sqlite3.connect(FINETUNE_DB)
+        con.execute(
+            "UPDATE samples SET rating=? WHERE user_msg LIKE ? ORDER BY id DESC LIMIT 1",
+            (1 if rating==1 else -1, msg[:50]+"%")
+        )
+        con.commit(); con.close()
+    except:
+        pass
+
+def get_rlhf_note(skill: str) -> str:
+    """Inject RLHF reward signal + SFT few-shot demos from persisted feedback."""
+    store = _feedback[skill]
+    total = store["good"]+store["bad"]
+    if total < 5: return ""
+    rate = store["good"]/total
+    note = ""
+    if rate > 0.8: note = f"[RLHF: {skill} win_rate={rate:.0%} - maintain quality]"
+    elif rate < 0.4: note = f"[RLHF: {skill} win_rate={rate:.0%} - needs improvement]"
+    # Inject top SFT demo as few-shot example
+    demos = [s for s in _sft_store[-50:] if s.get("skill") == skill]
+    if demos:
+        ex = demos[-1]
+        note += f"\nEXAMPLE GOOD RESPONSE:\nQ: {ex['msg'][:80]}\nA: {ex['response'][:180]}"
+    return note
+
+STATE_TRACKING_PROMPT = """Before answering, build an explicit reasoning workspace:
+FACTS: [list known facts from the question]
+UNKNOWNS: [list what needs to be determined]
+STEPS: [numbered solution steps]
+CONFIDENCE: [HIGH/MEDIUM/LOW for each key claim]
+Then give your final answer."""
+
+DELIBERATION_PROMPT = """Use multi-pass reasoning:
+PASS 1 CANDIDATE: Generate an initial answer.
+PASS 2 CRITIQUE: What could be wrong or incomplete?
+PASS 3 REPAIR: Fix issues found.
+PASS 4 VERIFY: Confirm the answer is correct and complete.
+FINAL ANSWER: [verified answer]"""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v17 ANTHROPIC 4.6-STYLE UPGRADES — Full Implementation
+# Sources: Adaptive Thinking, 1M CTX, OODA, Agent Teams, Self-Correcting Debug,
+#          Parallel Calc Paths, Effort Parameter, Computer Use, FIFO Context Eng.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. ADAPTIVE THINKING (Opus 4.6: auto-activates for complex problems) ──────

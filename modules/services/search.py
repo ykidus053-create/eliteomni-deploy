@@ -65,17 +65,41 @@ import requests
 
 def _dynamic_filter_results(results: list, query: str) -> list:
     """
-    Dynamic Filtering (web_search_20260209): score and re-rank results by
-    keyword relevance BEFORE injecting into context — reduces wasted tokens.
+    Dynamic Filtering: score and re-rank results by relevance before context injection.
+    Combines keyword coverage, title match, snippet length, and recency.
     """
     keywords = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
+    query_lower = query.lower()
     if not keywords:
         return results
+
     scored = []
     for item in results:
-        text = (item.get("title", "") + " " + item.get("content", "")).lower()
-        score = sum(1 for kw in keywords if kw in text)
-        scored.append((score, item))
+        title   = item.get("title", "").lower()
+        content = (item.get("content", "") or item.get("snippet", "")).lower()
+        date    = item.get("publishedDate", "") or item.get("age", "")
+        url     = item.get("url", "").lower()
+
+        # Keyword score: title matches worth 3x, content 1x
+        kw_title   = sum(3 for kw in keywords if kw in title)
+        kw_content = sum(1 for kw in keywords if kw in content)
+        kw_score   = kw_title + kw_content
+
+        # Exact phrase match bonus
+        phrase_bonus = 5 if query_lower in (title + " " + content) else 0
+
+        # Snippet length score (longer = more informative)
+        length_score = min(3, len(content) / 200)
+
+        # Recency score
+        recency = 2 if any(y in str(date) for y in ["2025", "2026"]) else                   1 if "2024" in str(date) else 0
+
+        # Penalize low-quality domains
+        spam_penalty = -3 if any(s in url for s in ["pinterest", "quora", "reddit.com/r/meme"]) else 0
+
+        total = kw_score + phrase_bonus + length_score + recency + spam_penalty
+        scored.append((total, item))
+
     scored.sort(key=lambda x: x[0], reverse=True)
     return [item for _, item in scored]
 
@@ -109,39 +133,90 @@ def _formulate_queries(user_msg: str) -> list:
 
 def _cite_results(results: list) -> str:
     """
-    Claude web_search_20260209 style:
-    - Extract only title + clean snippet per result
-    - No URLs, no numbered refs, no Sources block
-    - Model receives clean fact context and synthesizes naturally
+    Citation-formatted search results for model context injection.
+    Includes source URL, domain, date, and generous snippet for grounding.
     """
     if not results:
         return ""
     chunks = []
-    for item in results[:6]:
+    for i, item in enumerate(results[:8], 1):
         title   = item.get("title", "").strip()
         snippet = (item.get("content", "") or item.get("snippet", "")).strip()
+        url     = item.get("url", "").strip()
         date    = item.get("publishedDate", "") or item.get("age", "")
-        if snippet:
-            prefix = f"[{date}] " if date else ""
-            entry  = f"{prefix}{title}: {snippet[:800]}" if title else f"{prefix}{snippet[:800]}"
-            chunks.append(entry)
-    return "\n\n".join(chunks)
+        if not snippet:
+            continue
+        # Extract domain for source credibility signal
+        domain = ""
+        if url:
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc.replace("www.", "")
+            except Exception:
+                pass
+        parts = [f"[{i}]"]
+        if date:
+            parts.append(f"({date})")
+        if title:
+            parts.append(title)
+        if domain:
+            parts.append(f"— {domain}")
+        header = " ".join(parts)
+        # Give model 600 chars per snippet — enough to answer most questions
+        body = snippet[:3000]
+        if url:
+            entry = f"{header}\n{body}\nSource: {url}"
+        else:
+            entry = f"{header}\n{body}"
+        chunks.append(entry)
+    return "\n\n---\n\n".join(chunks)
 
-def tool_web_fetch(url: str, max_chars: int = 4000) -> str:
+def tool_web_fetch(url: str, max_chars: int = 8000) -> str:
     """
-    WebFetch (web_fetch_20260209): fetch a full page when snippets are
-    insufficient. Split from WebSearch per Claude Code architecture for
-    safety + injection surface control. Strips scripts/styles/HTML.
+    WebFetch: fetch full page content when snippets are insufficient.
+    Strips scripts/styles/nav/footer, extracts main content intelligently.
+    Returns clean text up to max_chars — never leaks errors into model context.
     """
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}, timeout=20)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+        r = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
         r.raise_for_status()
-        text = re.sub(r'<(script|style)[^>]*>.*?</(script|style)>', ' ', r.text, flags=re.DOTALL)
+
+        text = r.text
+
+        # Remove non-content elements first
+        text = re.sub(r'<(script|style|nav|footer|header|aside|iframe|noscript)[^>]*>.*?</\1>',
+                      ' ', text, flags=re.DOTALL | re.IGNORECASE)
+
+        # Try to extract main content block
+        main_match = re.search(
+            r'<(article|main|div[^>]*(?:content|article|post|entry)[^>]*)>(.*?)</\1>',
+            text, re.DOTALL | re.IGNORECASE
+        )
+        if main_match:
+            text = main_match.group(2)
+
+        # Strip remaining HTML
         text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
+        # Clean whitespace
+        text = re.sub(r'[ \t]+', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = text.strip()
+
+        # Remove cookie/GDPR boilerplate that clutters context
+        boilerplate = ["accept cookies", "cookie policy", "privacy policy",
+                       "subscribe to our newsletter", "sign up for our"]
+        lines = [l for l in text.split("\n")
+                 if not any(b in l.lower() for b in boilerplate)]
+        text = "\n".join(lines)
+
         return text[:max_chars]
     except Exception:
-        return None  # never leak error strings into model context
+        return None
 
 def tool_search(query: str, _raw: bool = False) -> str:
     if not query or not query.strip():
@@ -159,21 +234,99 @@ def tool_search(query: str, _raw: bool = False) -> str:
     - Returns None on failure — never leaks error strings into model context
     _raw=True returns the raw results list for multi-step chaining.
     """
-    if not _ensure_searxng():
-        print("[tool_search] SearXNG unavailable — skipping")
-        return None
-
     _ckey = f"search:{query[:80]}"
     if _rcache:
         _cached = _rcache.get(_ckey)
         if _cached: return _cached
+
+    # Tavily first — always, regardless of SearXNG status
+    _tavily = tavily_search(query, max_results=5)
+    if _tavily:
+        if _rcache: _rcache.setex(_ckey, 300, _tavily)
+        return _tavily
+
+    if not _ensure_searxng():
+        print("[tool_search] SearXNG unavailable — skipping")
+        return None
     try:
-        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "duckduckgo,brave"}
+        import threading as _sth
+        _rewritten_box = [query]
+        def _do_rewrite():
+            # Fast regex-based query cleaning — no LLM call, no RPM cost
+            try:
+                q = query.strip()
+                # Strip filler phrases
+                q = re.sub(
+                    r'\b(please|can you|could you|tell me|what is|who is|where is'
+                    r'|find me|look up|search for|i want to know|give me|i need)\b',
+                    '', q, flags=re.IGNORECASE
+                ).strip(" ?.,!")
+                # Add current year for time-sensitive queries
+                time_triggers = ["latest", "current", "now", "today", "recent", "newest"]
+                if any(t in q.lower() for t in time_triggers) and "2026" not in q and "2025" not in q:
+                    q = q + " 2026"
+                q = re.sub(r'\s+', ' ', q).strip()[:120]
+                if q and q != query.strip():
+                    _rewritten_box[0] = q
+                    print("[search] rewritten: " + repr(query) + " -> " + repr(q))
+            except Exception as _rwe:
+                print("[search] rewrite skipped: " + str(_rwe))
+        _rw_thread = _sth.Thread(target=_do_rewrite, daemon=True)
+        _rw_thread.start()
+        params  = {"q": query, "format": "json", "categories": "general", "language": "en", "engines": "google,bing,duckduckgo,brave,wikipedia", "pageno": 1, "time_range": "", "safesearch": 0}
         headers = {"User-Agent": "Mozilla/5.0 (compatible; EliteOmni/17)"}
         r = requests.get(f"{SEARXNG_URL}/search", params=params, headers=headers, timeout=20)
+        _rw_thread.join(timeout=0.1)
+        if _rewritten_box[0] != query:
+            try:
+                _r2 = requests.get(f"{SEARXNG_URL}/search", params={"q": _rewritten_box[0], "format": "json", "categories": "general", "language": "en", "engines": "google,bing,duckduckgo,brave", "pageno": 1}, headers=headers, timeout=10)
+                _extra = _r2.json().get("results", [])
+                if _extra:
+                    r._content = r._content  # keep original, merge below
+                    raw = r.json().get("results", []) + _extra
+            except Exception:
+                pass
         r.raise_for_status()
         raw = r.json().get("results", [])
+        # RETRIEVAL-LEVEL FILTER (like Anthropic) — bad URLs never reach the model
+        def _is_real_article(item):
+            url   = item.get("url", "")
+            snip  = item.get("content","") or item.get("snippet","") or ""
+            title = item.get("title","") or ""
+            # Must have meaningful snippet
+            if len(snip.strip()) < 80: return False
+            # Must be article-depth URL (at least one path segment after domain)
+            parts = url.split("/")
+            if len(parts) < 4 or not parts[3]: return False
+            # Skip aggregator homepages and category pages
+            _bad = ["/category/","/tag/","/tags/","/topics/","/topic/",
+                    "/section/","/feed/","/rss/","/sitemap","/search?",
+                    "/news/$","/technology/$","/ai/$","/page/","/author/",
+                    "google.com/search","google.com/news","bing.com/news",
+                    "reddit.com/r/","/collections/","/archive/","/index"]
+            if any(b in url for b in _bad): return False
+            # Skip social/video
+            _social = ["twitter.com","x.com","facebook.com","instagram.com",
+                       "youtube.com","tiktok.com","linkedin.com/feed"]
+            if any(s in url for s in _social): return False
+            # Skip paywalled sites that never return content
+            _paywall = ["wsj.com","ft.com","bloomberg.com/opinion","economist.com"]
+            if any(p in url for p in _paywall): return False
+            return True
+        raw = [r for r in raw if _is_real_article(r)]
+        # Pre-filter: remove homepages and category pages — only keep actual articles
+        _HOME_PATTERNS = ["/category/", "/tag/", "/topics/", "/section/",
+                          "/artificial-intelligence/", "/technology/", "/news/",
+                          "/search?", "/feed/", "/rss/", "/sitemap"]
+        def _is_article(r):
+            url = r.get("url", "")
+            if url.count("/") <= 3: return False  # homepage
+            if any(p in url for p in _HOME_PATTERNS): return False
+            if len(r.get("content","") or r.get("snippet","")) < 50: return False
+            return True
+        raw = [r for r in raw if _is_article(r)] or raw  # fallback to all if filtered too much
         results = _dynamic_filter_results(raw, query)
+        print(f'[search debug] {len(raw)} raw results, first url: {raw[0].get("url","") if raw else "none"}, snippet len: {len(raw[0].get("content","") or raw[0].get("snippet","")) if raw else 0}')
 
         if _raw:
             return results  # caller handles formatting
@@ -198,41 +351,46 @@ def tool_search(query: str, _raw: bool = False) -> str:
             except Exception:
                 pass
 
+        # Enrich ALL top results with full page content (Gemini-style)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _fetch_item(item):
+            print(f'[fetch debug] fetching: {item.get("url","")[:80]}')
+            if isinstance(item, str):
+                item = {"url": item, "content": "", "title": item}
+            url = item.get("url", "")
+            if not url: return item
+            # Skip aggregator/index sites — they just list other articles
+            _skip_domains = ["news.google.com", "alltop.com", "feedly.com",
+                             "flipboard.com", "reddit.com/r/", "twitter.com",
+                             "x.com", "linkedin.com", "facebook.com",
+                             "youtube.com", "feedspot.com", "inoreader.com"]
+            if any(d in url for d in _skip_domains):
+                return item
+            try:
+                fetched = tool_web_fetch(url, max_chars=8000)
+                if fetched and len(fetched) > 300:
+                    item = dict(item)
+                    item["content"] = fetched
+            except Exception:
+                pass
+            return item
+        with ThreadPoolExecutor(max_workers=4) as _ex:
+            results = list(_ex.map(_fetch_item, results[:5]))
         cited = _cite_results(results[:6])
-
-        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
-        _top_urls = [r.get("url","") for r in results[:3] if r.get("url","")][:2]
-        _fetched_content = []
-        if _top_urls:
-            def _fetch_one(u):
-                try:
-                    return tool_web_fetch(u, max_chars=3000)
-                except Exception:
-                    return None
-            with ThreadPoolExecutor(max_workers=2) as _ex:
-                _futs = {_ex.submit(_fetch_one, u): u for u in _top_urls}
-                for _fut in _as_completed(_futs, timeout=8):
-                    _res = _fut.result()
-                    if _res and len(_res) > 200:
-                        _url = _futs[_fut]
-                        _fetched_content.append("[Full content from " + _url[:60] + "]:\n" + _res)
-        if _fetched_content:
-            combined = "\n\n".join(_fetched_content)
-            if _rcache: _rcache.setex(_ckey, 300, combined)
-            return combined
-
         if cited:
             if _rcache: _rcache.setex(_ckey, 300, cited)
             return cited
 
+        # WebFetch fallback: fetch top URL if snippets empty
         for item in results[:2]:
             url = item.get('url', '')
             if url:
-                fetched = tool_web_fetch(url, max_chars=600)
+                fetched = tool_web_fetch(url, max_chars=8000)
                 if fetched and len(fetched) > 100:
-                    print('[search] WebFetch fallback: ' + url[:60])
+                    print(f'[search] WebFetch fallback: {url[:60]}')
                     return fetched
         return None
+
     except requests.exceptions.ConnectionError:
         global _searxng_healthy
         _searxng_healthy = False
@@ -278,18 +436,56 @@ def _openrouter_search_fallback(query: str) -> str:
 def _results_quality(results: list, query: str) -> float:
     """
     Score result pool quality 0.0-1.0.
+    Combines keyword coverage, snippet length, recency, and source diversity.
     Low score triggers a follow-up search (iterative chaining).
     """
     if not results:
         return 0.0
     keywords = set(re.findall(r'\b[a-zA-Z]{4,}\b', query.lower()))
     if not keywords:
-        return 1.0
-    hits = 0
-    for item in results[:3]:
-        text = (item.get("title","") + " " + item.get("content","")).lower()
-        hits += sum(1 for kw in keywords if kw in text)
-    return min(1.0, hits / (len(keywords) * 2))
+        return 0.5
+
+    keyword_score = 0.0
+    snippet_score = 0.0
+    recency_score = 0.0
+    seen_domains  = set()
+
+    for item in results[:5]:
+        title   = item.get("title", "")
+        content = item.get("content", "") or item.get("snippet", "")
+        text    = (title + " " + content).lower()
+        url     = item.get("url", "")
+        date    = item.get("publishedDate", "") or item.get("age", "")
+
+        # Keyword coverage
+        kw_hits = sum(1 for kw in keywords if kw in text)
+        keyword_score += kw_hits / max(len(keywords), 1)
+
+        # Snippet length (longer = more informative)
+        snippet_score += min(1.0, len(content) / 300)
+
+        # Recency signal
+        if date and any(y in str(date) for y in ["2025", "2026", "2024"]):
+            recency_score += 1.0
+
+        # Domain diversity
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc
+            seen_domains.add(domain)
+        except Exception:
+            pass
+
+    n = min(len(results), 5)
+    diversity_bonus = min(0.2, len(seen_domains) / n * 0.2)
+
+    combined = (
+        (keyword_score / n) * 0.5 +
+        (snippet_score / n) * 0.3 +
+        (recency_score / n) * 0.2 +
+        diversity_bonus
+    )
+    return min(1.0, combined)
 
 def tool_search_multi(user_msg: str) -> str:
     """
@@ -303,6 +499,12 @@ def tool_search_multi(user_msg: str) -> str:
     """
     import re as _re
     user_msg = _re.sub(r"SEARCH\\([^)]*\\)", lambda m: m.group(0)[7:-1], user_msg).strip()
+
+    # Tavily once — skip multi-query loop if it succeeds
+    _t = tavily_search(user_msg[:380], max_results=5)
+    if _t:
+        return _t
+
     queries = _formulate_queries(user_msg)
     all_results = []
     seen_urls   = set()
@@ -313,14 +515,26 @@ def tool_search_multi(user_msg: str) -> str:
         return tool_search(q, _raw=True) or []
     ex = _get_search_pool()
     futures = {ex.submit(_run_query, q): q for q in queries}
-    for fut in as_completed(futures, timeout=20):
-        raw = fut.result()
-        if isinstance(raw, list):
-            for item in raw:
-                url = item.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    all_results.append(item)
+    try:
+        for fut in as_completed(futures, timeout=15):
+            try:
+                raw = fut.result(timeout=5)
+            except Exception as _fe:
+                print("[multi-search] future failed: " + str(_fe))
+                continue
+            if isinstance(raw, str) and raw.strip():
+                # Tavily returned pre-formatted string — use directly
+                all_results.append({"title": "Tavily", "content": raw, "url": "tavily"})
+            elif isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, str):
+                        item = {"url": item, "content": "", "title": item}
+                    url = item.get("url", "") or "tavily"
+                    if url not in seen_urls:
+                        seen_urls.add(url)
+                        all_results.append(item)
+    except TimeoutError:
+        print("[multi-search] timed out — using partial results: " + str(len(all_results)))
 
     # ── Step 2: iterative re-search if quality is low ─────────────────────────
     quality = _results_quality(all_results, user_msg)
@@ -332,6 +546,8 @@ def tool_search_multi(user_msg: str) -> str:
             print(f"[multi-search] low quality ({quality:.2f}), re-searching: {refined}")
             extra = tool_search(refined, _raw=True) or []
             for item in extra:
+                if isinstance(item, str):
+                    item = {"url": item, "content": "", "title": item}
                 url = item.get("url", "")
                 if url and url not in seen_urls:
                     seen_urls.add(url)
@@ -367,8 +583,10 @@ def tool_search_multi(user_msg: str) -> str:
 
     # ── Step 4: WebFetch top results that have no snippet (visual/JS pages) ───
     for item in ranked[:3]:
+        if isinstance(item, str):
+            item = {"url": item, "content": "", "title": item}
+        url = item.get("url", "")
         if not item.get("content") and not item.get("snippet"):
-            url = item.get("url", "")
             if url:
                 fetched = tool_web_fetch(url, max_chars=400)
                 if fetched:
@@ -400,7 +618,7 @@ def _few_shot_examples(query: str, k: int = 2) -> str:
         if hhh and hhh.get("total", 0) < 10: continue
         p_kws   = set(re.findall(r'[a-z]{4,}', prompt.lower()))
         overlap = len(q_kws & p_kws) / max(len(q_kws), 1)
-        if overlap > 0.2: scored.append((overlap, prompt, winner))
+        if overlap > 0.4: scored.append((overlap, prompt, winner))  # raised threshold: 0.2 was too loose
     if not scored: return ""
     scored.sort(key=lambda x: x[0], reverse=True)
     examples = [f"Example:\nUser: {p[:120]}\nEliteOmni: {w[:300]}" for _, p, w in scored[:k]]
@@ -496,11 +714,16 @@ def extract_search_context(msg: str) -> tuple:
         return msg, ""
 
     auto_triggers = [
-        # Only truly time-sensitive triggers — reduces unnecessary search calls
+        # Time-sensitive
         "latest", "current", "news", "today", "right now", "live",
         "price of", "stock", "crypto", "weather", "forecast",
         "who won", "election", "who is the", "ceo of", "president of",
         "2025", "2026", "real-time", "breaking",
+        # Location/visual queries
+        "where is", "where are", "what city", "what country", "what location",
+        "which city", "which country", "located in", "where was", "what place",
+        "identify this", "what is this", "recognize this", "what building",
+        "what landmark", "what street", "what neighborhood",
     ]
     # Only skip search for pure math/code with no real-world context
     no_search = any(t in msg.lower() for t in [
@@ -533,8 +756,16 @@ def extract_search_context(msg: str) -> tuple:
         return msg, ""
     print(f"[search] running multi-step search for: {msg[:80]}")
     result = tool_search_multi(msg)
-
-    if result:
+    _news_query = any(t in msg.lower() for t in ["news", "today", "latest", "current", "right now", "breaking"])
+    _result_is_junk = False
+    if result and _news_query:
+        _lower_result = result.lower()
+        _junk_markers = ["wikipedia", "merriam-webster", "dictionary", "definition of"]
+        _has_junk = any(j in _lower_result for j in _junk_markers)
+        _has_news_signal = any(w in _lower_result for w in ["headline", "reported", "announced", "yesterday", "this week"])
+        if _has_junk and not _has_news_signal:
+            _result_is_junk = True
+    if result and not _result_is_junk:
         import datetime as _dt
         _today = str(_dt.date.today())
         result_capped = result[:4000]
@@ -554,12 +785,12 @@ def extract_search_context(msg: str) -> tuple:
                 context = "[LIVE RESULTS]\n" + result[:4000] + "\n[END RESULTS]\nAnswer using ONLY these."
                 return clean_msg, context
 
-    # SearXNG up but no results — tell model to use knowledge
+    # SearXNG up but no results — force explicit honesty disclaimer
     if _searxng_healthy:
-        return clean_msg, "\n[WEB SEARCH: No results found. Answer from your knowledge.]\n"
+        return clean_msg, "\n[WEB SEARCH FAILED: No results found for this time-sensitive query. Your training data has a knowledge cutoff and may be outdated. You MUST tell the user that live search failed and that your answer may be out of date, rather than presenting old information as current.]\n"
 
-    # SearXNG down — inject nothing; model answers naturally without disclaimers
-    return clean_msg, ""
+    # SearXNG down — same honesty requirement, do not silently fall back
+    return clean_msg, "\n[WEB SEARCH UNAVAILABLE: This appears to be a time-sensitive query but live search could not run. Your training data has a knowledge cutoff and may be outdated. You MUST explicitly tell the user search is unavailable and that your answer may not reflect current information, before answering from what you know.]\n"
 
 _fe_model = None
 def _get_fe():
@@ -624,7 +855,6 @@ def mem_save(text: str, user_id: str = "default"):
             if vv is not None: faiss_index.add(vv)
 
 def mem_get(query: str, k: int=3) -> list:
-    if k <= 0: return []
     if len(query)<12 or not _faiss_ok or not mem_store: return []
     if faiss_index is None or faiss_index.ntotal==0: return []
     q = _embed(query)
@@ -699,8 +929,8 @@ def compress_history(history: list, complexity: str = "medium"):
     if not history:
         return [], None
 
-    _budget_map = {"easy": 800, "medium": 2000, "hard": 6000}
-    _window_map  = {"easy": 4, "medium": 10, "hard": 20}
+    _budget_map = {"easy": 40000, "medium": 100000, "hard": 180000}
+    _window_map  = {"easy": 60, "medium": 150, "hard": 400}
     token_budget = _budget_map.get(complexity, 2000)
     ctx_window   = _window_map.get(complexity, 10)
 
@@ -806,3 +1036,71 @@ FINAL ANSWER: [verified answer]"""
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── 1. ADAPTIVE THINKING (Opus 4.6: auto-activates for complex problems) ──────
+# ── Tavily Search (primary — clean content, no homepages) ─────────────────────
+import os as _os
+TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
+_tavily_cache = {}
+
+def tavily_search(query: str, max_results: int = 5) -> str:
+    print(f"[Tavily DEBUG] called with query={repr(query)} key_set={bool(TAVILY_API_KEY)}")
+    _cache_key = query.strip().lower()[:120]
+    if _cache_key in _tavily_cache:
+        print("[Tavily] cache hit")
+        return _tavily_cache[_cache_key]
+    """
+    Tavily search — returns clean extracted content, not raw snippets.
+    Designed for LLM grounding (like Anthropic's internal pipeline).
+    """
+    import urllib.request, json as _json
+    key = _os.environ.get("TAVILY_API_KEY", "") or TAVILY_API_KEY
+    if not key:
+        # Try loading from .env
+        import pathlib
+        for _ep in [pathlib.Path(__file__).parent.parent.parent / ".env",
+                    pathlib.Path(__file__).parent.parent / ".env",
+                    pathlib.Path(".env")]:
+            if _ep.exists():
+                for l in _ep.read_text().splitlines():
+                    if l.startswith("TAVILY_API_KEY="):
+                        key = l.split("=",1)[1].strip(); break
+            if key: break
+    if not key:
+        return None
+    payload = _json.dumps({
+        "api_key": key,
+        "query": query,
+        "search_depth": "basic",
+        "include_answer": True,
+        "include_raw_content": True,
+        "max_results": max_results,
+        "include_domains": [],
+        "exclude_domains": ["reddit.com", "twitter.com", "x.com", "facebook.com"]
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.tavily.com/search",
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "EliteOmni/1.0"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = _json.loads(r.read())
+        print(f"[Tavily RAW] answer={repr(data.get("answer","")[:100])} results_count={len(data.get("results",[]))} first_content={repr((data.get("results",[{}])[0].get("content","") if data.get("results") else "")[:80])}")
+        chunks = []
+        # Use Tavily's synthesized answer first
+        answer = data.get("answer", "")
+        if answer:
+            chunks.append(f"[Summary]\n{answer}")
+        # Then individual results with full content
+        for i, item in enumerate(data.get("results", []), 1):
+            title   = item.get("title", "")
+            url     = item.get("url", "")
+            content = item.get("raw_content") or item.get("content", "")
+            if content:
+                chunks.append(f"[{i}] {title}\n{content[:3000]}\nSource: {url}")
+        result = "\n\n---\n\n".join(chunks) if chunks else None
+        if result:
+            _tavily_cache[_cache_key] = result
+        return result
+    except Exception as e:
+        print(f"[Tavily] error: {e}")
+        return None

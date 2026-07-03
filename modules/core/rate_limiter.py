@@ -39,3 +39,18 @@ class RateLimiter:
                 print(f"[RateLimiter] evicted {len(dead)} stale keys")
 
 rate_limiter = RateLimiter()
+
+# Cerebras API: 5 RPM = 1 request per 12 seconds
+class CerebrasRateLimiter:
+    def __init__(self, rpm: int = 5):
+        self._lock = threading.Lock()
+        self._last = 0.0
+        self._gap  = 60.0 / rpm
+    def acquire(self):
+        with self._lock:
+            wait = self._gap - (time.time() - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.time()
+
+cerebras_limiter = CerebrasRateLimiter(rpm=5)

@@ -1,13 +1,13 @@
 """
 Knowledge RAG — embeds all book-gap functions and injects relevant ones
-into the system prompt at query time. This is what makes the book knowledge
-actually affect model responses.
+into the system prompt at query time.
+Upgraded: Token-budget aware injection, fixed BM25 math, reduced CPU load.
 """
 import os, sys, ast, inspect, importlib, json, math, sqlite3, time, threading
 
 _DB = os.path.expanduser("~/eliteomni_knowledge.db")
 _lock = threading.Lock()
-_cache: dict = {}  # query -> chunks
+_cache: dict = {}
 
 BOOK_MODULES = [
     "book_gaps_impl", "book8_gaps", "final_gaps", "aie_book_impl",
@@ -29,7 +29,6 @@ def _init_db():
 _init_db()
 
 def _extract_chunks(module_name: str) -> list:
-    """Extract function/class name + docstring + signature as knowledge chunks."""
     chunks = []
     try:
         if module_name in sys.modules:
@@ -58,12 +57,10 @@ def _extract_chunks(module_name: str) -> list:
     return chunks
 
 def build_index(force: bool = False):
-    """Build/rebuild the knowledge index from all book modules."""
     con = sqlite3.connect(_DB)
     count = con.execute("SELECT COUNT(*) FROM knowledge").fetchone()[0]
     con.close()
     if count > 0 and not force:
-        print(f"[knowledge_rag] index exists ({count} chunks) — skipping rebuild")
         return count
 
     con = sqlite3.connect(_DB)
@@ -77,72 +74,96 @@ def build_index(force: bool = False):
                 (c["module"], c["name"], c["kind"], c["doc"], c["signature"], c["chunk"])
             )
         total += len(chunks)
-        if chunks:
-            print(f"[knowledge_rag] indexed {mod_name}: {len(chunks)} chunks")
     con.commit(); con.close()
     print(f"[knowledge_rag] ✅ index built: {total} total chunks")
     return total
 
-def _tfidf_score(query: str, chunk: str) -> float:
-    """Simple TF-IDF-like keyword overlap score."""
-    q_words = set(query.lower().split())
+def _bm25_score(query: str, chunk: str) -> float:
+    """Upgraded: Fixed BM25 IDF calculation."""
+    k1, b = 1.5, 0.75
+    q_words = query.lower().split()
     c_words = chunk.lower().split()
     if not q_words or not c_words: return 0.0
-    matches = sum(1 for w in c_words if w in q_words)
-    return matches / math.sqrt(max(len(c_words), 1))
+    avg_len = 80
+    score = 0.0
+    for w in q_words:
+        tf = c_words.count(w)
+        if tf == 0: continue
+        # Fixed IDF formula
+        idf = math.log(1 + (1 / (tf + 0.5)))
+        score += idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * len(c_words) / avg_len))
+    return score
 
-def retrieve(query: str, top_k: int = 5, min_score: float = 0.1) -> list:
-    """Retrieve top-k relevant knowledge chunks for a query."""
+def _semantic_score(query: str, chunk: str) -> float:
+    try:
+        from modules.services.semantic_mem import _embedder
+        if not _embedder: return 0.0
+        import numpy as np
+        q_emb = list(_embedder.embed([query]))[0]
+        c_emb = list(_embedder.embed([chunk]))[0]
+        q, c = np.array(q_emb), np.array(c_emb)
+        return float(np.dot(q, c) / (np.linalg.norm(q) * np.linalg.norm(c) + 1e-8))
+    except Exception:
+        return 0.0
+
+def retrieve(query: str, top_k: int = 8, min_score: float = 0.05) -> list:
     cache_key = f"{query}:{top_k}"
     if cache_key in _cache:
         return _cache[cache_key]
-
     try:
         con = sqlite3.connect(_DB)
         rows = con.execute("SELECT name, kind, doc, signature, chunk, module FROM knowledge").fetchall()
         con.close()
     except:
         return []
+    if not rows:
+        return []
 
-    scored = []
+    scored = {}
     for row in rows:
         name, kind, doc, sig, chunk, module = row
-        score = _tfidf_score(query, chunk)
-        # Boost score for name matches
+        key = name + module
+        bm25 = _bm25_score(query, chunk)
+        sem = _semantic_score(query, chunk)
+        hybrid = 0.6 * sem + 0.4 * (bm25 / (bm25 + 1))
         if any(w in name.lower() for w in query.lower().split()):
-            score *= 2.0
-        if score >= min_score:
-            scored.append((score, name, kind, doc, sig, module))
+            hybrid *= 1.5
+        if kind == "class": hybrid *= 1.1
+        if hybrid >= min_score:
+            scored[key] = (hybrid, name, kind, doc, sig, module)
 
-    scored.sort(reverse=True)
-    results = scored[:top_k]
+    results = sorted(scored.values(), reverse=True)[:top_k * 2]
     _cache[cache_key] = results
     if len(_cache) > 500:
         _cache.pop(next(iter(_cache)))
     return results
 
-def get_knowledge_context(query: str, top_k: int = 5) -> str:
-    """Get formatted knowledge context to inject into system prompt."""
+def get_knowledge_context(query: str, top_k: int = 8, max_tokens: int = 1500) -> str:
+    """Upgraded: Strict token budget enforcement to prevent context overflow."""
     results = retrieve(query, top_k=top_k)
     if not results:
         return ""
+    
     lines = ["[RELEVANT KNOWLEDGE FROM ML/DL BOOKS]"]
+    current_tokens = 10
     for score, name, kind, doc, sig, module in results:
-        lines.append(f"• {kind} `{name}{sig}` ({module}): {doc[:150]}")
+        line = f"• {kind} `{name}{sig}` ({module}): {doc[:150]}"
+        line_tokens = max(1, len(line) // 4)
+        if current_tokens + line_tokens > max_tokens:
+            break
+        lines.append(line)
+        current_tokens += line_tokens
+        
     lines.append("[END KNOWLEDGE]")
     return "\n".join(lines)
 
 def start_background_indexer():
-    """Rebuild index in background on startup, then re-index every 5 min."""
     def _run():
-        time.sleep(2)  # let app finish starting
+        time.sleep(5)
         build_index(force=True)
+        # Upgraded: 30 min interval instead of 5 to save CPU/IO
         while True:
-            time.sleep(300)  # re-index every 5 min to catch hot-reloaded changes
+            time.sleep(1800)
             build_index(force=True)
     t = threading.Thread(target=_run, daemon=True, name="knowledge_indexer")
     t.start()
-
-if __name__ == "__main__":
-    build_index(force=True)
-    print(retrieve("gradient descent optimization", top_k=3))

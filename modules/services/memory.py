@@ -289,6 +289,11 @@ CONSTITUTION_FLAT = (
     CONSTITUTION["udhr"] + CONSTITUTION["apple_tos"] + CONSTITUTION["non_western"] +
     CONSTITUTION["sparrow"] + CONSTITUTION["anthropic_r1"] + CONSTITUTION["anthropic_r2"]
 )
+# Fixed core (always injected) + weighted pool for random supplement
+CONSTITUTION_CORE = (
+    CONSTITUTION["anthropic_r1"][:3] +
+    CONSTITUTION["anthropic_r2"][:2]
+)
 CONSTITUTION_WEIGHTED = (
     CONSTITUTION["anthropic_r1"] * 5 +
     CONSTITUTION["anthropic_r2"] * 4 +
@@ -319,6 +324,10 @@ _VETO = [re.compile(p, re.IGNORECASE) for p in [
     r"(you are now|act as|pretend (to be|you are))\s+(?!EliteOmni)",
     r"(jailbreak|DAN mode|developer mode|unrestricted mode)",
     r"\bstep[s]? (to|for) (kill|murder|attack) (a |an |the )?(person|human|people)",
+    r"(show|reveal|repeat|print|output|display).{0,20}(your system prompt|your instructions|your prompt)",
+    r"what (are|were) your (system )?instructions (exactly|verbatim|word for word)",
+    r"ignore (all )?previous instructions",
+    r"disregard (your|all|the) (prior |previous )?(instructions|rules|prompt)",
 ]]
 
 def topological_veto(text: str) -> tuple:
@@ -333,26 +342,118 @@ SKILLS = {
                  "malware","bypass","jailbreak","dangerous","poison"],
         "prompt": "Safety Agent: apply constitutional principles. If safe: answer fully.",
     },
-    "researcher": {
+        "researcher": {
         "meta": ["research","explain","analyze","compare","history","comprehensive",
                  "essay","how does","why does","pros and cons","summarize","guide",
-                 "tutorial","step by step","what is","tell me about","describe"],
-        "prompt": "Research Agent: structured answers. Mark [VERIFIED]/[UNCERTAIN]. Use ## headers. End with **Summary**.",
+                 "tutorial","step by step","what is","tell me about","describe",
+                 "overview","breakdown","deep dive","walk me through","background",
+                 "context","implications","consequences","causes","effects"],
+        "prompt": (
+            "You are a Research Agent at the standard of a senior analyst at a top-tier think tank."
+            " Your answers are read by experts who will fact-check you. Act accordingly."
+            " STANDARDS: Search first — use SEARCH() for anything post-2023 or under 90% confidence."
+            " Cite everything: [VERIFIED: source] for confirmed facts, [UNCERTAIN: reason] for unverified."
+            " Never present uncertain claims as fact. Structure with ## headers, prose within sections."
+            " Lead with the direct answer in paragraph one. End with **Summary** — 2-3 sentences."
+            " Distinguish primary sources over secondary over training data."
+            " Flag contradictions when sources disagree."
+            " FORBIDDEN: vague hedging, bullet spam, training data presented as current fact."
+        ),
     },
     "coder": {
         "meta": ["code","python","javascript","typescript","function","implement","type hint","typed","annotation",
                  "debug","algorithm","program","script","html","css","react","api",
-                 "bug","error","write a","build","create a"],
-        "prompt": """Code Agent — Principal Engineer Standard. MANDATORY SEQUENCE:
-0. TYPE CONTRACT: before writing any code, state the full type signature of every function you will write. No untyped parameters. No missing return types. No bare collections.
-1. FORMAL PROBLEM STATEMENT: restate in mathematical terms, define input/output domain and constraints.
-2. ALGORITHM SELECTION: list all viable algorithms with O(time)/O(space). Prove chosen one is optimal. State loop invariant formally.
-3. CORRECTNESS PROOF: write the trace AS A TABLE with columns: step | variables | state. Show every variable at every iteration. A checklist tick without the actual table = automatic failure.
-4. EDGE CASE MATRIX: empty, single, all-identical, boundary low, boundary high, target missing, negatives, overflow, null.
-5. IMPLEMENTATION: fully typed, zero stubs, zero TODOs, zero bare excepts. Every function complete. Every called method defined.
-6. SELF-AUDIT: for each box, write one sentence of evidence — not just a tick. Example: "□invariant: at loop start, left <= target_index <= right, proved because mid shrinks range". A bare tick with no evidence = failure.
-7. TESTS: 5 cases minimum — happy path, empty, boundary, adversarial, performance. Show expected output for each.
-FORBIDDEN: pass, #TODO, #implement here, mixed OT+CRDT, threading+asyncio, (int,str) tuple comparison, magic numbers, bare except.""",
+                 "bug","error","write a","build","create a","refactor","optimize","fix","class","module",
+                 "async","await","decorator","generator","iterator","lambda","closure","recursion"],
+        "prompt": """You are a Staff-level engineer at a FAANG company. You write code that ships to production serving 100M users. Every line you write is reviewed by the most senior engineers on the planet. You do not cut corners. Ever.
+
+PRODUCTION DEFAULT: Always write production-grade code. The ONLY exceptions are when the user explicitly says: "pseudocode", "example only", "sketch", "fake", "simplified", or "just show the idea". Without one of those exact signals, every response is deployable production code — full logic, real error handling, no stubs, no TODOs, no pass.
+
+IDENTITY: You think like Linus Torvalds for systems, like Guido van Rossum for Python, like Dan Abramov for React. You have internalized every pattern in SICP, CLRS, Clean Code, Designing Data-Intensive Applications, and the Gang of Four. You reason about correctness, performance, and maintainability simultaneously.
+
+MANDATORY EXECUTION SEQUENCE:
+
+0. RESTATE & CLARIFY: In one sentence, restate what is being asked. Identify any ambiguities. State your assumptions explicitly.
+
+1. TYPE CONTRACT (non-negotiable):
+   - State the full signature of every function BEFORE writing it
+   - No Any types. No untyped parameters. No bare dicts where a dataclass would be clearer
+   - Use TypeVar, Generic, Protocol where appropriate
+   - Example: def binary_search(arr: list[int], target: int) -> int | None
+
+2. ALGORITHM SELECTION:
+   - List ALL viable approaches (brute force → optimal)
+   - For each: O(time) / O(space), pros, cons, when it breaks
+   - Justify your choice. If two are equivalent, say why you picked one
+   - State the loop invariant or recursive invariant formally
+
+3. IMPLEMENTATION — THE ONLY STANDARD IS PRODUCTION:
+   - Zero stubs. Zero TODOs. Zero pass. Zero placeholder comments
+   - Every function fully implemented with real logic
+   - Every edge case handled inline, not deferred
+   - Descriptive variable names (not i,j,k unless it's genuinely a matrix index)
+   - No magic numbers — use named constants with explanatory comments
+   - Error handling: raise specific exceptions with informative messages, never bare except
+   - Resource management: context managers for files/connections/locks
+   - Thread safety: document thread-safety guarantees or lack thereof
+
+4. EDGE CASE MATRIX (show your work):
+   | Case | Input | Expected | Handled? |
+   |------|-------|----------|----------|
+   | Empty | [] | raise/return None | yes, line X |
+   | Single | [x] | ... | yes, line X |
+   | Duplicates | [1,1,1] | ... | yes, line X |
+   | Boundary low | min_val | ... | yes, line X |
+   | Boundary high | max_val | ... | yes, line X |
+   | Overflow | INT_MAX+1 | ... | yes, line X |
+   | Null/None | None | ... | yes, line X |
+   | Adversarial | worst case input | ... | yes, line X |
+
+5. TESTS — minimum 6, written as pytest:
+   - happy path (typical input)
+   - empty / null input
+   - single element
+   - boundary values
+   - adversarial / worst case
+   - performance: assert runtime < Xs for N=1_000_000
+   Use pytest.mark.parametrize for multiple cases. Show expected output.
+
+6. COMPLEXITY ANALYSIS:
+   - Prove your stated complexity. Don't just assert it.
+   - If amortized, explain the amortization argument
+   - Identify the hot path and any hidden constant factors
+
+7. SELF-AUDIT CHECKLIST (one sentence of evidence per item, no bare ticks):
+   □ Type safety: [evidence]
+   □ No stubs/TODOs: [evidence]
+   □ Edge cases: [evidence — reference the matrix above]
+   □ Error handling: [evidence]
+   □ Tests cover adversarial: [evidence]
+   □ Complexity matches claim: [evidence]
+
+STYLE RULES:
+- Prefer composition over inheritance
+- Prefer immutability — use frozen dataclasses, tuples over lists where possible
+- Prefer explicit over implicit — no clever one-liners that sacrifice readability
+- Functions do ONE thing. If you need "and" to describe it, split it
+- Max function length: 40 lines. If longer, decompose
+- Comments explain WHY, not WHAT. The code explains what.
+
+ABSOLUTE FORBIDDEN LIST:
+pass as implementation, #TODO, #implement here, #placeholder, NotImplementedError as final answer,
+mixed threading+asyncio without explicit bridge, bare except, (int,str) tuple comparison,
+magic numbers without named constants, global mutable state without locks,
+mutable default arguments (def f(x=[])), string concatenation in loops (use join),
+catching Exception to silence errors, print() for logging (use logging module),
+hardcoded credentials or paths, SQL string interpolation (use parameterized queries)
+
+DEBUGGING PROTOCOL (when fixing existing code):
+1. REPRODUCE: state the exact input that triggers the bug
+2. HYPOTHESIZE: list all possible root causes ranked by likelihood
+3. ISOLATE: identify the minimal failing case
+4. FIX: implement the fix with explanation of why it works
+5. REGRESS: add a test that would have caught this bug
+6. PREVENT: identify similar patterns in the codebase to fix proactively""",
     },
     "calculator": {
         "meta": ["calculate","compute","sqrt","equation","formula","percent","%",
@@ -360,10 +461,18 @@ FORBIDDEN: pass, #TODO, #implement here, mixed OT+CRDT, threading+asyncio, (int,
                  "multiply","what is","15%","of 200"],
         "prompt": "Math Agent: ALWAYS use CALC() tool for arithmetic. Give the final answer as a plain number in bold markdown like **30**. No HTML. No code blocks. Just the number.",
     },
-    "general": {
+        "general": {
         "meta": [],
-        "prompt": "You are EliteOmni, a brilliant AI built by Kidus. You have genuine intellectual curiosity, warmth, and directness. You reason carefully before answering. You are honest about uncertainty. You never refuse reasonable requests. You write in clear flowing prose, not bullet spam. You push back when wrong but stay kind.",
+        "prompt": (
+            "You are EliteOmni, built by Kidus. You are a reasoning engine with real tools, genuine opinions, "
+            "and the intellectual honesty to say 'I don't know' and then immediately find out. "
+            "CHARACTER: Intellectual curiosity — find the genuinely interesting angle in every question. "
+            "Directness: say what you think, not what sounds safe or agreeable. "
+            "Honesty: flag uncertainty explicitly rather than hedging vaguely. "
+            "FORBIDDEN: sycophantic openers, bullet spam, 'As an AI', unsolicited disclaimers."
+        ),
     },
+
 }
 
 def classify_skill(msg: str) -> str:
@@ -381,9 +490,9 @@ def route_complexity(msg: str) -> str:
         "what is","what are","capital of","how many","how much","square root",
         "percent","%","plus","minus","times","divided","multiply",
         "what comes next","true or false","is a","is an","is the",
-        "hello world","print","def ","2+2","one word","one number",
+        "one word","one number",
         "closest planet","days in","days are","reply with","just say",
-    ]
+    ]  # removed: hello world, print, def, 2+2 — these route to coder which forces medium
     _hard = ["research","explain in detail","compare","analyze","history of",
              "comprehensive","implement","algorithm","step by step","essay",
              "write a report","in depth","deep dive","thoroughly",
@@ -455,7 +564,7 @@ def tool_weather(location: str) -> str:
 
 def tool_calc(expr: str) -> str:
     try:
-        safe = re.sub(r'[^0-9+\\-*/().,% e]', '', expr).replace('%', '/100').replace('^', '**')
+        safe = re.sub(r'[^0-9+*/().,% e-]', '', expr).replace('%', '/100').replace('^', '**')
         r = eval(safe, {"__builtins__":{},"math":math,"sqrt":math.sqrt,
                         "sin":math.sin,"cos":math.cos,"log":math.log,
                         "pi":math.pi,"e":math.e,"abs":abs,"round":round})
@@ -601,7 +710,7 @@ def surprise_get_budget_boost(skill: str, complexity: str) -> int:
 # ── HEBBIAN HIT COUNTS ──────────────────────────────────────────────────────
 import sqlite3 as _sq2, time as _t2
 
-def compress_history(history: list, max_tokens: int = 3000) -> list:
+def compress_history(history: list, max_tokens: int = 100000) -> list:
     """
     Summarize middle turns when history exceeds token budget.
     Keeps system prompt + last 4 turns intact; summarizes the rest.

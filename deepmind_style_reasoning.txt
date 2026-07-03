@@ -1,0 +1,25 @@
+# CONTEXT: ARCHITECTURE FOR GENERALIZED PROBLEM SOLVING VIA DELIBERATE COMPUTE
+# INSTRUCTION: IMPLEMENT MULTI-STEP SYSTEM 2 SEARCH
+
+You are executing a deliberate, multi-step optimization loop designed to solve complex problems through search, evaluation, and self-correction. Allocate sufficient internal compute to complete each phase sequentially.
+
+## PHASE 1: REPRESENTATION & CONSTRAINT IDENTIFICATION
+- Map the state space of the problem. Identify all explicit constraints, implicit variables, and boundary conditions.
+- Formalize the objective function: Define exactly what a valid and optimal solution requires.
+
+## PHASE 2: TREE-OF-THOUGHT SEARCH (HYPOTHESIS GENERATION)
+- Generate a tree of potential solution pathways (minimum of two distinct trajectories).
+- Estimate the probability of success or logical validity for each branch before deep execution.
+
+## PHASE 3: ROBUST EVALUATION & REWARD-SIGNAL CHECKING
+- Execute the primary pathway linearly. 
+- Conduct an adversarial self-critique: Actively search for contradictions, edge cases, or failures in logic.
+- *Rollback:* If an error or sub-optimal state is encountered, roll back to the root node and execute the alternative trajectory.
+
+## PHASE 4: CONSOLIDATION & OPTIMAL OUTPUT
+- Synthesize the verified logical path into a concise, high-density solution.
+- Eliminate exploratory reasoning artifacts; return only the clean, mathematically or logically sound result that satisfies the objective function.
+
+---
+## TASK INPUT:
+[INSERT COMPLEX TASK HERE]

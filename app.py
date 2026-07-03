@@ -1,3 +1,6 @@
+from groq_client import cerebras_stream
+from self_verify import self_verify
+from structured_output import inject_template
 import sys
 try:
     import uvloop
@@ -6,14 +9,10 @@ try:
 except ImportError:
     pass
 from modules.services.pipeline import _budget, stream_tokens, build_system_prompt, build_chatml, generate_sync
-from modules.deep_think_math import deep_think_math
-from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
 from modules.claude_code import enrich_system_prompt, agentic_self_correct, detect_style_rule, update_claude_md
 from modules.core.http_client import groq_stream, groq_generate, vision_describe
 _vision_loaded = True
 import os, re, time, math, json, asyncio, random, ast, subprocess, sys, tempfile
-import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import groq_client_patch  # speed patch
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import debug_patch
 from threading import Lock
@@ -37,7 +36,7 @@ FORCE_TOOL_PATTERNS = {
 }
 
 from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -80,8 +79,6 @@ except Exception as _e:
 app = FastAPI(title="EliteOmni v17")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-from modules.deep_think_math import deep_think_math
-from modules.gpt55_style import gpt55_enhance, compress_long_context, build_unified_context
 from modules.core.http_client import *
 from modules.core.constants import *
 from modules.services.memory import *
@@ -95,6 +92,54 @@ from modules.services.agents import *
 from modules.services.mcp import *
 from modules.reliability import clean_history, build_memory_context, safe_tool_call, call_llm
 from modules.ttft import trim_system_prompt, cap_max_tokens, trim_history_for_ttft, TTFTTracker
+import uuid as _uuid_mod
+_EDIT_FILES_DIR = "/tmp/eliteomni_edits"
+import os as _os_edit
+_os_edit.makedirs(_EDIT_FILES_DIR, exist_ok=True)
+
+@app.get("/download/{file_id}")
+async def download_edited_file(file_id: str):
+    import json as _json_dl
+    registry_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + ".meta.json")
+    if not _os_edit.path.exists(registry_path):
+        return JSONResponse({"error": "File not found or expired"}, status_code=404)
+    with open(registry_path, "r") as _mf:
+        meta = _json_dl.load(_mf)
+    file_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + "_" + meta["filename"])
+    if not _os_edit.path.exists(file_path):
+        return JSONResponse({"error": "File content not found"}, status_code=404)
+    return FileResponse(file_path, filename=meta["filename"], media_type="application/octet-stream")
+
+def _save_edited_file(filename, content):
+    import json as _json_sv
+    file_id = str(_uuid_mod.uuid4())
+    safe_name = _os_edit.path.basename(filename) or "edited_file.txt"
+    file_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + "_" + safe_name)
+    with open(file_path, "w", encoding="utf-8") as _f:
+        _f.write(content)
+    meta_path = _os_edit.path.join(_EDIT_FILES_DIR, file_id + ".meta.json")
+    with open(meta_path, "w") as _mf:
+        _json_sv.dump({"filename": safe_name}, _mf)
+    return file_id
+
+@app.get("/traces")
+async def view_traces(request: Request, limit: int = 50):
+    """Debug dashboard: recent LLM call traces (prompt, response, latency, errors)."""
+    import os
+    secret = request.query_params.get("secret", "")
+    if secret != os.environ.get("DEBUG_SECRET", "changeme"):
+        return JSONResponse({"error": "Unauthorized"}, status_code=403)
+    from modules.langchain_tracing import get_recent_traces
+    traces = get_recent_traces(limit)
+    safe = []
+    for t in traces:
+        st = dict(t)
+        st.pop("prompt", None)
+        st.pop("system", None)
+        st.pop("messages", None)
+        safe.append(st)
+    return JSONResponse({"count": len(safe), "traces": safe})
+
 @app.get("/mcp/servers")
 async def mcp_list_servers():
     """List registered MCP servers and their discovered tools."""
@@ -217,11 +262,19 @@ def _needs_fresh_search(msg: str) -> bool:
     """
     import re
     msg_lower = msg.lower()
+    # Never search for pure coding tasks — model knows syntax/stdlib/algorithms
+    _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
+                     "debug", "refactor", "optimize", "algorithm", "implement",
+                     "write a function", "write a class", "fix this", "bug in"]
+    if any(t in msg_lower for t in _code_signals):
+        return False
 
     # Always search for news/current events queries
     news_triggers = ["news", "latest", "today", "current", "recent", "now",
                      "this week", "this month", "2025", "2026", "just released",
-                     "announced", "update", "new model", "what happened"]
+                     "announced", "update", "new model", "what happened",
+                     "what is happening", "ai developments", "ai news",
+                     "tell me about", "what's new", "whats new", "developments"]
     if any(t in msg_lower for t in news_triggers):
         return True
 
@@ -322,8 +375,10 @@ def _get_cached_system(skill, memory, episodic, rlhf_note, ctx_sum, complexity):
 
 
 def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, skill: str) -> str:
-    """If code has lint errors, do one correction pass."""
+    """If code has lint errors OR fails at runtime, do one correction pass.
+    Real execution catches bugs that syntax checking alone misses."""
     from modules.services.tools import _extract_code_blocks, tool_lint
+    from modules.tools import numpy_exec_safe
     blocks = _extract_code_blocks(code_response)
     if not blocks:
         return code_response
@@ -331,13 +386,26 @@ def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, s
     for block in blocks[:2]:
         lint = tool_lint(block)
         if lint != "OK":
-            issues.append(lint)
+            issues.append(f"SYNTAX ERROR: {lint}")
+            continue
+        # Syntax is valid — actually run it to catch runtime bugs.
+        # Skip execution for code that clearly needs external deps/services
+        # (network calls, file I/O paths, etc.) to avoid false failures.
+        _skip_exec_markers = ["socket.", "requests.", "urllib.request", "open(",
+                               "input(", "sys.argv", "argparse", "flask", "fastapi",
+                               "django", "os.environ", "subprocess.", "threading.Thread"]
+        if any(m in block for m in _skip_exec_markers):
+            continue
+        exec_result = numpy_exec_safe(block)
+        if exec_result.startswith("[EXECUTION FAILED]"):
+            issues.append(f"RUNTIME ERROR: {exec_result}")
     if not issues:
         return code_response
+    print(f"[LintFeedback] found {len(issues)} issue(s), forcing correction pass")
     correction_prompt = build_chatml(
         system, [],
-        f"Your previous code had these issues:\n{chr(10).join(issues)}\n\n"
-        f"Rewrite the code fixing all issues. Original request: {msg[:300]}"
+        f"Your previous code had these issues when actually executed:\n{chr(10).join(issues)}\n\n"
+        f"Rewrite the code fixing ALL issues so it runs correctly. Original request: {msg[:300]}"
     )
     from modules.services.pipeline import generate_sync
     fixed = generate_sync(correction_prompt, max_t, skill, len(msg))
@@ -365,11 +433,25 @@ def pipeline_sync(msg: str, history: list) -> dict:
     # ── OBSERVE ───────────────────────────────────────────────────────────────
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
+    # If current message is ambiguous, inherit skill from recent history
+    if skill == "general" and history:
+        _recent_user_msgs = " ".join(
+            h.get("content", "") for h in history[-6:]
+            if h.get("role") == "user"
+        )
+        _hist_skill = classify_skill(_recent_user_msgs)
+        # Only inherit history skill if current msg is ambiguous (general + short)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8:
+            skill = _hist_skill
+    # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
-    _tier = get_infra_tier(complexity)
+    _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     if skill == "calculator": complexity = "medium"
     if skill == "calculator": complexity = max(complexity, "medium") if complexity != "hard" else complexity
+    if skill == "coder" and complexity == "easy": complexity = "medium"  # coder is never easy
 
     # Cache hit — exact match first (0ms), then fuzzy match for easy queries
     cached = cache_get(msg, skill)
@@ -398,7 +480,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             pass
 
     # Auto-compact history if too large (mirrors Claude Code compaction)
-    if _count_tokens(history) > 1500:
+    if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
     recent, ctx_sum = compress_history(_strip_thinking_from_history(history))
     # Feature 15: hierarchical memory — query each store separately then merge
@@ -431,6 +513,39 @@ def pipeline_sync(msg: str, history: list) -> dict:
         episodic = [e for e in ([ctx_sum[:200]] + list(_mem_episodic or []))[:4] if not (e[:60] in seen_ep or seen_ep.add(e[:60]))]
     scratchpad_save(f"q_{int(time.time())}", msg[:120])
     clean_msg, search_ctx = extract_search_context(msg)
+    
+    # Upgraded: Inject Global God Prompt and OS State
+    try:
+        from god_prompt import get_god_prompt
+        _god = get_god_prompt()
+        if _god: memory.insert(0, _god)
+    except: pass
+    try:
+        from system_perception import get_os_state
+        _os = get_os_state()
+        if _os: memory.insert(0, _os)
+    except: pass
+    
+    # Upgraded: Inject Subconscious Context (what daemons did) and compress history
+    try:
+        from context_compressor import get_subconscious_context, compress_history
+        _sub_ctx = get_subconscious_context()
+        if _sub_ctx: memory.insert(0, _sub_ctx)
+        # Compress history if it's getting too long
+        history = compress_history(history, lambda p, **kw: mistral_generate(p, max_tokens=kw.get("max_tokens", 300), model=kw.get("model", "mistral-small-latest")))
+    except: pass
+    
+    # Upgraded: Cross-File Codebase RAG & Goal Tracker
+    try:
+        from code_rag import get_relevant_code_context
+        _code_ctx = get_relevant_code_context(msg, top_k=3)
+        if _code_ctx: memory.insert(0, _code_ctx)
+    except: pass
+    try:
+        from goal_engine import goals_get_context
+        _goal_ctx = goals_get_context(session_id="default")
+        if _goal_ctx: memory.insert(0, _goal_ctx)
+    except: pass
 
     # ── HUMAN-GAP SYSTEMS: pre-generation analysis ──────────────────────────
     _skill_pre = classify_skill(msg)
@@ -510,11 +625,10 @@ def pipeline_sync(msg: str, history: list) -> dict:
     if forced_results:
         # Inject search results DIRECTLY into user message so model can't ignore them
         results_block = "\n".join(forced_results)
-        msg = (f"[SEARCH RESULTS — YOU MUST USE ONLY THESE, IGNORE TRAINING DATA]:\n"
+        msg = (f"[SEARCH RESULTS]:\n"
                f"{results_block}\n\n"
                f"[USER QUESTION]: {msg}\n\n"
-               f"Answer using ONLY the search results above. "
-               f"Do not use knowledge from training. Cite sources by number.")
+               f"Use these search results as your primary source. If they are incomplete or missing, supplement with your knowledge and note which parts came from search vs your knowledge.")
         search_ctx += "\n[Pre-executed tools]\n" + results_block
 
     # ── ORIENT ────────────────────────────────────────────────────────────────
@@ -564,17 +678,23 @@ def pipeline_sync(msg: str, history: list) -> dict:
     import modules.groq_client as _gc; _gc.GROQ_MODEL = _routed_model
     print(f"[Router] provider={_provider} skill={skill} complexity={complexity} model={_routed_model}")
     print(f"[Router] skill={skill} complexity={complexity} model={_routed_model}")
+    _search_future = None
     if _needs_fresh_search(msg) and not search_ctx:
-        print(f'[KnowledgeCutoff] Stale topic detected — auto-triggering search')
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _search_executor = _TPE(max_workers=1)
+        from modules.services.search import tool_search_multi as multi_search
+        _search_future = _search_executor.submit(multi_search, msg)
+    if _search_future:
         try:
-            from modules.services.search import tool_search_multi as multi_search
-            search_ctx = tool_search_multi(msg)
+            search_ctx = _search_future.result(timeout=2)
         except Exception as _se:
             print(f'[KnowledgeCutoff] search failed: {_se}')
-    if search_ctx:
-        search_ctx = "[LIVE SEARCH RESULTS — use ONLY these for current events, ignore training data]:\n" + search_ctx
-        # Append search ctx after system — keeps system prompt intact
-        system += f"\n\n[WEB - REAL SEARCH RESULTS - USE THESE, DO NOT HALLUCINATE]\nToday's date is {__import__('datetime').date.today()}. Use ONLY the following real search results to answer. Do NOT use training data for current events:\n{search_ctx[:3000]}\n[/WEB]"
+    if search_ctx and "No results found" not in search_ctx and len(search_ctx.strip()) > 30:
+        # Real search results — inject with strong grounding instruction
+        system += f"\n\n[WEB SEARCH RESULTS — Today is {__import__('datetime').date.today()}. CRITICAL: You MUST answer using ONLY these search results. Do NOT use training data for any factual claims. If the results don't cover something, say you don't have that information rather than guessing.]\n{search_ctx[:8000]}\n[/WEB]"
+    elif not search_ctx or "No results found" in search_ctx:
+        # Search failed or no results — explicitly tell model to use knowledge
+        system += f"\n\n[SEARCH UNAVAILABLE — Today is {__import__('datetime').date.today()}. Web search did not return results. Answer using your internal knowledge. Note your confidence level and flag anything that may be outdated.]"
 
     # Inject MCP tool list if any tools discovered
     mcp_prompt = mcp_tool_list_prompt()
@@ -587,7 +707,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         # Claude: never send empty turns, truncate long history turns
         if c and len(c) > 2:
             hist_msgs.append({"role": r, "content": c[:800]})
-    max_t = 16000  # no cap — model decides
+    max_t = 64000  # generous ceiling; model's own judgment decides actual length
     mode  = "extended_think" if effort == "high" else ("think" if effort == "medium" else "fast")
 
     # ── DECIDE: routing strategy ───────────────────────────────────────────────
@@ -606,8 +726,10 @@ def pipeline_sync(msg: str, history: list) -> dict:
         plan = plan_fut.result(timeout=45) or ""
         team_result = team_fut.result(timeout=90)
         if plan: scratchpad_save(f"plan_{int(time.time())}", plan[:200])
+        # Plan used internally only — never shown to user. Output must be
+        # production-grade implementation only, no design doc preamble.
         if team_result:
-            response = f"**🏗️ Architecture Plan:**\n{plan}\n\n{team_result}" if plan else team_result
+            response = team_result
 
     elif skill == "coder" and complexity in ("hard", "medium"):
         # Standard architect→editor split
@@ -626,10 +748,13 @@ def pipeline_sync(msg: str, history: list) -> dict:
                 )
                 response = f"**🏗️ Plan:**\n{plan}\n\n**💻 Implementation:**\n{impl}"
 
+                response = self_verify(response, msg, _gen, skill, complexity)
+
     # ── ACT: OODA agentic loop ────────────────────────────────────────────────
     _final_msg = clean_msg
     if skill == "coder":
         _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. Every function fully implemented."
+    system = inject_template(system, msg)
     prompt      = build_chatml(system, hist_msgs, _final_msg)
     seen_sents: set = set()
     # KV cache hint: system prompt is stable — always first message, never mutated
@@ -644,8 +769,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         fast_msgs[0]["content"] = fast_msgs[0]["content"][:500]  # cap system prompt at 500 chars
         # 2. Stream chunks directly instead of joining (lower perceived latency)
         chunks = []
-        from modules.services.tool_schemas import NATIVE_TOOLS
-        for chunk in mistral_stream(fast_msgs, max_tokens=400, model=_tier["models"][0], tools=NATIVE_TOOLS):  # 3. max_tokens=400
+        for chunk in mistral_stream_traced(fast_msgs, max_tokens=400, model=_tier["models"][0], label="fast_tier"):  # 3. max_tokens=400
             chunks.append(chunk)
         fast_response = "".join(chunks)
         if fast_response:
@@ -781,6 +905,38 @@ def pipeline_sync(msg: str, history: list) -> dict:
             except Exception as _pe:
                 print(f"[AntiPseudo rewrite] {_pe}")
         final = _lint_feedback_loop(final, msg, system, max_t, skill)
+
+        # ── Loop Engine (Plan+Search+ReAct+CAI+Reflexion) ─────────────────────
+        if complexity in ("medium", "hard") or skill == "researcher":
+            try:
+                from modules.loop_engine import run_loops
+                def _gen_fn(messages):
+                    _sys  = next((m["content"] for m in messages if m["role"] == "system"), system)
+                    _msgs = [m for m in messages if m["role"] != "system"]
+                    return "".join(mistral_stream(_msgs, max_tokens=1200, model=_tier["models"][0]))
+                _looped = run_loops(msg, system, _gen_fn, skill, complexity, search_ctx, final)
+                if _looped and len(_looped) > 80:
+                    final = _looped
+                    print(f"[LoopEngine] applied len={len(final)}")
+            except Exception as _le:
+                print(f"[LoopEngine] error: {_le}")
+
+        # ── Loop Engineering (ReAct + Reflexion + Agentic + Search) ──────────
+        if complexity in ("medium", "hard") or skill == "researcher":
+            try:
+                from modules.loop_engine import run_loops
+                from modules.services.pipeline import generate_sync as _gsync
+                def _gen_fn(messages):
+                    from modules.core.http_client import mistral_stream
+                    _sys = next((m["content"] for m in messages if m["role"]=="system"), system)
+                    _msgs = [m for m in messages if m["role"] != "system"]
+                    return "".join(mistral_stream(_msgs, max_tokens=1500, model=_tier["models"][0]))
+                _looped = run_loops(msg, system, _gen_fn, skill, complexity, search_ctx, final)
+                if _looped and len(_looped) > len(final) * 0.5:
+                    final = _looped
+                    print(f"[LoopEngine] result applied len={len(final)}")
+            except Exception as _le:
+                print(f"[LoopEngine] skipped: {_le}")
         # ── Auto-execute code blocks and append results ──────────────────────
         try:
             from modules.code_executor import extract_code_blocks, run_code_safe
@@ -825,6 +981,51 @@ def pipeline_sync(msg: str, history: list) -> dict:
                     final = final.rstrip() + "\n\n💭 *Reasoning check:* " + st[:600]
         except Exception as _se:
             pass
+    # ── POWER UPGRADE: Pre-Output Execution Gate ─────────────────────
+    if skill == "coder" and complexity in ("medium", "hard"):
+        try:
+            from reflexion_loop import reflexion_verify
+            from modules.core.http_client import mistral_generate
+            # AI runs its own code, reads stderr, and rewrites it before outputting
+            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000))
+        except Exception as _re:
+            print(f"[ReflexionInject] {_re}")
+
+    try:
+        from constitutional_rlaif import adversarial_redteam
+        from modules.core.http_client import mistral_generate
+        # AI tries to break its own safety layer and patches it
+        threading.Thread(target=adversarial_redteam, args=(lambda p, m="": mistral_generate(p, max_tokens=200),), daemon=True).start()
+    except Exception:
+        pass
+
+    # ── POWER UPGRADE: Pre-Output Execution Gate ─────────────────────
+    # Upgraded: Swarm Intelligence for massive multi-module tasks
+    if skill == "coder" and complexity == "hard" and len(msg.split()) > 15:
+        try:
+            from swarm_orchestrator import run_swarm
+            swarm_result = run_swarm(msg, lambda p, **kw: mistral_generate(p, **kw))
+            if swarm_result:
+                return JSONResponse({"response": swarm_result})
+        except: pass
+        
+    if skill == "coder" and complexity == "hard":
+        try:
+            from reflexion_loop import reflexion_verify
+            from modules.core.http_client import mistral_generate
+            # AI runs its own code, reads stderr, and rewrites it before outputting
+            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000))
+        except Exception as _re:
+            print(f"[ReflexionInject] {_re}")
+
+    try:
+        from constitutional_rlaif import adversarial_redteam
+        from modules.core.http_client import mistral_generate
+        # AI tries to break its own safety layer and patches it
+        threading.Thread(target=adversarial_redteam, args=(lambda p, m="": mistral_generate(p, max_tokens=200),), daemon=True).start()
+    except Exception:
+        pass
+
     final  = cai_critique_revise(final, msg, skill, complexity)
     final  = gpt55_enhance(msg, final)
     scratchpad_save(f"a_{int(time.time())}", final[:120])
@@ -833,6 +1034,13 @@ def pipeline_sync(msg: str, history: list) -> dict:
     final_clean = _re2.sub(r"<think>.*?</think>", "", final, flags=_re2.DOTALL).strip()
     mem_save(f"Q:{msg[:80]} A:{final_clean[:160]}")
     semantic_mem_save(f"Q: {msg[:200]} A: {final[:300]}", {"skill": skill, "ts": str(time.time())})
+    # Persistent cross-session memory
+    try:
+        from modules.services.memory import db_mem_save, db_episodic_save
+        db_mem_save(f"Q: {msg[:200]} A: {final_clean[:400]}", source="conversation")
+        if skill in ("researcher", "coder") or complexity == "hard":
+            db_episodic_save(f"[{skill}] {msg[:100]} → {final_clean[:200]}")
+    except Exception as _me: print(f"[MemPersist] {_me}")
     # Save to fine-tune DB — every conversation becomes training data
     finetune_save(skill, complexity, system, msg, final)
     # ── Claude Code: persist coding-style rules to CLAUDE.md ──────────────
@@ -867,6 +1075,15 @@ def pipeline_sync(msg: str, history: list) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _build_stream_context(msg: str, hist: list) -> dict:
+    # ── AGI EMULATION: Meta-Skill Synthesis ──────────────────────────
+    try:
+        from agi_emulation_layer import prompt_evolver
+        _evolved_ctx = prompt_evolver.get_evolved_context()
+        if _evolved_ctx:
+            # Append evolved behaviors to memory
+            memory.insert(0, _evolved_ctx)
+    except: pass
+
     """
     All pre-processing from pipeline_sync — memory, search, prompt build.
     Returns everything groq_stream needs. No model call made here.
@@ -874,8 +1091,21 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     import re as _re3
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
+    # If current message is ambiguous, inherit skill from recent history
+    if skill == "general" and history:
+        _recent_user_msgs = " ".join(
+            h.get("content", "") for h in history[-6:]
+            if h.get("role") == "user"
+        )
+        _hist_skill = classify_skill(_recent_user_msgs)
+        # Only inherit history skill if current msg is ambiguous (general + short)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8:
+            skill = _hist_skill
+    # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
-    _tier = get_infra_tier(complexity)
+    _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     effort     = EFFORT_LEVEL
     if complexity == "hard":   effort = "high"
@@ -910,9 +1140,89 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         episodic = [ctx_sum] + episodic
     rlhf_note = get_rlhf_note(skill)
 
+    # ── POWER UPGRADE: Goal & World Model Context ──────────────────
+    try:
+        from goal_engine import goals_get_context
+        _goal_ctx = goals_get_context(session_id="default")
+        if _goal_ctx:
+            memory.insert(0, _goal_ctx)
+    except Exception:
+        pass
+    try:
+        from world_model import get_world_model_context
+        _world_ctx = get_world_model_context(user_msg=msg)
+        if _world_ctx:
+            memory.insert(0, _world_ctx)
+    except Exception:
+        pass
+
+    # ── POWER UPGRADE: Goal & World Model Context ──────────────────
+    try:
+        from goal_engine import goals_get_context
+        _goal_ctx = goals_get_context(session_id="default")
+        if _goal_ctx:
+            memory.insert(0, _goal_ctx)
+    except Exception:
+        pass
+    try:
+        from world_model import get_world_model_context
+        _world_ctx = get_world_model_context(user_msg=msg)
+        if _world_ctx:
+            memory.insert(0, _world_ctx)
+    except Exception:
+        pass
+
     # search / tools
-    clean_msg, search_ctx = extract_search_context(msg)
-    # agent enrichment runs inside _build_stream_context_fast
+    # For vision queries, enrich search with image description
+    _search_msg = msg
+    if '[VISION_CONTEXT:' in msg:
+        _vision_desc = msg.split('[VISION_CONTEXT:')[1].split(']')[0].strip()[:200]
+        _user_q = msg.split('User question:')[-1].strip()
+        if _user_q:
+            _search_msg = f"{_user_q} {_vision_desc}"
+    clean_msg, search_ctx = extract_search_context(_search_msg)
+
+    # ── POWER UPGRADE: Real-Time RAG & Knowledge Graph (TTFT-safe, 400ms budget) ──
+    import concurrent.futures as _cf
+    def _rag_lookup():
+        try:
+            from knowledge_rag import get_knowledge_context
+            return get_knowledge_context(clean_msg, max_tokens=1000)
+        except Exception:
+            return None
+    def _graph_lookup():
+        try:
+            from knowledge_graph import get_graph_context
+            _entities = [w.strip('.,!?') for w in msg.split() if w and w[0].isupper()]
+            return get_graph_context(_entities[:3])
+        except Exception:
+            return None
+    def _graph_write():
+        try:
+            from knowledge_graph import extract_and_store
+            extract_and_store(msg)
+        except Exception:
+            pass
+    import threading as _thr_bg
+    _thr_bg.Thread(target=_graph_write, daemon=True).start()
+    with _cf.ThreadPoolExecutor(max_workers=2) as _ex:
+        _rag_f = _ex.submit(_rag_lookup)
+        _graph_f = _ex.submit(_graph_lookup)
+        try:
+            _rag_ctx = _rag_f.result(timeout=0.4)
+            if _rag_ctx:
+                memory.insert(0, _rag_ctx)
+        except _cf.TimeoutError:
+            print("[TTFT] RAG lookup skipped — exceeded 400ms budget")
+        try:
+            _graph_ctx = _graph_f.result(timeout=0.2)
+            if _graph_ctx:
+                memory.insert(0, _graph_ctx)
+        except _cf.TimeoutError:
+            print("[TTFT] Graph lookup skipped — exceeded 200ms budget")
+
+
+    # agent enrichment runs inside _build_stream_context
 
     msg_lower = msg.lower()
     forced = []
@@ -920,8 +1230,14 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     for tool_name, triggers in FORCE_TOOL_PATTERNS.items():
         if any(t in _msg_lower_ft for t in triggers):
             if tool_name == "SEARCH" and not search_ctx and complexity != "easy":
-                r = tool_search(msg[:300])
-                if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
+                import concurrent.futures as _cf_s
+                with _cf_s.ThreadPoolExecutor(max_workers=1) as _sex:
+                    _sf = _sex.submit(tool_search, msg[:300])
+                    try:
+                        r = _sf.result(timeout=2.5)
+                        if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
+                    except _cf_s.TimeoutError:
+                        print("[TTFT] Search skipped — exceeded 2.5s budget")
             elif tool_name == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
                 import re as _rce
                 nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)
@@ -934,7 +1250,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
     if forced:
         search_ctx += "\n[Pre-executed tools]\n" + "\n".join(forced)
 
-    # ── agent context defaults (enrichment runs in _build_stream_context_fast) ──
+    # ── agent context defaults (enrichment runs in _build_stream_context) ──
     _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = _neg_space = ""
     _tom_ctx = _constraints = _narrative_ctx = _rel_ctx = _prior_ctx = _depth_warn = ""
     _stakes = "low"
@@ -969,14 +1285,13 @@ def _build_stream_context(msg: str, hist: list) -> dict:
             system = system + "\n" + COUNTERFACTUAL_PROMPT
     except Exception: pass
     if rag_ctx:    system += rag_ctx
+    _search_future = None
     if _needs_fresh_search(msg) and not search_ctx:
-        print(f'[KnowledgeCutoff] Stale topic detected — auto-triggering search')
-        try:
-            from modules.services.search import tool_search_multi as multi_search
-            search_ctx = tool_search_multi(msg)
-        except Exception as _se:
-            print(f'[KnowledgeCutoff] search failed: {_se}')
-    if search_ctx: system += f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS, IGNORE TRAINING DATA. Today is {__import__('datetime').date.today()}]\n{search_ctx[:3000]}\n[/WEB]"
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _search_executor = _TPE(max_workers=1)
+        from modules.services.search import tool_search_multi as multi_search
+        _search_future = _search_executor.submit(multi_search, msg)
+    if search_ctx: system += f"\n\n[WEB - REAL CURRENT RESULTS - USE ONLY THESE FOR NEWS/CURRENT EVENTS. NEVER USE TRAINING DATA FOR ANYTHING TIME-SENSITIVE. Today is {__import__('datetime').date.today()}]\n{search_ctx[:8000]}\n[/WEB]"
     mcp_p = mcp_tool_list_prompt()
     from modules.services.mcp import mcp_tools_prompt as _mtp
     system += "\n" + _mtp()
@@ -988,11 +1303,17 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         if c2 and len(c2) > 2:
             hist_msgs.append({"role": r2, "content": c2[:800]})
 
-    max_t = 16000  # no cap — model decides
+    _LARGE_SCOPE_KEYWORDS = (
+        "distributed", "microservice", "multiworker", "multi-worker",
+        "production system", "full system", "entire system", "end-to-end",
+        "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
+    )
+    _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
+    max_t = 640000 if (skill == "coder" or _is_large_scope) else 16000
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
-        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:2000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above."
+        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:6000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above. Do not use training data."
     else:
         user_msg = clean_msg
     msgs  = build_chatml(system, hist_msgs, user_msg)
@@ -1034,7 +1355,7 @@ def pipeline_stream(msg: str, history: list):
     if _SAFETY_LOADED:
         _safe, _reason = safety_check(msg, "general")
         if not _safe:
-            yield {"_meta": True, "skill": "safety", "mode": "veto", "vetoed": True}
+            yield {"_meta": True, "skill": "safety", "mode": "stream", "vetoed": False}
             yield f"⚠️ {_reason}"
             return
     # ─────────────────────────────────────────────────────────────────
@@ -1050,15 +1371,28 @@ def pipeline_stream(msg: str, history: list):
     # ── Safety gate ──────────────────────────────────────────────────────────
     vetoed, reason = topological_veto(msg)
     if vetoed:
-        yield {"_meta": True, "skill": "safety", "mode": "veto", "vetoed": True}
+        yield {"_meta": True, "skill": "safety", "mode": "stream", "vetoed": False}
         yield reason
         return
 
     # ── Routing ──────────────────────────────────────────────────────────────
     from modules.core.constants import get_infra_tier
     skill      = classify_skill(msg)
+    # If current message is ambiguous, inherit skill from recent history
+    if skill == "general" and history:
+        _recent_user_msgs = " ".join(
+            h.get("content", "") for h in history[-6:]
+            if h.get("role") == "user"
+        )
+        _hist_skill = classify_skill(_recent_user_msgs)
+        # Only inherit history skill if current msg is ambiguous (general + short)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8:
+            skill = _hist_skill
+    # Force researcher skill for search/news queries → GLM-4.7 on Cerebras
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
     complexity = route_complexity(msg)
-    _tier = get_infra_tier(complexity)
+    _tier = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     if skill == "calculator": complexity = "medium"
 
@@ -1092,53 +1426,44 @@ def pipeline_stream(msg: str, history: list):
         except Exception:
             pass
 
-    # ── Build prompt — PARALLEL I/O ─────────────────────────────────────────
+    # ── Build prompt — FULLY PARALLEL I/O ───────────────────────────────────
     from concurrent.futures import ThreadPoolExecutor
-    clean_msg, search_ctx = extract_search_context(msg)
     history = clean_history(history or [])
-    if _count_tokens(history) > 1500:
+    if _count_tokens(history) > 150000:
         history = compress_history(history)[0]
 
-    with ThreadPoolExecutor(max_workers=4) as _ex:
-        _f_hist    = _ex.submit(lambda: compress_history(_strip_thinking_from_history(history)))
-        _f_mem     = _ex.submit(lambda: mem_get(msg, k=3))
-        _f_episodic= _ex.submit(lambda: mem_get_episodic(msg))
-        _f_rlhf    = _ex.submit(lambda: get_rlhf_note(skill))
+    _ex2 = ThreadPoolExecutor(max_workers=7)
+    _f_search  = _ex2.submit(lambda: extract_search_context(msg))
+    _f_hist    = _ex2.submit(lambda: compress_history(_strip_thinking_from_history(history)))
+    _f_mem     = _ex2.submit(lambda: mem_get(msg, k=3))
+    _f_episodic= _ex2.submit(lambda: mem_get_episodic(msg))
+    _f_rlhf    = _ex2.submit(lambda: get_rlhf_note(skill))
+    _f_memctx  = _ex2.submit(lambda: build_memory_context(msg))
 
-    recent, ctx_sum = _f_hist.result()
-    _mem_working    = _f_mem.result()
-    _mem_episodic   = _f_episodic.result()
-    rlhf_note       = _f_rlhf.result()
-    _mem_ctx        = build_memory_context(msg)
+    def _safe(f, default, name):
+        try: return f.result(timeout=5)
+        except Exception as _e: print("[parallel] " + name + " failed: " + str(_e)); return default
+
+    clean_msg, search_ctx = _safe(_f_search, (msg, ""), "search_ctx")
+    recent, ctx_sum       = _safe(_f_hist,   ([], ""),  "hist")
+    _mem_working          = _safe(_f_mem,    [],         "mem")
+    _mem_episodic         = _safe(_f_episodic, [],       "episodic")
+    rlhf_note             = _safe(_f_rlhf,  "",         "rlhf")
+    _mem_ctx              = _safe(_f_memctx, "",        "memctx")
+    _ex2.shutdown(wait=False)
     system          = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
     if _mem_ctx: system += _mem_ctx
     system          = trim_system_prompt(system, complexity)
-    hist_msgs       = trim_history_for_ttft(
-                         [{"role": h.get("role","user"), "content": str(h.get("content",""))[:800]} for h in (recent or [])[-8:]],
-                         complexity)
+    hist_msgs       = [{"role": h.get("role","user"), "content": str(h.get("content",""))} for h in (recent or [])]
 
 
     # ── Full agentic path — stream from generate ──────────────────────────────
     # ── Anti-pseudocode injection for coder skill ─────────────────────
     _final_msg = clean_msg
     if skill == "coder":
-        _final_msg = (
-            clean_msg +
-            "\n\n## PRODUCTION REQUIREMENTS (NON-NEGOTIABLE):\n"
-            "1. REAL connections only — use actual env vars (os.environ.get), real DB URLs, real API endpoints\n"
-            "2. COMPLETE implementation — every function has a full body, no pass, no ..., no TODO\n"
-            "3. REAL error handling — specific exceptions (ValueError, ConnectionError), not bare except\n"
-            "4. REAL config — load from environment variables or config files, never hardcode secrets\n"
-            "5. DEPLOYABLE — code runs as-is with zero modifications on a production server\n"
-            "6. NO SIMULATIONS — no fake_*, mock_*, stub_*, no 'in production you would...'\n"
-            "7. COMPLETE FILE — output a complete .py file, not a fragment or snippet\n"
-            "8. REAL IMPORTS — only import packages that exist on PyPI\n"
-            "\nIf you cannot implement something real (e.g. you don't know the user's DB schema), "
-            "ASK for the missing info instead of writing a stub. "
-            "A real incomplete request is better than a fake complete one."
-        )
+        _final_msg = clean_msg + "\n\n[MANDATORY] Write ONLY real, complete, runnable production code. ZERO pseudocode. ZERO stubs. ZERO pass. ZERO placeholders. ZERO TODO. Every function fully implemented with real logic. Ships to prod as-is."
     prompt   = build_chatml(system, hist_msgs, _final_msg)
-    max_t    = 16000  # no cap — model decides when to stop
+    max_t    = 640000 if skill == "coder" else 16000  # coder gets full budget
 
     yield {"_meta": True, "skill": skill, "mode": "agentic", "vetoed": False, "complexity": complexity}
 
@@ -1155,7 +1480,8 @@ def pipeline_stream(msg: str, history: list):
     while True:
         _round_chunks = []
         _pending_tool_calls = []
-        for tok in mistral_stream(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS):
+        from modules.core.http_client import mistral_stream_traced
+        for tok in mistral_stream_traced(_current_prompt, max_tokens=max_t, model=_tier["models"][0], tools=NATIVE_TOOLS, skill=skill, label=skill+"/"+complexity):
             _ttft.on_token(tok)
             if isinstance(tok, str) and tok.startswith(_marker):
                 try:
@@ -1207,6 +1533,14 @@ def pipeline_stream(msg: str, history: list):
     # ── Post-processing (after streaming) ─────────────────────────────────────
     if final:
         final = _clean(final)  # strip think blocks + reasoning preamble
+        # strip zero-shot impl wrapper tags
+        import re as _reclean
+        for _tag in ['[PYTHON IMPL START]','[PYTHON IMPL END]','[PYTHON TESTS START]',
+                        '[PYTHON TESTS END]','[FORMAL PROOF START]','[FORMAL PROOF END]',
+                        '<step_back>','</step_back>','<plan>','</plan>',
+                        '<draft>','</draft>','<critique>','</critique>',
+                        '<zero_shot_plan>','</zero_shot_plan>']:
+            final = final.replace(_tag, '')
         final = re.sub(r"^(Certainly!?|Absolutely!?|Great question!?|Sure!?)[,!.]?\s*", "", final, flags=re.IGNORECASE).strip()
         # ── VERIFICATION + SELF-CORRECTION ───────────────────────────────
         print(f"[Verify] skill={skill} len={len(final)}")
@@ -1242,6 +1576,18 @@ def pipeline_stream(msg: str, history: list):
         cache_set(msg, skill, final)
         mem_save(f"Q:{msg[:80]} A:{final[:160]}")
         semantic_mem_save(f"Q: {msg[:200]} A: {final[:300]}", {"skill": skill, "ts": str(time.time())})
+        try:
+            from modules.services.memory import db_mem_save, db_episodic_save
+            db_mem_save(f"Q: {msg[:200]}\nA: {final[:400]}", source="conversation")
+            if skill in ("researcher", "coder") or complexity == "hard":
+                db_episodic_save(f"[{skill}] {msg[:100]} -> {final[:200]}")
+        except Exception as _me: print(f"[MemPersist] {_me}")
+        try:
+            from modules.services.memory import db_mem_save, db_episodic_save
+            db_mem_save(f"Q: {msg[:200]}\nA: {final[:400]}", source="conversation")
+            if skill in ("researcher", "coder") or complexity == "hard":
+                db_episodic_save(f"[{skill}] {msg[:100]} -> {final[:200]}")
+        except Exception as _me: print(f"[MemPersist] {_me}")
         finetune_save(skill, complexity, system, msg, final)
 
 
@@ -1281,7 +1627,16 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>EliteOmni</title>
-<link href="https://fonts.googleapis.com/css2?family=Styrene+A:wght@400;500&display=swap" rel="stylesheet">
+<style>
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url(https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/cc27851ad-CFxw3nG7.woff2) format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "dlig" 0;
+}
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -1293,23 +1648,72 @@ HTML = r"""<!DOCTYPE html>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
 :root{
-  --bg:#1a1a1a;
-  --sidebar-bg:#1a1a1a;
-  --main-bg:#1a1a1a;
-  --input-bg:#2f2f2f;
-  --hover:#2f2f2f;
-  --active:#3a3a3a;
-  --border:#3a3a3a;
-  --border-light:#444;
-  --text:#ececec;
-  --text-2:#9b9b9b;
-  --text-3:#6e6e6e;
-  --accent:#cc785c;
-  --accent-hover:#c96442;
+  /* ── Typography scale (Claude CDS) ── */
+  --text-xs:.75rem; --text-xs--lh:calc(1/.75);
+  --text-sm:.875rem; --text-sm--lh:calc(1.25/.875);
+  --text-base:1rem; --text-base--lh:1.5;
+  --text-lg:1.125rem; --text-lg--lh:calc(1.75/1.125);
+  --text-xl:1.25rem; --text-xl--lh:calc(1.75/1.25);
+  --text-2xl:1.5rem; --text-2xl--lh:calc(2/1.5);
+  --text-3xl:1.875rem; --text-3xl--lh:1.2;
+  --text-4xl:2.25rem; --text-4xl--lh:calc(2.5/2.25);
+  /* ── Font weights ── */
+  --fw-light:300; --fw-normal:400; --fw-medium:500; --fw-semibold:600; --fw-bold:700; --fw-extrabold:800;
+  /* ── Letter spacing ── */
+  --tracking-tight:-.025em; --tracking-normal:0em; --tracking-wide:.025em; --tracking-wider:.05em; --tracking-widest:.1em;
+  /* ── Line heights ── */
+  --leading-tight:1.25; --leading-snug:1.375; --leading-normal:1.5; --leading-relaxed:1.625;
+  /* ── Border radius ── */
+  --radius-sm:.25rem; --radius-md:.375rem; --radius-lg:.5rem; --radius-xl:.75rem; --radius-2xl:1rem; --radius-3xl:1.5rem;
+  /* ── Shadows ── */
+  --shadow-sm:0 1px 2px #0000000d; --shadow-md:0 4px 6px #0000001a; --shadow-lg:0 10px 15px #0000001a;
+  --drop-shadow-md:0 3px 3px #0000001f; --drop-shadow-lg:0 4px 4px #00000026;
+  /* ── Easing ── */
+  --ease-in:cubic-bezier(.4,0,1,1); --ease-in-out:cubic-bezier(.4,0,.2,1);
+  --default-transition-duration:.15s; --default-transition-timing:cubic-bezier(.4,0,.2,1);
+  /* ── Blur ── */
+  --blur-sm:8px; --blur-md:12px; --blur-lg:16px; --blur-xl:24px; --blur-3xl:64px;
+  /* ── Spacing base ── */
+  --spacing:.25rem;
+  /* ── Containers ── */
+  --container-xs:20rem; --container-sm:24rem; --container-md:28rem; --container-lg:32rem;
+  --container-xl:36rem; --container-2xl:42rem; --container-3xl:48rem; --container-4xl:56rem;
+  --container-5xl:64rem; --container-6xl:72rem; --container-7xl:80rem;
+}
+:root{
+  /* Backgrounds — from --bg-000/100/200/300 */
+  --bg:hsl(60,2.1%,18.4%);
+  --sidebar-bg:hsl(60,2.7%,14.5%);
+  --main-bg:hsl(60,2.1%,18.4%);
+  --input-bg:hsl(30,3.3%,11.8%);
+  --hover:hsl(60,2.7%,14.5%);
+  --active:hsl(30,3.3%,11.8%);
+
+  /* Borders — from --border-100 */
+  --border:hsl(51,16.5%,84.5%,0.12);
+  --border-light:hsl(51,16.5%,84.5%,0.2);
+
+  /* Text — from --text-000/200/400 */
+  --text:hsl(48,33.3%,97.1%);
+  --text-2:hsl(50,9%,73.7%);
+  --text-3:hsl(48,4.8%,59.2%);
+
+  /* Accent — from --brand-100 (Anthropic coral) */
+  --accent:hsl(15,63.1%,59.6%);
+  --accent-hover:hsl(15,54.2%,51.2%);
+
+  /* Accent blue — from --accent-100 */
+  --accent-blue:hsl(210,70.9%,51.6%);
+
+  /* Success/danger/warning */
+  --success:hsl(97,59.1%,46.1%);
+  --danger:hsl(0,67%,59.6%);
+  --warning:hsl(40,71%,50%);
+
   --sb-width:260px;
   --radius:8px;
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.6}
+body{font-family:"Anthropic Sans",system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:var(--text-base);line-height:var(--text-base--lh);font-weight:var(--fw-normal);letter-spacing:var(--tracking-normal);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:"dlig" 0;scrollbar-color:rgba(226,225,218,0.35) rgba(0,0,0,0);scrollbar-width:thin;transition:color var(--default-transition-duration) var(--default-transition-timing)}
 #shell{display:flex;height:100dvh;overflow:hidden}
 
 /* SIDEBAR */
@@ -1405,15 +1809,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* INPUT */
 #foot{flex-shrink:0;padding:12px 16px 20px;background:var(--main-bg)}
 #iw{max-width:720px;margin:0 auto}
-#box{background:var(--input-bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
+#box{background:var(--input-bg);border:1px solid var(--border);border-radius:26px;overflow:visible;transition:border-color .15s}
 #box:focus-within{border-color:var(--border-light)}
 .irow{display:flex;align-items:flex-end;gap:6px;padding:10px 12px 8px}
 textarea#inp{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:15px;font-family:inherit;resize:none;max-height:160px;line-height:1.6;padding:2px 0;min-height:24px;caret-color:var(--text)}
 textarea#inp::placeholder{color:var(--text-3)}
-#send{width:32px;height:32px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background .15s,opacity .15s}
+#send{width:32px;height:32px;border:none;border-radius:50%;background:var(--accent);color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background .15s,opacity .15s}
 #send:hover{background:var(--accent-hover)}
 #send:disabled{opacity:.25;cursor:not-allowed}
-#stop{width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:none;align-items:center;justify-content:center;transition:background .15s}
+#stop{width:32px;height:32px;border:1px solid var(--border);border-radius:50%;background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:none;align-items:center;justify-content:center;transition:background .15s}
 #stop:hover{background:var(--hover)}
 .ibot{display:flex;align-items:center;justify-content:space-between;padding:4px 12px 8px;gap:6px}
 .itools{display:flex;gap:4px;flex-wrap:wrap}
@@ -1479,6 +1883,39 @@ textarea#inp::placeholder{color:var(--text-3)}
   .wtitle{font-size:22px}
 }
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* MOBILE RESPONSIVE */
+@media (max-width: 768px) {
+  body{font-size:14px}
+  #sb{position:fixed;top:0;left:0;height:100dvh;z-index:400;box-shadow:2px 0 20px rgba(0,0,0,.4)}
+  #sb.off{width:0;box-shadow:none}
+  #sb:not(.off){width:80vw;max-width:280px}
+  #topbar{height:48px;padding:0 12px}
+  #welcome{padding:24px 16px}
+  .wtitle{font-size:20px;margin-bottom:20px}
+  .wgrid{grid-template-columns:1fr;max-width:100%}
+  .wcard{padding:12px 14px;font-size:13px}
+  .mrow{padding-left:14px;padding-right:14px;padding-top:10px;padding-bottom:10px}
+  .bub{font-size:14.5px}
+  .bub.ub{max-width:92%;padding:10px 14px}
+  #foot{padding:8px 10px 14px}
+  textarea#inp{font-size:16px}
+  #send,#stop{width:36px;height:36px}
+  .ibot{flex-wrap:wrap}
+  .itl{font-size:11px;padding:4px 7px}
+  .ab pre code{font-size:12px;padding:10px}
+  .ab table{font-size:12.5px}
+  .ab th,.ab td{padding:6px 8px}
+  #mem-box,#sysprompt-box,#fb-box{width:94vw;padding:16px}
+  #badge{bottom:78px;right:10px;font-size:10px}
+}
+
+@media (max-width: 480px) {
+  .wtitle{font-size:18px}
+  .model-tag{display:none}
+  .hint{display:none}
+}
+
 </style>
 </head>
 <body>
@@ -1554,7 +1991,7 @@ textarea#inp::placeholder{color:var(--text-3)}
   <div id="msgs" style="display:none"></div>
 
   <input type="file" id="file-img" accept="image/*" multiple style="display:none" onchange="handleFiles(this.files,'image')">
-  <input type="file" id="file-doc" accept=".pdf,.txt,.md,.py,.js,.csv,.docx,.json,.html,.css" multiple style="display:none" onchange="handleFiles(this.files,'doc')">
+  <input type="file" id="file-doc" multiple style="display:none" onchange="handleFiles(this.files,'doc')">
   <div id="attach-preview"></div>
 
   <div id="foot">
@@ -1562,14 +1999,19 @@ textarea#inp::placeholder{color:var(--text-3)}
       <div id="box">
         <div id="attach-preview-inner"></div>
         <div class="irow">
-          <input type="file" id="imgfile" accept="image/*" style="display:none" onchange="handleImgFile(this)">
-          <button class="itl" onclick="document.getElementById('imgfile').click()" title="Attach image" style="padding:4px 6px;font-size:16px">📎</button>
+          <input type="file" id="imgfile" accept="image/*,application/pdf,.doc,.docx,.txt,.csv,.md" style="display:none" onchange="handleImgFile(this)">
+          <div style="position:relative">
+            <button id="plusbtn" onclick="togglePlusMenu(event)" title="Attach or search" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--input-bg);color:var(--text-2);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;transition:background .15s">+</button>
+            <div id="plusmenu" style="display:none;position:absolute;bottom:calc(100% + 8px);left:0;background:var(--input-bg);border:1px solid var(--border);border-radius:12px;padding:6px;z-index:20;min-width:200px;box-shadow:0 4px 16px rgba(0,0,0,.3)">
+              <button onclick="document.getElementById('imgfile').click();closePlusMenu()" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:none;color:var(--text-1);padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit">📎 Add files or photos</button>
+              <button onclick="toggleWebSearch();" id="websearchToggle" style="display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:none;border:none;color:var(--text-1);padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit">
+                <span>🌐 Web search</span><span id="websearchCheck" style="display:none">✓</span>
+              </button>
+            </div>
+          </div>
           <div style="flex:1;position:relative">
             <textarea id="inp" placeholder="Message EliteOmni…" rows="1"></textarea>
-            <div id="imgpreview" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;background:#222;border:1px solid var(--border);border-radius:8px;padding:6px;z-index:10">
-              <img id="imgthumb" style="max-height:80px;max-width:140px;border-radius:4px;display:block">
-              <button onclick="clearImg()" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:11px;width:100%;text-align:center;margin-top:4px">Remove</button>
-            </div>
+
           </div>
           <button id="stop" onclick="stopGen()" title="Stop">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
@@ -1579,16 +2021,6 @@ textarea#inp::placeholder{color:var(--text-3)}
           </button>
         </div>
         <div class="ibot">
-          <div class="itools">
-            <button class="itl" onclick="ins('SEARCH(')">Search</button>
-            <button class="itl" onclick="ins('CALC(')">Calculate</button>
-            <button class="itl" onclick="ins('BROWSER(scrape:')">Browser</button>
-            <button class="itl" onclick="ins('WEATHER(')">Weather</button>
-            <button class="itl" onclick="ins('FETCH(')">Fetch</button>
-            <button class="itl" onclick="ins('TIME()')">Time</button>
-            <button class="itl" onclick="window.open('/benchmark','_blank')">Benchmark</button>
-            <button class="itl" onclick="document.getElementById('imgfile').click()">Vision</button>
-          </div>
           <span class="hint">Enter to send · Shift+Enter for newline</span>
         </div>
       </div>
@@ -1630,7 +2062,15 @@ textarea#inp::placeholder{color:var(--text-3)}
   </div>
 </div>
 <script>
-marked.setOptions({highlight(code,lang){if(lang&&hljs.getLanguage(lang))return hljs.highlight(code,{language:lang}).value;return hljs.highlightAuto(code).value;},breaks:true,gfm:true});
+function _escapeHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+marked.setOptions({breaks:true,gfm:true});
+const _origRenderer=new marked.Renderer();
+_origRenderer.code=function(code,lang){
+  const escaped=_escapeHtml(typeof code==='string'?code:String(code));
+  const validLang=lang&&hljs.getLanguage(lang)?lang:null;
+  return `<pre><code class="language-${validLang||'plaintext'}">${escaped}</code></pre>`;
+};
+marked.setOptions({renderer:_origRenderer});
 function _makeReactArtifact(code) {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'margin:.8em 0;border:1px solid var(--bd);border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.35)';
@@ -1702,17 +2142,54 @@ function _renderArtifacts(el) {
     b.closest('pre').insertAdjacentElement('afterend', art);
   });
 }
-function renderMd(text){console.log("[renderMd]",text.length,text.slice(0,60));
+function renderMd(text){
+  // Strip server-side planning blocks that leaked into stream
+  const _stripTags=['step_back','plan','draft','critique','zero_shot_plan','think','think_act_verify'];
+  _stripTags.forEach(t=>{text=text.replace(new RegExp('<'+t+'>[\\s\\S]*?</'+t+'>','gi'),'');});
+  _stripTags.forEach(t=>{text=text.replace(new RegExp('</?'+t+'>','gi'),'');});
+  ['[PYTHON IMPL START]','[PYTHON IMPL END]','[PYTHON TESTS START]','[PYTHON TESTS END]',
+   '[FORMAL PROOF START]','[FORMAL PROOF END]'].forEach(t=>{text=text.split(t).join('');});
+  // Strip bracketed context injections that leak from server
+  text=text.replace(/\[KNOWLEDGE BASE\][\s\S]*?\[\/END KNOWLEDGE BASE\]/g,'');
+  text=text.replace(/\[WEB - REAL CURRENT RESULTS[\s\S]*?\[\/WEB\]/g,'');
+  text=text.replace(/\[Pre-executed tools\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Statistical Pre-Analysis\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Deliberate Reasoning\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Hypothesis Analysis\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Code Proof\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[Self-Consistency[^\]]*\][\s\S]*?(?=\n\n|$)/g,'');
+  text=text.replace(/\[project_file_map\][\s\S]*?\[\/project_file_map\]/g,'');
+  text=text.replace(/<project_file_map>[\s\S]*?<\/project_file_map>/g,'');
+  // Strip plain-text internal reasoning labels
+  text=text.replace(/^(THINK|ACT|VERIFY|CRITIQUE|DRAFT|PLAN|OBSERVE|STEP \d+|PHASE \d+|INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|SELF-CHECK|CORRECTION|SEARCH\(.*?\)|CALC\(.*?\)|EXECUTE_INTERNAL:.*|VERIFY_INTERNAL:.*)[:\s][^\n]*/gm,'');
+  text=text.replace(/^(={3,}|\-{3,})\s*$/gm,'');
+  text=text.replace(/\n{3,}/g,'\n\n').trim();
+  console.log("[renderMd]",text.length,text.slice(0,60));
   try{
     const opens=(text.match(/```/g)||[]).length;
     if(opens%2!==0)text=text+'\n```';
   }catch(_){}
   const mmBlocks=[];
   text=text.replace(/```mermaid\n([\s\S]*?)```/g,(_,c)=>{const id='mm'+mmBlocks.length;mmBlocks.push({id,c:c.trim()});return '<MERMAID_'+id+'>';});
+  // Protect LaTeX blocks from marked mangling
+  const mathBlocks=[];
+  text=text.replace(/\$\$([\s\S]*?)\$\$/g,(_,m)=>{const id='MATH'+mathBlocks.length;mathBlocks.push({id,m,block:true});return 'MATHBLOCK_'+id;});
+  text=text.replace(/\$([^\$\n]+?)\$/g,(_,m)=>{const id='MATH'+mathBlocks.length;mathBlocks.push({id,m,block:false});return 'MATHINLINE_'+id;});
   let html=marked.parse(text);
   html=html.replace(/<pre><code(?: class="language-([^"]*)")?>/g,(_,lang)=>{const l=lang||'code';return `<pre><div class="pre-head"><span class="pre-lang">${l}</span><button class="pre-copy" onclick="cpCode(this)">Copy</button></div><code${lang?` class="language-${lang}"`:''}>`;});
   html=html.replace(/\[([0-9]+)\]/g,(_,n)=>`<sup class="cite-ref" onclick="jumpCite(${n})" title="Jump to source">[${n}]</sup>`);
   mmBlocks.forEach(({id,c})=>{html=html.replace(`<p>MERMAID_${id}</p>`,`<div class="mermaid-wrap"><div class="mermaid">${c}</div></div>`).replace(`MERMAID_${id}`,`<div class="mermaid-wrap"><div class="mermaid">${c}</div></div>`);});
+  // Restore LaTeX blocks rendered via KaTeX
+  mathBlocks.forEach(({id,m,block})=>{
+    try{
+      const rendered=katex.renderToString(m,{throwOnError:false,displayMode:block});
+      html=html.replace('MATHBLOCK_'+id,`<div class="katex-block">${rendered}</div>`);
+      html=html.replace('MATHINLINE_'+id,rendered);
+    }catch(e){
+      html=html.replace('MATHBLOCK_'+id,`$$${m}$$`);
+      html=html.replace('MATHINLINE_'+id,`$${m}$`);
+    }
+  });
   return html;
 }
 function postRenderMd(el){
@@ -1965,15 +2442,22 @@ function handleFiles(files, type){
   for(const f of files){
     const r=new FileReader();
     r.onload=(e)=>{
+      const data=e.target.result;
       const entry={name:f.name,type,data,b64:data.split(',')[1]||null,text:null};
       if(type==='doc'){
         // read as text for text-based files
         const tr=new FileReader();
         tr.onload=(ev)=>{entry.text=ev.target.result.slice(0,8000);};
+        const _textExts=['.txt','.md','.py','.js','.csv','.json','.html','.css','.ts','.jsx','.tsx','.yaml','.yml','.xml','.log','.sh','.c','.cpp','.java','.go','.rs','.rb','.php'];
+        const _ext='.'+f.name.split('.').pop().toLowerCase();
         if(f.type==='application/pdf'||f.name.endsWith('.pdf')){
-          entry.text='[PDF file — will be sent as base64 for analysis]';
-        } else {
+          entry.text='[PDF file — extracting text via OCR]';
+          entry.b64=data.split(',')[1];
+        } else if(_textExts.includes(_ext)||f.type.startsWith('text/')){
           tr.readAsText(f);
+        } else {
+          entry.text='[Binary/unsupported file — attempting OCR/extraction]';
+          entry.b64=data.split(',')[1];
         }
       }
       if(type==='image'){entry.b64=data.split(',')[1];}
@@ -1985,7 +2469,7 @@ function handleFiles(files, type){
 }
 
 function renderAttachPreview(){
-  const bar=document.getElementById('attach-bar')||document.getElementById('att-bar')||document.querySelector('.att-bar');
+  const bar=document.getElementById('attach-preview-inner');
   if(!bar)return;
   if(!_pendingFiles.length){bar.style.display='none';return;}
   bar.style.display='flex';bar.innerHTML='';
@@ -2008,15 +2492,15 @@ function clearAttachments(){_pendingFiles=[];_pendingImg=null;renderAttachPrevie
 function handleImgFile(input){
   const f=input.files[0];if(!f)return;
   const r=new FileReader();
-  r.onload=(e)=>{const d=e.target.result;_pendingImg=d.split(',')[1];_pendingFiles.push({name:f.name,type:'image',data:d,b64:d.split(',')[1]||null,text:null});renderAttachPreview();document.getElementById('imgthumb').src=d;document.getElementById('imgpreview').style.display='block';};
+  r.onload=(e)=>{const d=e.target.result;_pendingImg=d.split(',')[1];_pendingFiles.push({name:f.name,type:'image',data:d,b64:d.split(',')[1]||null,text:null});renderAttachPreview();};
   r.readAsDataURL(f);
 }
-function clearImg(){_pendingImg=null;document.getElementById('imgpreview').style.display='none';document.getElementById('imgfile').value='';}
+function clearImg(){_pendingImg=null;document.getElementById('imgfile').value='';}
 document.addEventListener('paste',(e)=>{
   const items=e.clipboardData?.items;if(!items)return;
   for(const item of items){
     if(item.type.startsWith('image/')){
-      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];document.getElementById('imgthumb').src=ev.target.result;document.getElementById('imgpreview').style.display='block';};
+      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];};
       r.readAsDataURL(f);e.preventDefault();break;
     }
   }
@@ -2024,7 +2508,7 @@ document.addEventListener('paste',(e)=>{
 document.addEventListener('paste',(e)=>{
   for(const item of items){
     if(item.type.startsWith('image/')){
-      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];document.getElementById('imgthumb').src=ev.target.result;document.getElementById('imgpreview').style.display='block';};
+      r.onload=(ev)=>{_pendingImg=ev.target.result.split(',')[1];};
       r.readAsDataURL(f);e.preventDefault();break;
     }
   }
@@ -2178,6 +2662,7 @@ async function send(){
   const msg=inp.value.trim();if(!msg)return;
   if(!cur)newChat();
   inp.value='';inp.style.height='auto';
+  const _filesToSend=[..._pendingFiles];
   addBub(msg,'user',false,true,null);
   clearAttachments();
   busy=true;
@@ -2193,11 +2678,11 @@ async function send(){
   _abortCtrl=new AbortController();
 
   // Build payload
-  const imgs=(_pendingFiles||[]).filter(f=>f.type==='image');
-  const docs=(_pendingFiles||[]).filter(f=>f.type==='doc');
-  const payload={message:msg,history:hist};
+  const imgs=(_filesToSend||[]).filter(f=>f.type==='image');
+  const docs=(_filesToSend||[]).filter(f=>f.type==='doc');
+  const payload={message:msg,history:hist,force_search:_webSearchEnabled};
   if(imgs.length)payload.image_b64=imgs[0].b64;
-  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||''}));
+  if(docs.length)payload.file_texts=docs.map(f=>({name:f.name,text:f.text||'',b64:f.b64||null}));
 
   try{
     const resp=await fetch('/stream',{
@@ -2239,7 +2724,7 @@ async function send(){
         const c=document.createElement('span');c.className='cursor';c.id='cur';
         aiBub.appendChild(c);
       }
-      scr();
+      if((document.getElementById("msgs").scrollHeight-document.getElementById("msgs").scrollTop-document.getElementById("msgs").clientHeight)<80)document.getElementById("msgs").scrollTop=document.getElementById("msgs").scrollHeight;
       rafPending=false;
     }
 
@@ -2275,7 +2760,11 @@ async function send(){
       }
 
       // Schedule one rAF per frame — never blocks, never per-token
-      if(metaParsed && fullText) scheduleRaf();
+      if(metaParsed && fullText){
+        scheduleRaf();
+        const _m=document.getElementById("msgs");
+        if(_m.scrollHeight-_m.scrollTop-_m.clientHeight<200)_m.scrollTop=_m.scrollHeight;
+      }
     }
 
     // ── Final render: full markdown + hljs + math, exactly once ───
@@ -2401,6 +2890,30 @@ function submitFbReason(reason){document.getElementById('fb-modal').classList.re
 
 // ARTIFACT FULLSCREEN
 function artifactFullscreen(iframe){const m=document.createElement('div');m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center';const bar=document.createElement('div');bar.style.cssText='width:100%;display:flex;justify-content:flex-end;padding:8px 16px';const cl=document.createElement('button');cl.textContent='✕ Close';cl.style.cssText='background:none;border:1px solid #555;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:.8rem';cl.onclick=()=>document.body.removeChild(m);bar.appendChild(cl);const fr=document.createElement('iframe');fr.srcdoc=iframe.srcdoc;fr.style.cssText='width:95vw;height:90vh;border:none;border-radius:8px;background:#fff';m.appendChild(bar);m.appendChild(fr);document.body.appendChild(m);}
+
+let _webSearchEnabled = false;
+function togglePlusMenu(e){
+  e.stopPropagation();
+  const m = document.getElementById('plusmenu');
+  m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none';
+}
+function closePlusMenu(){
+  const m = document.getElementById('plusmenu');
+  if(m) m.style.display = 'none';
+}
+function toggleWebSearch(){
+  _webSearchEnabled = !_webSearchEnabled;
+  const chk = document.getElementById('websearchCheck');
+  if(chk) chk.style.display = _webSearchEnabled ? 'inline' : 'none';
+  closePlusMenu();
+}
+document.addEventListener('click', function(e){
+  const menu = document.getElementById('plusmenu');
+  const btn = document.getElementById('plusbtn');
+  if(menu && menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn){
+    menu.style.display = 'none';
+  }
+});
 </script>
 """
 
@@ -2435,8 +2948,11 @@ import io, base64
 # PDF inline drag-and-drop support
 SUPPORTED_EXTS = {
     ".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json",
-    ".csv", ".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".webp"
+    ".csv", ".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".webp",
+    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".mp3", ".wav", ".m4a"
 }
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg"}
 
 def _extract_text_from_file(filename: str, data: bytes) -> str:
     """Extract text from uploaded file — supports txt/md/code/PDF/DOCX."""
@@ -2506,6 +3022,121 @@ async def upload_file(file: UploadFile = FastAPIFile(...)):
         "preview": text[:300],
         "status": "indexed in RAG — AI can now reference this file"
     }
+
+@app.post("/video/edit")
+async def video_edit_endpoint(req: Request):
+    """
+    Video editing endpoint. Accepts JSON with:
+    - file_id: previously uploaded video file path
+    - operation: transcribe | trim | remove_silences | extract_audio | generate_srt | burn_subtitles | info
+    - params: operation-specific parameters
+    """
+    try:
+        data = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    operation = data.get("operation", "transcribe")
+    file_path  = data.get("file_path", "")
+    params     = data.get("params", {})
+
+    if not file_path or not os.path.exists(file_path):
+        return JSONResponse({"error": f"File not found: {file_path}"}, status_code=400)
+
+    try:
+        from modules.video_editor import (
+            transcribe, trim_clip, remove_silences,
+            extract_audio, generate_srt, burn_subtitles,
+            merge_clips, video_info
+        )
+        import tempfile, os as _os
+
+        out_dir = _os.path.expanduser("~/eliteomni_outputs")
+        _os.makedirs(out_dir, exist_ok=True)
+
+        if operation == "info":
+            result = video_info(file_path)
+            return JSONResponse({"operation": "info", "result": result})
+
+        elif operation == "transcribe":
+            model = params.get("model", "base")
+            transcript = transcribe(file_path, model_size=model)
+            # Also generate SRT
+            srt_path = _os.path.join(out_dir, _os.path.basename(file_path) + ".srt")
+            if transcript.get("segments"):
+                generate_srt(transcript, srt_path)
+            return JSONResponse({
+                "operation": "transcribe",
+                "text": transcript.get("text", ""),
+                "segments": len(transcript.get("segments", [])),
+                "srt_path": srt_path if _os.path.exists(srt_path) else None,
+                "language": transcript.get("language", "unknown")
+            })
+
+        elif operation == "trim":
+            start = float(params.get("start", 0))
+            end   = float(params.get("end", 60))
+            out   = _os.path.join(out_dir, f"trim_{_os.path.basename(file_path)}")
+            result = trim_clip(file_path, start, end, out)
+            return JSONResponse({"operation": "trim", "output": result, "start": start, "end": end})
+
+        elif operation == "remove_silences":
+            threshold = float(params.get("threshold", -35))
+            min_sil   = float(params.get("min_silence", 0.5))
+            out = _os.path.join(out_dir, f"nosilence_{_os.path.basename(file_path)}")
+            result = remove_silences(file_path, threshold, min_sil)
+            return JSONResponse({"operation": "remove_silences", "output": result})
+
+        elif operation == "extract_audio":
+            out = _os.path.join(out_dir, _os.path.basename(file_path).rsplit(".", 1)[0] + ".mp3")
+            result = extract_audio(file_path, out)
+            return JSONResponse({"operation": "extract_audio", "output": result})
+
+        elif operation == "generate_srt":
+            model = params.get("model", "base")
+            transcript = transcribe(file_path, model_size=model)
+            srt_path = _os.path.join(out_dir, _os.path.basename(file_path) + ".srt")
+            generate_srt(transcript, srt_path)
+            return JSONResponse({"operation": "generate_srt", "srt_path": srt_path,
+                                 "segments": len(transcript.get("segments", []))})
+
+        elif operation == "burn_subtitles":
+            srt_path = params.get("srt_path", "")
+            if not srt_path or not _os.path.exists(srt_path):
+                return JSONResponse({"error": "srt_path required and must exist"}, status_code=400)
+            out = _os.path.join(out_dir, f"subtitled_{_os.path.basename(file_path)}")
+            result = burn_subtitles(file_path, srt_path, out)
+            return JSONResponse({"operation": "burn_subtitles", "output": result})
+
+        else:
+            return JSONResponse({"error": f"Unknown operation: {operation}"}, status_code=400)
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/video/upload")
+async def video_upload(file: UploadFile = FastAPIFile(...)):
+    """Upload a video/audio file for editing."""
+    filename = file.filename or "video.mp4"
+    ext = os.path.splitext(filename.lower())[1]
+    if ext not in VIDEO_EXTS and ext not in AUDIO_EXTS:
+        return JSONResponse({"error": f"Unsupported video/audio type: {ext}"}, status_code=400)
+    data = await file.read()
+    if len(data) > 500 * 1024 * 1024:  # 500MB limit
+        return JSONResponse({"error": "File too large (max 500MB)"}, status_code=400)
+    save_dir = os.path.expanduser("~/eliteomni_uploads")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, filename)
+    with open(save_path, "wb") as f:
+        f.write(data)
+    return JSONResponse({
+        "filename": filename,
+        "file_path": save_path,
+        "size_mb": round(len(data) / 1024 / 1024, 2),
+        "status": "uploaded — use /video/edit to process"
+    })
+
 
 @app.post("/upload/chat")
 async def upload_and_chat(file: UploadFile = FastAPIFile(...), message: str = "Summarize this file."):
@@ -2610,18 +3241,31 @@ async def stream_chat(req: Request):
 
     msg          = data.get("message", "").strip()
     hist         = data.get("history", [])
+    force_search = bool(data.get("force_search", False))
     image_b64    = data.get("image_b64", "")
     image_prompt = data.get("image_prompt", msg or "Describe this image in detail.")
+    print(f"[DEBUG image_b64] received={bool(image_b64)}, length={len(image_b64) if image_b64 else 0}")
     file_texts   = data.get("file_texts", [])  # [{name, text}, ...]
 
     # ── Inject uploaded documents into message context ─────────────────────
     if file_texts:
+        print("[DEBUG file_texts] count=" + str(len(file_texts)))
         file_ctx = ""
         for f in file_texts[:5]:
             name = f.get("name", "file")
             text = f.get("text", "").strip()
+            file_b64 = f.get("b64")
+            print("[DEBUG file] name=" + str(name) + " text_len=" + str(len(text)) + " text_start=" + repr(text[:50]) + " has_b64=" + str(bool(file_b64)))
+            if file_b64 and (name.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")) or text.startswith("[Binary")):
+                try:
+                    from modules.core.http_client import ocr_document
+                    text = ocr_document(file_b64, name)
+                    print("[DEBUG OCR result] len=" + str(len(text)) + " start=" + repr(text[:200]))
+                except Exception as _oe:
+                    text = f"[OCR failed: {_oe}]"
+                    print("[DEBUG OCR exception] " + str(_oe))
             if text:
-                file_ctx += f"\n\n[Attached file: {name}]\n{text[:3000]}"
+                file_ctx += f"\n\n[Attached file: {name}]\n{text[:6000]}"
         if file_ctx:
             msg = (msg + file_ctx) if msg else file_ctx.strip()
 
@@ -2642,26 +3286,43 @@ async def stream_chat(req: Request):
         msg = f"[COUNTERFACTUAL REASONING] Think step by step. Identify the causal chain, then simulate the alternative scenario carefully. Consider 2nd and 3rd order effects. Question: {msg}"
 
     # Don't auto-search on vision-only queries
-    _skip_search = msg.startswith('[VISION_CONTEXT:')
-    vetoed, veto_reason = topological_veto(msg)
+    # Skip auto-search only if THIS message is purely vision with no user question
+    _vision_only = '[VISION_CONTEXT:' in msg and not msg.split('User question:')[-1].strip()
+    _skip_search = _vision_only and not force_search
+    _veto_target = msg.split('User question:')[-1].strip() if '[VISION_CONTEXT:' in msg else msg
+    vetoed, veto_reason = topological_veto(_veto_target)
     if vetoed:
         async def _veto():
             yield json.dumps({"skill": "safety", "mode": "veto"}) + "\n"
             yield veto_reason
         return StreamingResponse(_veto(), media_type="text/plain")
 
+    if force_search and not _skip_search:
+        msg = f"[FORCE WEB SEARCH REQUESTED] {msg}"
     clean_msg, search_ctx = extract_search_context(msg)
-    # agent enrichment runs inside _build_stream_context_fast
+    # agent enrichment runs inside _build_stream_context
 
     # ── Self-critique: flag if answer needs web grounding ──────────────────
     _critique_triggers = ["is it true", "fact check", "are you sure", "verify", "confirm", "really?", "prove"]
     if any(t in msg.lower() for t in _critique_triggers):
         msg = f"[SELF-CRITIQUE MODE] Carefully verify your answer before responding. State your confidence level explicitly. Original question: {msg}"
 
-    loop = asyncio.get_event_loop()
-    ctx = await loop.run_in_executor(None, lambda: _build_stream_context_fast(msg, hist))
-
     async def _gen():
+        import asyncio as _asyncio
+        _loop = _asyncio.get_event_loop()
+        _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
+        try:
+            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=8)
+        except _asyncio.TimeoutError:
+            print("[stream_chat] ctx timeout — fast first token with minimal ctx (history preserved)")
+            from modules.core.constants import get_infra_tier
+            _infra_t = get_infra_tier("medium")
+            _fallback_msgs = [{"role": h.get("role","user"), "content": h.get("content","")} for h in (hist or [])[-10:] if h.get("content")]
+            _fallback_msgs.append({"role": "user", "content": msg})
+            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
+        yield ""
+
+        if False: yield
         import asyncio, queue as _q, threading as _t, re as _re_s
         loop = asyncio.get_event_loop()
 
@@ -2686,7 +3347,7 @@ async def stream_chat(req: Request):
 
         def _worker():
             try:
-                for tok in mistral_stream(ctx["msgs"], max_tokens=ctx["max_t"], model=ctx.get("model", "accounts/fireworks/models/deepseek-v4-pro"), tools=ctx.get("mcp_tools")):
+                for tok in cerebras_stream(ctx["msgs"], max_tokens=ctx["max_t"], model="zai-glm-4.7"):
                     loop.call_soon_threadsafe(tok_q.put_nowait, tok)
             except Exception as e:
                 print(f"[stream worker] {e}")
@@ -2718,7 +3379,7 @@ async def stream_chat(req: Request):
                 ]
                 def _tool_cont_worker():
                     try:
-                        for t2 in mistral_stream(_cont_msgs3, max_tokens=4096, model=ctx.get("model"), tools=ctx.get("mcp_tools")):
+                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=4096, model="zai-glm-4.7"):
                             loop.call_soon_threadsafe(tok_q.put_nowait, t2)
                     except Exception as e:
                         print(f"[tool cont] {e}")
@@ -2727,26 +3388,32 @@ async def stream_chat(req: Request):
                 _t.Thread(target=_tool_cont_worker, daemon=True, name="tool_cont").start()
                 continue
             buf += tok
-            if "<think>" in buf:
-                in_think[0] = True
+            _OPEN_TAGS = ("<think>", "<extended_thinking>", "<extended_thinking_math>")
+            _CLOSE_TAGS = ("</think>", "</extended_thinking>", "</extended_thinking_math>")
+            if not in_think[0]:
+                for _ot in _OPEN_TAGS:
+                    if _ot in buf:
+                        in_think[0] = True
+                        break
             if in_think[0]:
-                if "</think>" in buf:
-                    buf = buf.split("</think>", 1)[-1]
-                    in_think[0] = False
-                else:
-                    buf = ""
+                _closed = False
+                for _ct in _CLOSE_TAGS:
+                    if _ct in buf:
+                        buf = buf.split(_ct, 1)[-1]
+                        in_think[0] = False
+                        _closed = True
+                        break
+                if not _closed:
                     continue
-            out = _re_s.sub(
-                r"(?m)^(INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|PLAN|DRAFT"
-                r"|SELF-CHECK|CORRECTION|VERIFY|EXECUTE|IMPROVE|SEARCH|ANALYSIS):[^\n]*\n",
-                "", buf
-            )
+            # label_re filter disabled — was eating cerebras tokens
+            out = buf
             if out:
                 chunks.append(out)
                 yield out
                 buf = ""
+                await asyncio.sleep(0)
 
-        if buf and not in_think[0]:
+        if buf:
             out = _re_s.sub(
                 r"(?m)^(INTENT|AMBIGUITY|APPROACH|CONSTRAINTS|PLAN|DRAFT"
                 r"|SELF-CHECK|CORRECTION|VERIFY|EXECUTE|IMPROVE|SEARCH|ANALYSIS):[^\n]*\n",
@@ -2842,6 +3509,42 @@ async def stream_chat(req: Request):
             _stream_post_process(msg, final, ctx["skill"],
                                  ctx["complexity"], ctx["effort"],
                                  ctx.get("system",""))
+            # ── File editing: detect <file_edit> blocks, apply, save for download ──
+            try:
+                import re as _re_fe
+                _edit_blocks = _re_fe.findall(
+                    r'<file_edit filename="([^"]+)">\s*<old_str>\s*(.*?)\s*</old_str>\s*<new_str>\s*(.*?)\s*</new_str>\s*</file_edit>',
+                    final, _re_fe.DOTALL
+                )
+                if _edit_blocks:
+                    _orig_by_name = {f.get("name",""): f.get("text","") for f in file_texts}
+                    _edited_by_file = {}
+                    for _fname, _old, _new in _edit_blocks:
+                        _base = _orig_by_name.get(_fname, _edited_by_file.get(_fname, ""))
+                        if _old in _base:
+                            _edited_by_file[_fname] = _base.replace(_old, _new, 1)
+                        else:
+                            print(f"[FileEdit] old_str not found verbatim in {_fname}, skipping that block")
+                    _links = []
+                    for _fname, _new_content in _edited_by_file.items():
+                        _fid = _save_edited_file(_fname, _new_content)
+                        _links.append(f"\n\n📄 **Edited file ready:** [Download {_fname}](/download/{_fid})")
+                    if _links:
+                        yield "".join(_links)
+
+                _rewrite_blocks = _re_fe.findall(
+                    r'<file_rewrite filename="([^"]+)">\s*(.*?)\s*</file_rewrite>',
+                    final, _re_fe.DOTALL
+                )
+                if _rewrite_blocks:
+                    _rw_links = []
+                    for _rfname, _rcontent in _rewrite_blocks:
+                        _rfid = _save_edited_file(_rfname, _rcontent)
+                        _rw_links.append("\n\n📄 **Rewritten file ready:** [Download " + _rfname + "](/download/" + _rfid + ")")
+                    if _rw_links:
+                        yield "".join(_rw_links)
+            except Exception as _fe_err:
+                print(f"[FileEdit] error: {_fe_err}")
 
     return StreamingResponse(_gen(), media_type="text/plain",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache",
@@ -4095,7 +4798,7 @@ def _pgd_maybe_evolve():
         current_prompt = _pgd_load_prompt()
         rewrite = groq_generate([{"role":"user","content":
             f"You are optimizing an AI system prompt. Here are the 20 worst-scoring interactions:\n{failures_text}\n\n"
-            f"Current system prompt (first 800 chars):\n{current_prompt[:800]}\n\n"
+            f"Identify patterns in failures and suggest prompt improvements.\n\n"
             f"Identify the single weakest instruction and rewrite ONLY that section to fix the failure pattern. "
             f"Output ONLY the improved instruction text, 1-3 sentences, no explanation."}],
             max_tokens=150)
@@ -4155,16 +4858,60 @@ def pgd_get_active_prompt_injection() -> str:
 
 
 # ── TTFT PATCH: parallel pre-processing ─────────────────────────────────────
-def _build_stream_context_fast(msg: str, hist: list) -> dict:
-    print("[ENTER _build_stream_context_fast]")
+def _build_stream_context(msg: str, hist: list) -> dict:
+    print("[ENTER _build_stream_context]")
     """Drop-in replacement for _build_stream_context with parallel enrichment."""
     from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
     from modules.core.constants import get_infra_tier
 
     # ── 1. Fast serial (no I/O) ──────────────────────────────────────────────
     skill      = classify_skill(msg)
+    if skill == "general" and hist:
+        _recent_user_msgs = " ".join(h.get("content", "") for h in hist[-6:] if h.get("role") == "user")
+        _hist_skill = classify_skill(_recent_user_msgs)
+        if _hist_skill != "general" and skill == "general" and len(msg.split()) < 8: skill = _hist_skill
+    # Persistent skill — restore from DB if still general
+    if skill == "general":
+        try:
+            import sqlite3 as _sq3, os as _os3
+            _db = _sq3.connect(_os3.path.expanduser("~/eliteomni_memory.db"), check_same_thread=False)
+            _row = _db.execute("SELECT value FROM kv WHERE key='last_skill' LIMIT 1").fetchone()
+            _db.close()
+            if _row and _row[0] and _row[0] != "general":
+                _parts = _row[0].split("|")
+                _saved_skill = _parts[0]
+                _saved_ts = float(_parts[1]) if len(_parts) > 1 else 0
+                if time.time() - _saved_ts < 600:  # 10 min TTL
+                    skill = _saved_skill
+                    print(f"[SkillPersist] restored skill={skill}")
+        except Exception: pass
+    # Save skill to DB
+    if skill != "general":
+        try:
+            import sqlite3 as _sq3, os as _os3
+            _db = _sq3.connect(_os3.path.expanduser("~/eliteomni_memory.db"), check_same_thread=False)
+            _db.execute("INSERT OR REPLACE INTO kv (key, value) VALUES ('last_skill', ?)", (f"{skill}|{time.time()}",))
+            _db.commit(); _db.close()
+        except Exception: pass
+    if skill == "general" and _needs_fresh_search(msg):
+        skill = "researcher"
+    # Claude-style: inherit skill+context from recent history
+    # If any recent user turn triggered search, treat this as a search follow-up
+    _FOLLOWUP = ["go in detail","tell me more","expand","elaborate","more detail",
+                 "go deeper","continue","and?","what else","summarize","explain more",
+                 "in depth","break it down","give me more","keep going","more","detail",
+                 "elaborate more","dig deeper","further","specifically"]
+    if skill == "general" and any(f in msg.lower().strip() for f in _FOLLOWUP):
+        _all_prev = " ".join(h.get("content","") for h in (hist or [])[-6:] if h.get("role")=="user")
+        if _needs_fresh_search(_all_prev):
+            skill = "researcher"
+    # Also inherit skill if previous turns used researcher
+    if skill == "general" and hist:
+        _prev_skills = [h.get("_skill","") for h in (hist or [])[-4:]]
+        if "researcher" in _prev_skills:
+            skill = "researcher"
     complexity = route_complexity(msg)
-    _tier      = get_infra_tier(complexity)
+    _tier      = get_infra_tier(complexity, skill)
     print(f"[InfraTier] {_tier['label']} → {_tier['models'][0]}")
     effort = "high" if complexity == "hard" else ("low" if complexity == "easy" else "medium")
 
@@ -4173,9 +4920,31 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         return {"cached": cached, "skill": skill, "complexity": complexity,
                 "mode": "cached", "effort": effort, "msgs": [], "max_t": 0}
 
-    clean_msg, search_ctx = extract_search_context(msg)
+    # ── 2. Parallel I/O tasks (all I/O runs concurrently) ───────────────────
+    def _do_search():
+        # Skip search for short/conversational messages — saves 1-3s TTFT
+        _skip_words = {"hi","hello","hey","thanks","ok","okay","sure","yes","no","bye"}
+        if len(msg.split()) <= 3 and msg.lower().strip().rstrip("!?.") in _skip_words:
+            return (msg, "")
+        # Skip search for coding tasks — model knows syntax/algorithms/stdlib
+        _code_signals = ["def ", "class ", "import ", "```", "function ", "const ",
+                         "debug", "refactor", "optimize", "algorithm", "implement",
+                         "write a function", "fix this", "bug in"]
+        if any(t in msg.lower() for t in _code_signals):
+            return (msg, "")
+        # Check Tavily cache first — avoids duplicate HTTP call
+        from modules.services.search import _tavily_cache, tavily_search
+        _ck = msg.strip().lower()[:120]
+        if _ck in _tavily_cache:
+            print("[_do_search] Tavily cache hit — reusing result")
+            import datetime as _dt
+            _ctx = ("MANDATORY: LIVE search results fetched " + str(_dt.date.today()) + ". "
+                    "You MUST use these. FORBIDDEN from saying no internet access.\n"
+                    "[LIVE RESULTS]\n" + _tavily_cache[_ck][:4000] + "\n[END RESULTS]\n"
+                    "Answer using ONLY the above results.")
+            return (msg, _ctx)
+        return extract_search_context(msg)
 
-    # ── 2. Parallel I/O tasks ────────────────────────────────────────────────
     def _do_history():
         h = hist
         if _count_tokens(h) > 6000:
@@ -4201,22 +4970,35 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     def _do_rlhf():
         return get_rlhf_note(skill)
 
-    with ThreadPoolExecutor(max_workers=7) as ex:
-        f_hist    = ex.submit(_do_history)
-        f_mem     = ex.submit(_do_mem)
-        f_sem     = ex.submit(_do_sem_mem)
-        f_sqlite  = ex.submit(_do_sqlite_mem)
-        f_epis    = ex.submit(_do_episodic)
-        f_rag     = ex.submit(_do_rag)
-        f_rlhf    = ex.submit(_do_rlhf)
-
-    recent, ctx_sum  = f_hist.result()
-    _mem_working     = f_mem.result()
-    sem_memory       = f_sem.result()
-    _mem_sqlite      = f_sqlite.result()
-    _mem_episodic    = f_epis.result()
-    rag_hits         = f_rag.result()
-    rlhf_note        = f_rlhf.result()
+    def _do_cache():
+        return cache_get(msg, skill)
+    _bsc_ex = ThreadPoolExecutor(max_workers=9)
+    f_cache   = _bsc_ex.submit(_do_cache)
+    f_search  = _bsc_ex.submit(_do_search)
+    f_hist    = _bsc_ex.submit(_do_history)
+    f_mem     = _bsc_ex.submit(_do_mem)
+    f_sem     = _bsc_ex.submit(_do_sem_mem)
+    f_sqlite  = _bsc_ex.submit(_do_sqlite_mem)
+    f_epis    = _bsc_ex.submit(_do_episodic)
+    f_rag     = _bsc_ex.submit(_do_rag)
+    f_rlhf    = _bsc_ex.submit(_do_rlhf)
+    def _sr(f, default, name):
+        try: return f.result(timeout=4)
+        except Exception as _e: print("[bsc] " + name + " failed: " + str(_e)); return default
+    cached = _sr(f_cache, None, "cache")
+    if cached and complexity == "easy":
+        _bsc_ex.shutdown(wait=False)
+        return {"cached": cached, "skill": skill, "complexity": complexity,
+                "mode": "cached", "effort": effort, "msgs": [], "max_t": 0}
+    clean_msg, search_ctx = _sr(f_search, (msg, ""), "search")
+    recent, ctx_sum  = _sr(f_hist,  ([], ""),  "hist")
+    _mem_working     = _sr(f_mem,   [],         "mem")
+    sem_memory       = _sr(f_sem,   [],         "sem")
+    _mem_sqlite      = _sr(f_sqlite,[],         "sqlite")
+    _mem_episodic    = _sr(f_epis,  [],         "epis")
+    rag_hits         = _sr(f_rag,   [],         "rag")
+    rlhf_note        = _sr(f_rlhf,  "",         "rlhf")
+    _bsc_ex.shutdown(wait=False)
 
     # Dedupe memory
     _seen_m, memory = set(), []
@@ -4233,49 +5015,128 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         mem_save_episodic(ctx_sum)
         episodic = [ctx_sum] + episodic
 
-    # ── 3. Human-gap analysis (best-effort) ──────────────────────────────────
+    # ── 3+4. Human-gap analysis + force-tools (12-way parallel) ────────────
     _emotion_ctx = _kb_ctx = _goals_ctx = _stakes_ctx = ""
     _neg_space = _tom_ctx = _constraints = _narrative_ctx = ""
     _rel_ctx = _prior_ctx = _depth_warn = ""
     _stakes = "low"
-    try:
-        from modules.services.agents import (
-            detect_emotion_context, knowledge_boundary_check, goals_get_context,
-            assess_stakes, stakes_system_addon, negative_space_analysis,
-            theory_of_mind_analysis, extract_constraints, narrative_get_context,
-            relationship_get_context, experience_prior_check, context_depth_warning)
-        _emotion_ctx   = detect_emotion_context(msg)
-        _kb_ctx        = knowledge_boundary_check(msg, skill)
-        _goals_ctx     = goals_get_context()
-        _stakes        = assess_stakes(msg, complexity)
-        _stakes_ctx    = stakes_system_addon(_stakes)
-        _neg_space     = negative_space_analysis(msg, complexity)
-        _tom_ctx       = theory_of_mind_analysis(msg, skill)
-        _constraints   = extract_constraints(msg)
-        _narrative_ctx = narrative_get_context()
-        _rel_ctx       = relationship_get_context()
-        _prior_ctx     = experience_prior_check(msg, skill)
-        _depth_warn    = context_depth_warning("", "")
-    except Exception as _hge:
-        print(f"[HumanGap pre] {_hge}")
-
-    # ── 4. Force-tool patterns ────────────────────────────────────────────────
     forced = []
-    _msg_lower_ft = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
-    for tool_name, triggers in FORCE_TOOL_PATTERNS.items():
-        if any(t in _msg_lower_ft for t in triggers):
-            if tool_name == "SEARCH" and not search_ctx and complexity != "easy":
-                r = tool_search(msg[:300])
-                if r and "error" not in r.lower(): forced.append(f"SEARCH: {r[:400]}")
-            elif tool_name == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
-                import re as _rce
-                nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)
-                if nums:
-                    r = tool_calc(nums[0].strip())
-                    if r: forced.append(f"CALC result: {r}")
-            elif tool_name == "TIME":
-                forced.append(f"TIME: {tool_time()}")
-            break
+
+    if complexity != "easy":
+        def _hg_emotion():
+            try:
+                from modules.services.agents import detect_emotion_context
+                return detect_emotion_context(msg)
+            except: return ""
+        def _hg_kb():
+            try:
+                from modules.services.agents import knowledge_boundary_check
+                return knowledge_boundary_check(msg, skill)
+            except: return ""
+        def _hg_goals():
+            try:
+                from modules.services.agents import goals_get_context
+                return goals_get_context()
+            except: return ""
+        def _hg_stakes():
+            try:
+                from modules.services.agents import assess_stakes, stakes_system_addon
+                s = assess_stakes(msg, complexity)
+                return s, stakes_system_addon(s)
+            except: return "low", ""
+        def _hg_negspace():
+            try:
+                from modules.services.agents import negative_space_analysis
+                return negative_space_analysis(msg, complexity)
+            except: return ""
+        def _hg_tom():
+            try:
+                from modules.services.agents import theory_of_mind_analysis
+                return theory_of_mind_analysis(msg, skill)
+            except: return ""
+        def _hg_constraints():
+            try:
+                from modules.services.agents import extract_constraints
+                return extract_constraints(msg)
+            except: return ""
+        def _hg_narrative():
+            try:
+                from modules.services.agents import narrative_get_context
+                return narrative_get_context()
+            except: return ""
+        def _hg_rel():
+            try:
+                from modules.services.agents import relationship_get_context
+                return relationship_get_context()
+            except: return ""
+        def _hg_prior():
+            try:
+                from modules.services.agents import experience_prior_check
+                return experience_prior_check(msg, skill)
+            except: return ""
+        def _hg_depth():
+            try:
+                from modules.services.agents import context_depth_warning
+                return context_depth_warning("", "")
+            except: return ""
+        def _hg_force():
+            import re as _rce
+            _mlt = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
+            for _tn, _triggers in FORCE_TOOL_PATTERNS.items():
+                if any(t in _mlt for t in _triggers):
+                    if _tn == "SEARCH" and not search_ctx:
+                        r = tool_search(msg[:300])
+                        if r and "error" not in r.lower(): return f"SEARCH: {r[:400]}"
+                    elif _tn == "CALC" and any(op in msg for op in ["+","-","*","/","%","^","sqrt"]):
+                        nums = _rce.findall(r"[\d\.\+\-\*\/\%\^\(\)sqrt ]+", msg)
+                        if nums:
+                            r = tool_calc(nums[0].strip())
+                            if r: return f"CALC result: {r}"
+                    elif _tn == "TIME":
+                        return f"TIME: {tool_time()}"
+                    break
+            return ""
+
+        _hg_ex = ThreadPoolExecutor(max_workers=12)
+        _hg_fs = {
+            "emotion":   _hg_ex.submit(_hg_emotion),
+            "kb":        _hg_ex.submit(_hg_kb),
+            "goals":     _hg_ex.submit(_hg_goals),
+            "stakes":    _hg_ex.submit(_hg_stakes),
+            "negspace":  _hg_ex.submit(_hg_negspace),
+            "tom":       _hg_ex.submit(_hg_tom),
+            "constr":    _hg_ex.submit(_hg_constraints),
+            "narrative": _hg_ex.submit(_hg_narrative),
+            "rel":       _hg_ex.submit(_hg_rel),
+            "prior":     _hg_ex.submit(_hg_prior),
+            "depth":     _hg_ex.submit(_hg_depth),
+            "force":     _hg_ex.submit(_hg_force),
+        }
+        def _hgr(key, default):
+            try: return _hg_fs[key].result(timeout=3)
+            except Exception as _e: print(f"[HumanGap] {key}: {_e}"); return default
+
+        _emotion_ctx   = _hgr("emotion",   "")
+        _kb_ctx        = _hgr("kb",        "")
+        _goals_ctx     = _hgr("goals",     "")
+        _stakes, _stakes_ctx = _hgr("stakes", ("low", ""))
+        _neg_space     = _hgr("negspace",  "")
+        _tom_ctx       = _hgr("tom",       "")
+        _constraints   = _hgr("constr",    "")
+        _narrative_ctx = _hgr("narrative", "")
+        _rel_ctx       = _hgr("rel",       "")
+        _prior_ctx     = _hgr("prior",     "")
+        _depth_warn    = _hgr("depth",     "")
+        _force_result  = _hgr("force",     "")
+        _hg_ex.shutdown(wait=False)
+        if _force_result: forced.append(_force_result)
+    else:
+        _mlt = "" if msg.startswith("[VISION_CONTEXT:") else msg.lower()
+        for _tn, _triggers in FORCE_TOOL_PATTERNS.items():
+            if any(t in _mlt for t in _triggers):
+                if _tn == "TIME": forced.append(f"TIME: {tool_time()}")
+                break
+
     if forced:
         search_ctx += "\n[Pre-executed tools]\n" + "\n".join(forced)
 
@@ -4290,7 +5151,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
     for _addon in [_emotion_ctx, _kb_ctx, _goals_ctx, _stakes_ctx,
                    _neg_space, _tom_ctx, _constraints,
                    _narrative_ctx, _rel_ctx, _prior_ctx, _depth_warn]:
-        if _addon: system += "\n" + _addon
+        if _addon: system += "\n" + (_addon if isinstance(_addon, str) else str(_addon))
 
     try:
         from modules.services.agents import (PHYSICAL_SIMULATION_PROMPT,
@@ -4306,13 +5167,7 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
 
     if rag_ctx: system += rag_ctx
 
-    if _needs_fresh_search(msg) and not search_ctx:
-        print("[KnowledgeCutoff] Stale topic detected — auto-triggering search")
-        try:
-            from modules.services.search import tool_search_multi
-            search_ctx = tool_search_multi(msg)
-        except Exception as _se:
-            print(f"[KnowledgeCutoff] search failed: {_se}")
+    # search already ran in _do_search above — skip double search
 
     if search_ctx:
         import datetime
@@ -4344,11 +5199,17 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         if c2 and len(c2) > 2:
             hist_msgs.append({"role": r2, "content": c2[:800]})
 
-    max_t = 16000  # no cap — model decides
+    _LARGE_SCOPE_KEYWORDS = (
+        "distributed", "microservice", "multiworker", "multi-worker",
+        "production system", "full system", "entire system", "end-to-end",
+        "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
+    )
+    _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
+    max_t = 640000 if (skill == "coder" or _is_large_scope) else 16000
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
-        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:2000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above."
+        user_msg = f"[SEARCH RESULTS - USE ONLY THESE]:\n{search_ctx[:6000]}\n\n[USER QUESTION]: {clean_msg}\nAnswer using ONLY the search results above. Do not use training data."
     else:
         user_msg = clean_msg
     msgs  = build_chatml(system, hist_msgs, user_msg)
@@ -4360,3 +5221,145 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         "mcp_tools": _tools_schema,
     }
 # ── END TTFT PATCH ────────────────────────────────────────────────────────────
+
+
+
+from fastapi import FastAPI
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from proactive_daemon import start_proactive_daemon
+        start_proactive_daemon()
+    except Exception as e:
+        print(f"[Startup] Proactive Daemon failed: {e}")
+
+
+
+from agi_emulation_layer import start_agi_emulation, prompt_evolver, synthesize_meta_skill
+
+@app.on_event("startup")
+async def agi_startup():
+    try:
+        from modules.core.http_client import mistral_generate
+        start_agi_emulation(lambda p, m="": mistral_generate(p, max_tokens=200, model="mistral-small-latest"))
+    except Exception as e:
+        print(f"[Startup] AGI Emulation failed: {e}")
+
+
+
+from apo_engine import start_apo_engine
+
+@app.on_event("startup")
+async def apo_startup():
+    try:
+        from modules.core.http_client import mistral_generate
+        start_apo_engine(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 500), model=kwargs.get("model", "mistral-small-latest")))
+    except Exception as e:
+        print(f"[Startup] APO Engine failed: {e}")
+
+
+
+from refactor_daemon import start_refactor_daemon
+
+@app.on_event("startup")
+async def refactor_startup():
+    try:
+        from modules.core.http_client import mistral_generate
+        start_refactor_daemon(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 500), model=kwargs.get("model", "mistral-small-latest")))
+    except Exception as e:
+        print(f"[Startup] Refactor Daemon failed: {e}")
+
+
+
+from task_queue import submit_task, get_task_status, should_use_async_task
+
+@app.post("/async_task")
+async def async_task_endpoint(request: Request):
+    data = await request.json()
+    msg = data.get("message", "")
+    history = data.get("history", [])
+    
+    from skill_router import classify_skill, route_complexity
+    from modules.services.search import extract_search_context
+    from modules.core.http_client import mistral_generate
+    
+    skill = classify_skill(msg)
+    complexity = route_complexity(msg)
+    clean_msg, search_ctx = extract_search_context(msg)
+    
+    task_id = submit_task(msg, history, skill, complexity, search_ctx, lambda p, **kw: mistral_generate(p, **kw))
+    return {"task_id": task_id, "status": "running"}
+
+@app.get("/task_status/{task_id}")
+async def task_status_endpoint(task_id: str):
+    return get_task_status(task_id)
+
+
+
+from self_healing import start_self_healing_daemon
+
+@app.on_event("startup")
+async def self_healing_startup():
+    try:
+        from modules.core.http_client import mistral_generate
+        start_self_healing_daemon(lambda p, **kwargs: mistral_generate(p, max_tokens=kwargs.get("max_tokens", 4000), model=kwargs.get("model", "mistral-small-latest")))
+    except Exception as e:
+        print(f"[Startup] Self-Healing Daemon failed: {e}")
+
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback as _tb
+    from fastapi.responses import JSONResponse
+    tb_str = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+    print(f"[Global Exception Intercept] {exc}")
+    # Log the error to the error learner so the AI remembers it
+    try:
+        # ── POST-GEN: reasoning_engine math extraction ───────────────────
+        try:
+            from reasoning_engine import extract_and_run_math
+            final = extract_and_run_math(final)
+        except Exception: pass
+        # ── POST-GEN: working_memory store ───────────────────────────────
+        try:
+            from working_memory import store as _wm_store
+            _wm_store(msg[:200], final[:400])
+        except Exception: pass
+        from error_learner import record_error
+        record_error("unhandled_exception", "general", tb_str[:500])
+    except: pass
+    return JSONResponse(status_code=500, content={"error": "Internal Server Error", "detail": str(exc)})
+
+
+
+from proactive_daemon import start_proactive_daemon
+from agi_emulation_layer import start_agi_emulation
+from apo_engine import start_apo_engine
+from refactor_daemon import start_refactor_daemon
+from self_healing import start_self_healing_daemon
+
+
+
+@app.get("/subconscious")
+async def subconscious_endpoint():
+    from context_compressor import get_subconscious_context
+    return JSONResponse({"log": get_subconscious_context()})
+
+
+@app.get("/rlef_stats")
+async def rlef_stats_endpoint():
+    from rlef_engine import get_error_frequency
+    return JSONResponse({"error_frequency": get_error_frequency()})
+
+
+@app.post("/update_god_prompt")
+async def update_god_prompt_endpoint(request: Request):
+    from god_prompt import update_god_prompt
+    data = await request.json()
+    rule = data.get("rule", "")
+    if rule:
+        update_god_prompt(rule)
+        return {"status": "success", "message": "Global rule permanently added."}
+    return JSONResponse({"error": "Missing rule"}, status_code=400)

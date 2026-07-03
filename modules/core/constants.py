@@ -30,14 +30,15 @@ _searxng_lock      = Lock()
 def _probe_searxng(timeout: float = 15.0) -> bool:
     """Return True if SearXNG answers a health-check ping."""
     try:
-        import urllib.request as _ur
-        req = _ur.Request(
-            f"{SEARXNG_URL}/search?q=test&format=json&engines=duckduckgo",
-            headers={"User-Agent": "EliteOmni-healthcheck/1.0"}
+        import requests as _req
+        r = _req.get(
+            f"{SEARXNG_URL}/search",
+            params={"q": "test", "format": "json", "engines": "google"},
+            timeout=10
         )
-        with _ur.urlopen(req, timeout=timeout) as r:
-            return r.status == 200
-    except Exception:
+        return r.status_code == 200
+    except Exception as _e:
+        print(f"[SearXNG] probe exception: {type(_e).__name__}: {_e}")
         return False
 
 def _ensure_searxng() -> bool:
@@ -62,7 +63,27 @@ def _ensure_searxng() -> bool:
         _searxng_fail_count += 1
         print(f"[SearXNG] probe failed (streak={_searxng_fail_count}), attempting restart…")
 
-        # Docker restart not available in cloud deployment — skip
+        # Try to restart via Docker (works in WSL + Docker Desktop)
+        for cmd in (
+            ["docker", "restart", "searxng"],
+            ["docker", "compose", "restart", "searxng"],
+            ["docker-compose", "restart", "searxng"],
+        ):
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=20
+                )
+                if result.returncode == 0:
+                    print(f"[SearXNG] restart issued via: {' '.join(cmd)}")
+                    time.sleep(4)   # give it a moment to come up
+                    if _probe_searxng(timeout=6):
+                        _searxng_healthy   = True
+                        _searxng_last_ok   = time.time()
+                        _searxng_fail_count = 0
+                        print("[SearXNG] back online after restart ✓")
+                        return True
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
 
         print("[SearXNG] could not restart — will answer from knowledge cache")
         return False
@@ -128,9 +149,9 @@ CLAUDE_STYLE_DEFAULTS = {
 #   TIER 3 (SuperPod equivalent)     → hard/research, max capability
 # PUE target: 1.1 (Google TPU DC standard) — minimize redundant calls
 INFRA_TIERS = {
-    "tier1": {"models": ["mistral-medium-3.5"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
-    "tier2": {"models": ["mistral-medium-3.5"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
-    "tier3": {"models": ["mistral-medium-3.5"], "complexity": ["hard", "research"], "max_tokens": 8192, "label": "frontier"},
+    "tier1": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["easy"], "max_tokens": 512, "label": "fast-inference"},
+    "tier2": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["medium"], "max_tokens": 2048, "label": "balanced"},
+    "tier3": {"models": ["cerebras/zai-glm-4.7"], "complexity": ["hard", "research"], "max_tokens": 4096, "label": "frontier"},
 }
 
 CODING_SKILLS = {"coder", "code", "coding", "swe", "calculator", "debug", "refactor", "engineer"}
@@ -140,8 +161,9 @@ def get_infra_tier(complexity: str, skill: str = "") -> dict:
     Coding skills → devstral-latest. Everything else → mistral-medium-3.5.
     """
     is_code = skill and skill.lower() in CODING_SKILLS
-    if is_code:
-        return {"models": ["mistral-medium-3.5"], "complexity": [complexity], "max_tokens": 8192, "label": "code-inference"}
+    is_research = skill and skill.lower() in ("researcher", "research")
+    if is_code or is_research:
+        return {"models": ["cerebras/zai-glm-4.7"], "complexity": [complexity], "max_tokens": 4096, "label": "code-inference"}
     if complexity == "easy":   return INFRA_TIERS["tier1"]
     if complexity == "hard":   return INFRA_TIERS["tier3"]
     return INFRA_TIERS["tier2"]
