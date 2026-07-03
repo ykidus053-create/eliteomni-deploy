@@ -1,7 +1,7 @@
 _TOKEN_BUDGET = {
-    "easy":   {"history": 2000,  "system": 2000,  "rag": 1000,  "memory": 500},
-    "medium": {"history": 6000,  "system": 4000,  "rag": 3000,  "memory": 1500},
-    "hard":   {"history": 12000, "system": 8000,  "rag": 6000,  "memory": 3000},
+    "easy":   {"history": 4000,  "system": 3000,  "rag": 2000,  "memory": 1000, "state": 1000},
+    "medium": {"history": 12000, "system": 6000,  "rag": 5000,  "memory": 3000, "state": 2500},
+    "hard":   {"history": 30000, "system": 12000, "rag": 12000, "memory": 6000, "state": 5000},
 }
 
 def estimate_tokens(text: str) -> int:
@@ -9,25 +9,44 @@ def estimate_tokens(text: str) -> int:
 
 def allocate_budget(complexity: str, available_ctx: int = 32000) -> dict:
     base = _TOKEN_BUDGET.get(complexity, _TOKEN_BUDGET["medium"])
-    # Scale based on model context window
     scale = min(1.0, available_ctx / 32000.0)
     return {k: int(v * scale) for k, v in base.items()}
 
 def trim_history_to_budget(history: list, budget_tokens: int) -> list:
-    """Upgraded: Actually trims history to fit token budget, keeping most recent."""
+    """Upgraded: Preserves first user message (original instructions) + most recent."""
     if not history: return []
+
+    first_user = None
+    rest = []
+    for msg in history:
+        if first_user is None and msg.get("role") == "user":
+            first_user = msg
+        else:
+            rest.append(msg)
+
     trimmed = []
     current_tokens = 0
-    for msg in reversed(history):
+
+    if first_user:
+        msg_tokens = estimate_tokens(str(first_user.get("content", "")))
+        if msg_tokens <= budget_tokens * 0.3:
+            trimmed.append(first_user)
+            current_tokens += msg_tokens
+
+    recent = []
+    for msg in reversed(rest):
         msg_tokens = estimate_tokens(str(msg.get("content", "")))
         if current_tokens + msg_tokens > budget_tokens:
             break
-        trimmed.insert(0, msg)
+        recent.insert(0, msg)
         current_tokens += msg_tokens
-    return trimmed
+
+    return trimmed + recent
+
+def trim_history_preserving_instructions(history: list, budget_tokens: int) -> list:
+    return trim_history_to_budget(history, budget_tokens)
 
 def trim_system_to_budget(system: str, budget_tokens: int) -> str:
-    """Upgraded: Keeps the beginning and end of system prompt to preserve instructions."""
     sys_tokens = estimate_tokens(system)
     if sys_tokens <= budget_tokens:
         return system
@@ -53,14 +72,15 @@ def compress_rag_hits(hits: list, budget_tokens: int) -> str:
     return "\n".join(result)
 
 def get_optimal_max_tokens(msg: str, skill: str, complexity: str) -> int:
-    """Upgraded: Force massive token budget for coders to prevent truncation."""
     if skill == "coder":
-        return 4000
+        return 6000
+    elif skill == "agentic":
+        return 5000
     elif complexity == "hard":
-        return 3000
+        return 4000
     elif complexity == "medium":
-        return 2000
-    return 1000
+        return 2500
+    return 1500
 
 allocate_context_budget = allocate_budget
 trim_history_for_ttft = trim_history_to_budget

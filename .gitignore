@@ -27,3 +27,13 @@ eliteomni_app/.env
 venv/
 venv/
 searxng_docker_local/
+.pre_patch_backup_*/
+.pre_integration_backup_*/
+__pycache__/
+*.pyc
+eliteomni.db
+eliteomni_errors.db
+quality.db
+GOD_PROMPT.md
+plan.md
+CLAUDE.md

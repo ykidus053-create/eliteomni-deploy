@@ -80,6 +80,13 @@ def _build_stream_context_fast(msg: str, hist: list) -> dict:
         _sys_prompt_cache[_sys_key] = build_system_prompt(skill, memory, episodic, rlhf_note, ctx_sum or "", complexity)
     system = _sys_prompt_cache[_sys_key]
 
+    # Inject structured task state for instruction persistence across turns
+    try:
+        from agentic_loop import inject_state_into_system
+        system = inject_state_into_system(system)
+    except Exception:
+        pass
+
     if rag_ctx: system += rag_ctx
     if search_ctx:
         import datetime
