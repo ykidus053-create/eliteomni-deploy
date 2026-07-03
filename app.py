@@ -3312,12 +3312,14 @@ async def stream_chat(req: Request):
         _loop = _asyncio.get_event_loop()
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
-            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=2)
+            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=8)
         except _asyncio.TimeoutError:
-            print("[stream_chat] ctx timeout — fast first token with minimal ctx")
+            print("[stream_chat] ctx timeout — fast first token with minimal ctx (history preserved)")
             from modules.core.constants import get_infra_tier
             _infra_t = get_infra_tier("medium")
-            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": [{"role": "user", "content": msg}], "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
+            _fallback_msgs = [{"role": h.get("role","user"), "content": h.get("content","")} for h in (hist or [])[-10:] if h.get("content")]
+            _fallback_msgs.append({"role": "user", "content": msg})
+            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
         yield ""
 
         if False: yield
