@@ -769,7 +769,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         fast_msgs[0]["content"] = fast_msgs[0]["content"][:500]  # cap system prompt at 500 chars
         # 2. Stream chunks directly instead of joining (lower perceived latency)
         chunks = []
-        for chunk in mistral_stream_traced(fast_msgs, max_tokens=400, model=_tier["models"][0], label="fast_tier"):  # 3. max_tokens=400
+        for chunk in mistral_stream_traced(fast_msgs, max_tokens=4000, model=_tier["models"][0], label="fast_tier"):  # raised from 400 — let model decide its own depth
             chunks.append(chunk)
         fast_response = "".join(chunks)
         if fast_response:

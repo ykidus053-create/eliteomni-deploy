@@ -613,12 +613,23 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
     elif complexity == "easy" and effort != "high":
         effort = "low"
 
+    _reasoning_depth_instruction = (
+        "## REASONING DEPTH\n"
+        "Before answering, think in a <think> block. YOU decide how much to think — "
+        "not based on any external label, but based on the actual difficulty of the question. "
+        "For simple factual questions, greetings, or quick lookups: think briefly or skip thinking entirely. "
+        "For coding, multi-step reasoning, comparisons, design questions, or anything requiring "
+        "real analysis: think as long and as thoroughly as genuinely needed — there is no length limit. "
+        "Judge difficulty from the question itself, regardless of how it was routed to you."
+    )
+
     if complexity == "easy" and skill == "general":
         parts = [
             "## ROLE\n" + " ".join(HIERARCHY["system"]) + " " + HIERARCHY["operator"][0],
             f"Today is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after mid-2025.",
             "Tools: SEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) — results appear as [= result].",
             "Be direct. Lead with the answer. No sycophantic openers. Flag uncertainty explicitly.",
+            _reasoning_depth_instruction,
         ]
     else:
         parts = [
@@ -626,6 +637,7 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
             f"## TASK\nSKILL: {SKILLS[skill]['prompt']}\nWORKFLOW: {WORKFLOWS.get(skill, WORKFLOWS['general'])}",
             f"## CONTEXT\nToday is {_today}. You are operating in real-time. ALWAYS use search results for current events. NEVER use training data for news after mid-2025.",
             "## TOOLS\nSEARCH(q) CALC(expr) TIME() EXEC(code) FETCH(url) BROWSER(url) GREP(p). Never say you cannot search. BROWSER(url) fetches live web pages.",
+            _reasoning_depth_instruction,
         ]
 
     if _know_ctx:
