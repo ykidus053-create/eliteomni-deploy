@@ -2787,7 +2787,15 @@ async function send(){
         const tStart=buf.indexOf('\x00THINKING\x00');
         if(tStart===-1) break;
         const tEnd=buf.indexOf('\x00/THINKING\x00', tStart);
-        if(tEnd===-1) break;
+        if(tEnd===-1){
+          // Thinking block still open/streaming — show partial content live, hide from main buf
+          const partial=buf.slice(tStart+11);
+          const box=ensureThinkingBox();
+          const body=box.querySelector('.eo-thinking-body');
+          if(body) body.textContent=partial;
+          buf=buf.slice(0,tStart);
+          break;
+        }
         const thinkContent=buf.slice(tStart+11, tEnd);
         const box=ensureThinkingBox();
         const body=box.querySelector('.eo-thinking-body');
@@ -2799,7 +2807,15 @@ async function send(){
         const tStart=buf.indexOf('\x00THINKING\x00');
         if(tStart===-1) break;
         const tEnd=buf.indexOf('\x00/THINKING\x00', tStart);
-        if(tEnd===-1) break;
+        if(tEnd===-1){
+          // Thinking block still open/streaming — show partial content live, hide from main buf
+          const partial=buf.slice(tStart+11);
+          const box=ensureThinkingBox();
+          const body=box.querySelector('.eo-thinking-body');
+          if(body) body.textContent=partial;
+          buf=buf.slice(0,tStart);
+          break;
+        }
         const thinkContent=buf.slice(tStart+11, tEnd);
         const box=ensureThinkingBox();
         const body=box.querySelector('.eo-thinking-body');

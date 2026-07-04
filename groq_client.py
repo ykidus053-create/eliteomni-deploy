@@ -999,6 +999,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     _cbrs_wait()
     _buf = ""
     _in_think = False
+    _think_marker_open = False
     import time as _t, urllib.error as _ue
     _cbrs_ok = False
     for _attempt in range(4):
@@ -1021,7 +1022,22 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                             if _in_think:
                                 end = _buf.find("</think>")
                                 if end == -1:
+                                    # Stream thinking content live as it arrives
+                                    if _buf:
+                                        if not _think_marker_open:
+                                            yield "\x00THINKING\x00"
+                                            _think_marker_open = True
+                                        yield _buf
                                     _buf = ""; break
+                                _think_chunk = _buf[:end]
+                                if _think_chunk:
+                                    if not _think_marker_open:
+                                        yield "\x00THINKING\x00"
+                                        _think_marker_open = True
+                                    yield _think_chunk
+                                if _think_marker_open:
+                                    yield "\x00/THINKING\x00"
+                                    _think_marker_open = False
                                 _buf = _buf[end + 8:]; _in_think = False
                             else:
                                 start = _buf.find("<think>")
@@ -1033,6 +1049,9 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                                 _buf = _buf[start + 7:]; _in_think = True
                     except Exception:
                         continue
+            if _think_marker_open:
+                yield "\x00/THINKING\x00"
+                _think_marker_open = False
             _cbrs_ok = True
             break
         except _ue.HTTPError as _he:
