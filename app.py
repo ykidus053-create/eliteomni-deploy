@@ -2720,6 +2720,35 @@ async function send(){
     const r=addBub('','assistant',false,true,skillName);
     aiBub=r.bub;
     aiBub.innerHTML='<span class="cursor" id="cur"></span>';
+    let thinkingBox=null, thinkingDone=false;
+    function ensureThinkingBox(){
+      if(thinkingBox) return thinkingBox;
+      thinkingBox=document.createElement('div');
+      thinkingBox.className='eo-thinking';
+      thinkingBox.style.cssText='font-style:italic;opacity:.65;font-size:.88em;padding:8px 0 10px 0;border-left:2px solid var(--bd,#3a3a3a);padding-left:10px;margin-bottom:8px;transition:opacity .3s ease;cursor:pointer;';
+      thinkingBox.title='Click to expand/collapse';
+      const label=document.createElement('div');
+      label.style.cssText='font-weight:600;opacity:.8;margin-bottom:2px;font-style:normal;';
+      label.textContent='\uD83D\uDCAD Thinking';
+      const body=document.createElement('div');
+      body.className='eo-thinking-body';
+      thinkingBox.appendChild(label);
+      thinkingBox.appendChild(body);
+      thinkingBox.addEventListener('click',()=>{
+        body.style.display = body.style.display==='none' ? 'block' : 'none';
+      });
+      if(aiBub && aiBub.parentElement){ aiBub.parentElement.insertBefore(thinkingBox, aiBub); }
+      return thinkingBox;
+    }
+    function collapseThinking(){
+      if(!thinkingBox || thinkingDone) return;
+      thinkingDone=true;
+      thinkingBox.style.opacity='.4';
+      const body=thinkingBox.querySelector('.eo-thinking-body');
+      if(body){ body.style.display='none'; }
+      const label=thinkingBox.querySelector('div');
+      if(label) label.textContent='\uD83D\uDCAD Thought process';
+    }
 
     // ── Claude-style rAF throttled streaming ──────────────────────
     // Tokens accumulate in fullText, rAF renders at 60fps max
@@ -2753,6 +2782,30 @@ async function send(){
       if(done)break;
       const raw=decoder.decode(value,{stream:true});
       buf+=raw;
+      // Strip \x00THINKING\x00...\x00/THINKING\x00 markers into the thinking box
+      while(true){
+        const tStart=buf.indexOf('\x00THINKING\x00');
+        if(tStart===-1) break;
+        const tEnd=buf.indexOf('\x00/THINKING\x00', tStart);
+        if(tEnd===-1) break;
+        const thinkContent=buf.slice(tStart+11, tEnd);
+        const box=ensureThinkingBox();
+        const body=box.querySelector('.eo-thinking-body');
+        if(body) body.textContent=thinkContent;
+        buf=buf.slice(0,tStart)+buf.slice(tEnd+12);
+      }
+      // Strip \x00THINKING\x00...\x00/THINKING\x00 markers into the thinking box
+      while(true){
+        const tStart=buf.indexOf('\x00THINKING\x00');
+        if(tStart===-1) break;
+        const tEnd=buf.indexOf('\x00/THINKING\x00', tStart);
+        if(tEnd===-1) break;
+        const thinkContent=buf.slice(tStart+11, tEnd);
+        const box=ensureThinkingBox();
+        const body=box.querySelector('.eo-thinking-body');
+        if(body) body.textContent=thinkContent;
+        buf=buf.slice(0,tStart)+buf.slice(tEnd+12);
+      }
 
       // Parse metadata from first newline-terminated JSON line
       if(!metaParsed){
@@ -2765,12 +2818,15 @@ async function send(){
             metaParsed=true;
           }catch(e){metaParsed=true;}
           fullText=buf;
+          if(fullText.trim().length>0) collapseThinking();
         } else if(buf.length>200){
           metaParsed=true;
           fullText=buf;
+          if(fullText.trim().length>0) collapseThinking();
         }
       } else {
         fullText=buf;
+        if(fullText.trim().length>0) collapseThinking();
       }
 
       // Schedule one rAF per frame — never blocks, never per-token
@@ -3328,10 +3384,12 @@ async def stream_chat(req: Request):
         _quick_skill_guess = classify_skill(msg) if 'classify_skill' in dir() else "general"
         if len(msg) > 100 or _quick_skill_guess in ("coder", "researcher", "calculator"):
             import random as _rthink0
-            yield _rthink0.choice([
-                "🤔 *Thinking...*\n\n",
-                "🧠 *Working through this...*\n\n",
+            _think_text = _rthink0.choice([
+                "Thinking through the approach...",
+                "Working through this...",
+                "Reasoning through the details...",
             ])
+            yield "\x00THINKING\x00" + _think_text + "\x00/THINKING\x00\n"
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
             ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=10)
