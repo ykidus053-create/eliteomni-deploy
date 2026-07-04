@@ -638,6 +638,7 @@ def _llm_classify(msg: str, history: list = None) -> dict:
         try:
             result = _json.loads(_content)
         except _json.JSONDecodeError:
+            print(f"[LLM classify] RAW CONTENT (first 1500 chars): {_content[:1500]}")
             _last_brace = _content.rfind("{")
             if _last_brace == -1:
                 raise RuntimeError("no JSON object found in reasoning content")
