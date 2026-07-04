@@ -475,7 +475,8 @@ DEBUGGING PROTOCOL (when fixing existing code):
 
 }
 
-def classify_skill(msg: str) -> str:
+def _classify_skill_keywords(msg: str) -> str:
+    """Fallback keyword-based skill classifier — used if LLM classification fails."""
     m = msg.lower()
     if any(t in m for t in SKILLS["safety"]["meta"]): return "safety"
     scores = {n: sum(1 for t in s["meta"] if t in m)
@@ -483,7 +484,8 @@ def classify_skill(msg: str) -> str:
     best = max(scores, key=scores.get) if scores else "general"
     return best if scores.get(best, 0) > 0 else "general"
 
-def route_complexity(msg: str) -> str:
+def _route_complexity_keywords(msg: str) -> str:
+    """Fallback keyword-based complexity classifier — used if LLM classification fails."""
     m = msg.lower()
     _easy = [
         "hi","hey","hello","thanks","okay","yes","no","what time","who is",
@@ -492,7 +494,7 @@ def route_complexity(msg: str) -> str:
         "what comes next","true or false","is a","is an","is the",
         "one word","one number",
         "closest planet","days in","days are","reply with","just say",
-    ]  # removed: hello world, print, def, 2+2 — these route to coder which forces medium
+    ]
     _hard = ["research","explain in detail","compare","analyze","history of",
              "comprehensive","implement","algorithm","step by step","essay",
              "write a report","in depth","deep dive","thoroughly",
@@ -501,7 +503,6 @@ def route_complexity(msg: str) -> str:
              "design a","optimize","recompute","execution","trade-off",
              "questions","q1","q2","q3","1.","2.","3.","4.","5.",
              "distributed","multiworker","multi-worker","parallel tasks"]
-    # Karpathy: keyword must appear WITHOUT complex qualifiers to be easy
     _complex_qualifiers = ["impact", "effect", "analysis", "difference", "compare",
                            "explain", "describe", "relationship", "between", "implications",
                            "strategy", "approach", "design", "architecture", "optimize"]
@@ -513,6 +514,82 @@ def route_complexity(msg: str) -> str:
     if len(msg) >= ADAPTIVE_THINK_THRESHOLD: return "hard"
     if any(t in m for t in _hard) or len(msg) > 200: return "hard"
     return "medium"
+
+_CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "skill": {"type": "string", "enum": ["general", "coder", "researcher", "calculator", "safety"]},
+        "complexity": {"type": "string", "enum": ["easy", "medium", "hard"]},
+    },
+    "required": ["skill", "complexity"]
+}
+
+_classify_cache = {}
+
+def _llm_classify(msg: str) -> dict:
+    """
+    Fast single-call LLM classification of skill + complexity using structured
+    JSON output. Far more reliable than keyword matching since it understands
+    intent/phrasing, not just literal substring hits. Cached per-message.
+    Falls back to keyword heuristics on any failure — never breaks the pipeline.
+    """
+    _cache_key = msg[:200]
+    if _cache_key in _classify_cache:
+        return _classify_cache[_cache_key]
+
+    try:
+        import urllib.request, json as _json, os as _os
+        _key = _os.environ.get("CEREBRAS_API_KEY", "")
+        if not _key:
+            raise RuntimeError("no cerebras key")
+
+        _prompt = (
+            "Classify this user message. skill: 'coder' (code/programming/debugging), "
+            "'researcher' (research/analysis/explanation/comparison/essay-style), "
+            "'calculator' (math/arithmetic/computation), 'safety' (harmful/dangerous requests), "
+            "or 'general' (casual chat, simple factual Q&A, greetings). "
+            "complexity: 'easy' (greeting, simple fact, one-line answer), "
+            "'medium' (needs a paragraph or two, some reasoning), "
+            "'hard' (needs deep multi-step reasoning, detailed code, thorough research, "
+            "comparison, design, or analysis). "
+            f"Message: {msg[:500]}"
+        )
+        payload = _json.dumps({
+            "model": "zai-glm-4.7",
+            "messages": [{"role": "user", "content": _prompt}],
+            "max_completion_tokens": 60,
+            "temperature": 0.0,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "classification", "schema": _CLASSIFY_SCHEMA, "strict": True}
+            }
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.cerebras.ai/v1/chat/completions",
+            data=payload,
+            headers={"Authorization": f"Bearer {_key}", "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=4) as r:
+            data = _json.loads(r.read())
+        result = _json.loads(data["choices"][0]["message"]["content"])
+        if result.get("skill") and result.get("complexity"):
+            _classify_cache[_cache_key] = result
+            if len(_classify_cache) > 500:
+                _classify_cache.clear()
+            return result
+        raise RuntimeError("incomplete classification result")
+    except Exception as _e:
+        print(f"[LLM classify] falling back to keywords: {_e}")
+        return {
+            "skill": _classify_skill_keywords(msg),
+            "complexity": _route_complexity_keywords(msg)
+        }
+
+def classify_skill(msg: str) -> str:
+    return _llm_classify(msg)["skill"]
+
+def route_complexity(msg: str) -> str:
+    return _llm_classify(msg)["complexity"]
 
 def tool_weather(location: str) -> str:
     """Get real-time weather from Open-Meteo (free, no API key needed)."""
