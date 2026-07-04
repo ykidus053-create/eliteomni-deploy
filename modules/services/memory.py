@@ -599,7 +599,7 @@ def _llm_classify(msg: str, history: list = None) -> dict:
         payload = _json.dumps({
             "model": "zai-glm-4.7",
             "messages": [{"role": "user", "content": _prompt}],
-            "max_completion_tokens": 80,
+            "max_completion_tokens": 500,
             "temperature": 0.0,
             "response_format": {
                 "type": "json_schema",
@@ -625,12 +625,24 @@ def _llm_classify(msg: str, history: list = None) -> dict:
             raise RuntimeError("no choices in response")
 
         _message = _choices[0].get("message", {})
-        _content = _message.get("content", "")
+        _content = _message.get("content", "") or _message.get("reasoning", "")
         if not _content:
             print(f"[LLM classify] empty content, full message: {str(_message)[:300]}")
             raise RuntimeError("empty content in response")
 
-        result = _json.loads(_content)
+        # GLM-4.7 sometimes embeds the JSON at the end of a reasoning trace
+        # rather than in a clean content field — extract the last JSON object.
+        try:
+            result = _json.loads(_content)
+        except _json.JSONDecodeError:
+            _last_brace = _content.rfind("{")
+            if _last_brace == -1:
+                raise RuntimeError("no JSON object found in reasoning content")
+            _candidate = _content[_last_brace:]
+            _last_close = _candidate.rfind("}")
+            if _last_close == -1:
+                raise RuntimeError("no closing brace found in reasoning content")
+            result = _json.loads(_candidate[:_last_close+1])
 
         if not (result.get("skill") and result.get("complexity")):
             raise RuntimeError("incomplete classification result")
