@@ -522,7 +522,8 @@ _CLASSIFY_SCHEMA = {
         "complexity": {"type": "string", "enum": ["easy", "medium", "hard"]},
         "confidence": {"type": "number"},
     },
-    "required": ["skill", "complexity", "confidence"]
+    "required": ["skill", "complexity", "confidence"],
+    "additionalProperties": False
 }
 
 _CLASSIFY_FEWSHOT = """Examples:
