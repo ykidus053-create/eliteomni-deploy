@@ -2734,8 +2734,12 @@ async function send(){
       body.className='eo-thinking-body';
       thinkingBox.appendChild(label);
       thinkingBox.appendChild(body);
+      let _userExpanded=false;
       thinkingBox.addEventListener('click',()=>{
-        body.style.display = body.style.display==='none' ? 'block' : 'none';
+        const isHidden = body.style.display==='none';
+        body.style.display = isHidden ? 'block' : 'none';
+        _userExpanded = isHidden;
+        thinkingBox._userExpanded = _userExpanded;
       });
       if(aiBub && aiBub.parentElement){ aiBub.parentElement.insertBefore(thinkingBox, aiBub); }
       return thinkingBox;
@@ -2744,10 +2748,13 @@ async function send(){
       if(!thinkingBox || thinkingDone) return;
       thinkingDone=true;
       thinkingBox.style.opacity='.4';
-      const body=thinkingBox.querySelector('.eo-thinking-body');
-      if(body){ body.style.display='none'; }
       const label=thinkingBox.querySelector('div');
-      if(label) label.textContent='\uD83D\uDCAD Thought process';
+      if(label) label.textContent='\uD83D\uDCAD Thought process (click to expand)';
+      // Only auto-hide the body if the user hasn't manually expanded it
+      if(!thinkingBox._userExpanded){
+        const body=thinkingBox.querySelector('.eo-thinking-body');
+        if(body){ body.style.display='none'; }
+      }
     }
 
     // ── Claude-style rAF throttled streaming ──────────────────────
