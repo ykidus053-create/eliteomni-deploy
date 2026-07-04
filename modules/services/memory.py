@@ -520,20 +520,56 @@ _CLASSIFY_SCHEMA = {
     "properties": {
         "skill": {"type": "string", "enum": ["general", "coder", "researcher", "calculator", "safety"]},
         "complexity": {"type": "string", "enum": ["easy", "medium", "hard"]},
+        "confidence": {"type": "number"},
     },
-    "required": ["skill", "complexity"]
+    "required": ["skill", "complexity", "confidence"]
 }
+
+_CLASSIFY_FEWSHOT = """Examples:
+
+Message: "hey"
+-> {"skill": "general", "complexity": "easy", "confidence": 0.98}
+
+Message: "what's the capital of Japan"
+-> {"skill": "general", "complexity": "easy", "confidence": 0.95}
+
+Message: "write a function to reverse a linked list in python"
+-> {"skill": "coder", "complexity": "medium", "confidence": 0.9}
+
+Message: "design a distributed rate limiter that handles 100k req/s, discuss tradeoffs between token bucket and sliding window, and implement it in python"
+-> {"skill": "coder", "complexity": "hard", "confidence": 0.95}
+
+Message: "compare microservices vs monolith architecture for a 10-person startup"
+-> {"skill": "researcher", "complexity": "hard", "confidence": 0.9}
+
+Message: "what's 15% of 340"
+-> {"skill": "calculator", "complexity": "easy", "confidence": 0.97}
+
+Message: "yes"
+(context: previous assistant message asked "should I use microservices or a monolith for your startup, considering your team size and scaling needs?")
+-> {"skill": "researcher", "complexity": "medium", "confidence": 0.6}
+"""
 
 _classify_cache = {}
 
-def _llm_classify(msg: str) -> dict:
+def _llm_classify(msg: str, history: list = None) -> dict:
     """
     Fast single-call LLM classification of skill + complexity using structured
-    JSON output. Far more reliable than keyword matching since it understands
-    intent/phrasing, not just literal substring hits. Cached per-message.
-    Falls back to keyword heuristics on any failure — never breaks the pipeline.
+    JSON output, few-shot examples, and a confidence score. Far more reliable
+    than keyword matching since it understands intent/phrasing and context,
+    not just literal substring hits on the isolated message.
+
+    Low-confidence results default to a conservative ("medium" or higher)
+    complexity rather than risking under-serving a hard question.
+    Falls back to keyword heuristics entirely on any failure.
     """
-    _cache_key = msg[:200]
+    _recent_ctx = ""
+    if history:
+        _recent_ctx = " ".join(
+            str(h.get("content", ""))[:150] for h in history[-2:] if h.get("content")
+        )
+
+    _cache_key = (msg[:200] + "||" + _recent_ctx[:200])
     if _cache_key in _classify_cache:
         return _classify_cache[_cache_key]
 
@@ -543,6 +579,7 @@ def _llm_classify(msg: str) -> dict:
         if not _key:
             raise RuntimeError("no cerebras key")
 
+        _context_line = f"\nRecent conversation context: {_recent_ctx}" if _recent_ctx else ""
         _prompt = (
             "Classify this user message. skill: 'coder' (code/programming/debugging), "
             "'researcher' (research/analysis/explanation/comparison/essay-style), "
@@ -552,12 +589,16 @@ def _llm_classify(msg: str) -> dict:
             "'medium' (needs a paragraph or two, some reasoning), "
             "'hard' (needs deep multi-step reasoning, detailed code, thorough research, "
             "comparison, design, or analysis). "
-            f"Message: {msg[:500]}"
+            "Consider conversation context if given — a short reply like 'yes' or 'do it' "
+            "inherits the complexity of what it's responding to, not its own length. "
+            "Also output a confidence score 0-1 for your classification.\n\n"
+            f"{_CLASSIFY_FEWSHOT}\n"
+            f"Now classify:{_context_line}\nMessage: {msg[:500]}"
         )
         payload = _json.dumps({
             "model": "zai-glm-4.7",
             "messages": [{"role": "user", "content": _prompt}],
-            "max_completion_tokens": 60,
+            "max_completion_tokens": 80,
             "temperature": 0.0,
             "response_format": {
                 "type": "json_schema",
@@ -572,24 +613,34 @@ def _llm_classify(msg: str) -> dict:
         with urllib.request.urlopen(req, timeout=4) as r:
             data = _json.loads(r.read())
         result = _json.loads(data["choices"][0]["message"]["content"])
-        if result.get("skill") and result.get("complexity"):
-            _classify_cache[_cache_key] = result
-            if len(_classify_cache) > 500:
-                _classify_cache.clear()
-            return result
-        raise RuntimeError("incomplete classification result")
+
+        if not (result.get("skill") and result.get("complexity")):
+            raise RuntimeError("incomplete classification result")
+
+        # Conservative fallback: low confidence + "easy" gets bumped to "medium"
+        # to avoid under-serving a question that might actually need real reasoning.
+        confidence = result.get("confidence", 1.0)
+        if confidence < 0.65 and result["complexity"] == "easy":
+            print(f"[LLM classify] low confidence ({confidence}) on 'easy' — bumping to 'medium'")
+            result["complexity"] = "medium"
+
+        _classify_cache[_cache_key] = result
+        if len(_classify_cache) > 500:
+            _classify_cache.clear()
+        return result
     except Exception as _e:
         print(f"[LLM classify] falling back to keywords: {_e}")
         return {
             "skill": _classify_skill_keywords(msg),
-            "complexity": _route_complexity_keywords(msg)
+            "complexity": _route_complexity_keywords(msg),
+            "confidence": 0.5,
         }
 
-def classify_skill(msg: str) -> str:
-    return _llm_classify(msg)["skill"]
+def classify_skill(msg: str, history: list = None) -> str:
+    return _llm_classify(msg, history)["skill"]
 
-def route_complexity(msg: str) -> str:
-    return _llm_classify(msg)["complexity"]
+def route_complexity(msg: str, history: list = None) -> str:
+    return _llm_classify(msg, history)["complexity"]
 
 def tool_weather(location: str) -> str:
     """Get real-time weather from Open-Meteo (free, no API key needed)."""
