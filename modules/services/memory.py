@@ -599,7 +599,7 @@ def _llm_classify(msg: str, history: list = None) -> dict:
         payload = _json.dumps({
             "model": "zai-glm-4.7",
             "messages": [{"role": "user", "content": _prompt}],
-            "max_completion_tokens": 500,
+            "max_completion_tokens": 1500,
             "temperature": 0.0,
             "response_format": {
                 "type": "json_schema",
@@ -625,10 +625,13 @@ def _llm_classify(msg: str, history: list = None) -> dict:
             raise RuntimeError("no choices in response")
 
         _message = _choices[0].get("message", {})
+        _finish_reason = _choices[0].get("finish_reason", "")
         _content = _message.get("content", "") or _message.get("reasoning", "")
         if not _content:
-            print(f"[LLM classify] empty content, full message: {str(_message)[:300]}")
+            print(f"[LLM classify] empty content. finish_reason={_finish_reason} full message keys={list(_message.keys())} message={str(_message)[:800]}")
             raise RuntimeError("empty content in response")
+        if _finish_reason == "length":
+            print(f"[LLM classify] response was truncated (finish_reason=length) — content len={len(_content)}, last 200 chars: {_content[-200:]}")
 
         # GLM-4.7 sometimes embeds the JSON at the end of a reasoning trace
         # rather than in a clean content field — extract the last JSON object.
