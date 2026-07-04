@@ -616,8 +616,21 @@ def _llm_classify(msg: str, history: list = None) -> dict:
             }
         )
         with urllib.request.urlopen(req, timeout=4) as r:
-            data = _json.loads(r.read())
-        result = _json.loads(data["choices"][0]["message"]["content"])
+            _raw_body = r.read()
+            data = _json.loads(_raw_body)
+
+        _choices = data.get("choices", [])
+        if not _choices:
+            print(f"[LLM classify] no choices in response: {str(data)[:300]}")
+            raise RuntimeError("no choices in response")
+
+        _message = _choices[0].get("message", {})
+        _content = _message.get("content", "")
+        if not _content:
+            print(f"[LLM classify] empty content, full message: {str(_message)[:300]}")
+            raise RuntimeError("empty content in response")
+
+        result = _json.loads(_content)
 
         if not (result.get("skill") and result.get("complexity")):
             raise RuntimeError("incomplete classification result")
