@@ -767,6 +767,13 @@ def pipeline_sync(msg: str, history: list) -> dict:
         fast_msgs = [m for m in prompt if m.get("role") == "system"][:1]
         fast_msgs += [m for m in prompt if m.get("role") != "system"][-4:]
         fast_msgs[0]["content"] = fast_msgs[0]["content"][:500]  # cap system prompt at 500 chars
+        # Guarantee the reasoning-depth instruction survives truncation — appended fresh, not
+        # relying on it surviving inside the 500-char cap of the full system prompt.
+        fast_msgs[0]["content"] += (
+            "\n\nBefore answering, think in a <think> block if the question needs real reasoning "
+            "(coding, multi-step logic, design, comparison). Skip thinking for simple/trivial questions. "
+            "You decide the depth based on actual difficulty."
+        )
         # 2. Stream chunks directly instead of joining (lower perceived latency)
         chunks = []
         for chunk in mistral_stream_traced(fast_msgs, max_tokens=4000, model=_tier["models"][0], label="fast_tier"):  # raised from 400 — let model decide its own depth
