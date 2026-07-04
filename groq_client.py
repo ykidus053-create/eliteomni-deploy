@@ -356,52 +356,11 @@ def _verification_gate(msgs: list, response: str, generate_fn) -> str:
 
 def _dynamic_max_tokens(msgs: list) -> int:
     """
-    Decides token budget dynamically based on request complexity.
-    Never cuts off mid-response again.
+    Claude-style: one fixed, generous token budget for every request instead
+    of a heuristic guess based on message content. Removes the main source
+    of truncation-driven continuation round-trips.
     """
-    user_msg = next((m.get("content","") for m in reversed(msgs) if m.get("role")=="user"), "")
-    msg_len = len(user_msg)
-    m = user_msg.lower()
-
-    # ── Signal detection ─────────────────────────────────────────────────
-    is_code        = any(k in m for k in ["code", "function", "script", "implement", "write a program", "class ", "def ", "algorithm"])
-    is_long_form   = any(k in m for k in ["essay", "report", "explain in detail", "comprehensive", "full", "complete guide", "step by step", "walkthrough"])
-    is_list        = any(k in m for k in ["list", "enumerate", "all the", "every ", "compare", "pros and cons", "table"])
-    is_multi_part  = m.count("?") >= 2 or any(k in m for k in ["and also", "also tell me", "additionally", "furthermore", "multiple", "several"])
-    is_creative    = any(k in m for k in ["story", "poem", "write a ", "narrative", "dialogue", "screenplay", "chapter"])
-    is_short       = any(k in m for k in ["briefly", "in one sentence", "tldr", "quick", "just tell me", "yes or no", "one word"])
-    is_math        = any(k in m for k in ["calculate", "solve", "equation", "proof", "derive", "integral", "matrix"])
-    is_analysis    = any(k in m for k in ["analyze", "analyse", "breakdown", "deep dive", "thoroughly", "in depth", "architecture"])
-
-    # ── Base allocation ──────────────────────────────────────────────────
-    if is_short:
-        base = 256
-    elif msg_len < 80:
-        base = 1024
-    elif msg_len < 200:
-        base = 2048
-    else:
-        base = 3000
-
-    # ── Multipliers ──────────────────────────────────────────────────────
-    multiplier = 1.0
-    if is_code:        multiplier += 1.2
-    if is_long_form:   multiplier += 1.5
-    if is_list:        multiplier += 0.4
-    if is_multi_part:  multiplier += 0.7
-    if is_creative:    multiplier += 0.7
-    if is_math:        multiplier += 0.4
-    if is_analysis:    multiplier += 0.8
-
-    # ── Conversation depth bonus ─────────────────────────────────────────
-    non_system = [m for m in msgs if m.get("role") != "system"]
-    if len(non_system) > 6:
-        multiplier += 0.3  # deep conversation = longer context needed
-
-    budget = int(base * multiplier)
-
-    # ── Hard clamp: never below 512, never above 15500 (GLM-4.7 ceiling minus safety margin) ──
-    return max(512, min(budget, 15500))
+    return 15000
 
 
 def _groq_thinking_effort(complexity: str) -> str:
