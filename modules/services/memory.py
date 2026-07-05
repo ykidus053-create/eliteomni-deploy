@@ -47,10 +47,34 @@ def _load_rag_from_db():
     except Exception as e:
         print(f"[RAG] Load error: {e}")
 
+def _migrate_memory_table(con):
+    """
+    Fix a stale 'memory' table that may have been created by older code with
+    a different schema (missing the 'text' column). CREATE TABLE IF NOT EXISTS
+    is a no-op once any table with that name exists, so a wrong old schema
+    persists forever otherwise. This checks actual columns and migrates.
+    """
+    try:
+        cols = [row[1] for row in con.execute("PRAGMA table_info(memory)").fetchall()]
+        if cols and "text" not in cols:
+            print(f"[MemoryMigration] 'memory' table missing 'text' column (has: {cols}) — migrating")
+            con.execute("ALTER TABLE memory RENAME TO memory_old_broken")
+            con.execute("""CREATE TABLE memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                source TEXT DEFAULT 'conversation',
+                ts REAL NOT NULL
+            )""")
+            con.commit()
+            print("[MemoryMigration] migrated successfully — old data preserved in memory_old_broken")
+    except Exception as _me:
+        print(f"[MemoryMigration] check failed (likely table doesn't exist yet, fine): {_me}")
+
 def _db_init():
     con = _sqlite3.connect(_DB_PATH, check_same_thread=False)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
+    _migrate_memory_table(con)
     con.execute("""CREATE TABLE IF NOT EXISTS memory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         text TEXT NOT NULL,

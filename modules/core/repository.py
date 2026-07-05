@@ -9,6 +9,25 @@ _DB_PATH  = os.path.expanduser("~/eliteomni_memory.db")
 _FT_PATH  = os.path.expanduser("~/eliteomni_finetune.db")
 _local    = threading.local()
 
+def _migrate_memory_table_repo(conn: sqlite3.Connection):
+    """Same migration as modules/services/memory.py — both share the same
+    physical DB file, so this guards against whichever one connects first."""
+    try:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(memory)").fetchall()]
+        if cols and "text" not in cols:
+            print(f"[MemoryMigration-repo] 'memory' table missing 'text' column (has: {cols}) — migrating")
+            conn.execute("ALTER TABLE memory RENAME TO memory_old_broken")
+            conn.execute("""CREATE TABLE memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                source TEXT DEFAULT 'conversation',
+                ts REAL NOT NULL
+            )""")
+            conn.commit()
+            print("[MemoryMigration-repo] migrated successfully")
+    except Exception as _me:
+        pass  # table likely doesn't exist yet — fine, will be created normally
+
 def _conn(path: str) -> sqlite3.Connection:
     """Return a thread-local connection; create once per thread."""
     attr = f"_conn_{hash(path) & 0xFFFFFF}"
@@ -18,6 +37,15 @@ def _conn(path: str) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-8000")   # 8 MB page cache
+        if path.endswith("eliteomni_memory.db"):
+            _migrate_memory_table_repo(conn)
+            conn.execute("""CREATE TABLE IF NOT EXISTS memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                source TEXT DEFAULT 'conversation',
+                ts REAL NOT NULL
+            )""")
+            conn.commit()
         setattr(_local, attr, conn)
     return conn
 
