@@ -4858,11 +4858,20 @@ async def speech_to_text(request: Request):
 
 
 if __name__ == "__main__":
-    import uvicorn, os
-    from modules.services.mcp import mcp_discover_all
-    mcp_discover_all()
+    import uvicorn, os, sys, traceback
+    try:
+        from modules.services.mcp import mcp_discover_all
+        mcp_discover_all()
+    except Exception as _e:
+        print(f"[STARTUP] mcp_discover_all failed (non-fatal): {_e}", flush=True)
     _port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=_port)
+    print(f"[STARTUP] About to start uvicorn on port {_port}", flush=True)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=_port)
+    except Exception as _e:
+        print(f"[STARTUP] FATAL: uvicorn.run raised: {_e}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)
 
 # ── NIGHTLY SELF-OPTIMIZATION ─────────────────────────────────────────────────
 import threading as _nth, time as _ntt
