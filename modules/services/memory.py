@@ -475,14 +475,107 @@ DEBUGGING PROTOCOL (when fixing existing code):
 
 }
 
+_CODER_KEYWORDS_STRONG = [
+    # explicit build/implement verbs
+    "build a", "design and implement", "implement a", "write a program", "write a function",
+    "write a script", "create a class", "create an api", "create a service",
+    # systems / distributed computing
+    "distributed", "consensus", "raft", "paxos", "replication", "sharding",
+    "partitioning", "consistent hashing", "load balanc", "microservice",
+    "rate limiter", "message queue", "pub/sub", "event driven", "circuit breaker",
+    "cache invalidation", "eventual consistency", "cap theorem", "quorum",
+    "leader election", "vector clock", "gossip protocol", "two-phase commit",
+    # data structures / algorithms
+    "linked list", "binary search", "binary tree", "hash table", "hash map",
+    "graph traversal", "dijkstra", "dynamic programming", "big o", "time complexity",
+    "space complexity", "sorting algorithm", "recursion", "backtracking",
+    "trie", "heap", "priority queue", "bloom filter", "lru", "lfu", "ttl expiration",
+    # databases / storage
+    "key-value store", "database schema", "sql query", "index optimization",
+    "transaction isolation", "acid properties", "b-tree", "lsm tree", "wal",
+    # languages / frameworks
+    "python", "javascript", "typescript", "java ", "golang", "rust ", "c++",
+    "react", "vue", "angular", "django", "flask", "fastapi", "express.js",
+    "node.js", "spring boot", "docker", "kubernetes", "terraform", "ci/cd",
+    # code artifacts
+    "function", "class ", "method", "endpoint", "middleware", "decorator",
+    "async", "await", "closure", "generator", "iterator", "type hint",
+    "unit test", "integration test", "mock", "dependency injection",
+    "code", "debug", "algorithm", "refactor", "compile", "syntax error",
+    "stack trace", "exception handling", "api", "sdk", "cli tool",
+    "regex", "json parsing", "serialization", "deserialization",
+]
+
+_RESEARCHER_KEYWORDS_STRONG = [
+    "research", "explain", "analyze", "analyse", "compare", "history of",
+    "comprehensive", "essay", "how does", "why does", "pros and cons",
+    "summarize", "guide", "tutorial", "step by step", "what is", "tell me about",
+    "describe", "overview", "breakdown", "deep dive", "walk me through",
+    "background", "context", "implications", "consequences", "causes", "effects",
+    "trade-off", "tradeoffs", "advantages and disadvantages", "differences between",
+    "which is better", "should i use", "when to use", "best practices for",
+]
+
+_CALCULATOR_KEYWORDS_STRONG = [
+    "calculate", "compute", "sqrt", "equation", "formula", "percent", "%",
+    "times", "plus", "minus", "divided", "equals", "how much", "solve", "convert",
+    "multiply", "square root", "derivative", "integral", "logarithm",
+]
+
+import re as _clf_re
+
+_CODER_PATTERNS = [
+    r"\bbuild (a|an|the)\b.{0,40}\b(store|service|system|api|app|server|engine|pipeline|queue|cache)\b",
+    r"\bdesign (a|an|the)\b.{0,40}\b(system|architecture|api|service|schema|database)\b",
+    r"\bimplement (a|an|the)\b",
+    r"\bwrite (a|an|the)?\s*(function|class|script|program|algorithm|method)\b",
+    r"\bhandles?\s+node\s+failures?\b",
+    r"\bmultiple\s+nodes?\b",
+    r"\b(get|set|delete)\s*,\s*(get|set|delete)\b",  # "GET, SET, DELETE" style API listing
+    r"\bfix\s+(this|the)\s+(bug|error|code|function)\b",
+    r"\bwhy\s+(is|does)\s+this\s+(code|function|error)\b",
+]
+
 def _classify_skill_keywords(msg: str) -> str:
-    """Fallback keyword-based skill classifier — used if LLM classification fails."""
+    """
+    Strengthened fallback keyword-based skill classifier — used if LLM
+    classification fails or times out. Combines weighted keyword scoring
+    across a broad technical vocabulary with regex phrase-pattern detection
+    for common ways technical requests are phrased (e.g. "design a system
+    that handles node failures"), so complex requests route correctly even
+    without the LLM classifier and even when they don't contain single
+    trigger words like "code" or "implement".
+    """
     m = msg.lower()
-    if any(t in m for t in SKILLS["safety"]["meta"]): return "safety"
-    scores = {n: sum(1 for t in s["meta"] if t in m)
-              for n, s in SKILLS.items() if n not in ("safety","general")}
-    best = max(scores, key=scores.get) if scores else "general"
-    return best if scores.get(best, 0) > 0 else "general"
+    if any(t in m for t in SKILLS["safety"]["meta"]):
+        return "safety"
+
+    coder_score = sum(1 for t in _CODER_KEYWORDS_STRONG if t in m)
+    researcher_score = sum(1 for t in _RESEARCHER_KEYWORDS_STRONG if t in m)
+    calculator_score = sum(1 for t in _CALCULATOR_KEYWORDS_STRONG if t in m)
+
+    # Regex phrase patterns — catch technical requests that don't hit single keywords
+    for pattern in _CODER_PATTERNS:
+        if _clf_re.search(pattern, m):
+            coder_score += 3  # weighted higher — a full phrase match is a stronger signal
+
+    # Structural signals: bullet-list-style technical specs (colons, multiple
+    # short clauses) strongly suggest a systems/coding design request
+    _bullet_like = m.count(":") >= 1 and (m.count(",") + m.count(";")) >= 3
+    if _bullet_like and any(w in m for w in ["support", "handle", "use", "include", "node", "server"]):
+        coder_score += 2
+
+    # Original SKILLS meta lists still contribute, for backward compatibility
+    for name in ("coder", "researcher", "calculator"):
+        if name in SKILLS:
+            extra = sum(1 for t in SKILLS[name]["meta"] if t in m)
+            if name == "coder": coder_score += extra
+            elif name == "researcher": researcher_score += extra
+            elif name == "calculator": calculator_score += extra
+
+    scores = {"coder": coder_score, "researcher": researcher_score, "calculator": calculator_score}
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "general"
 
 def _route_complexity_keywords(msg: str) -> str:
     """Fallback keyword-based complexity classifier — used if LLM classification fails."""
@@ -513,6 +606,16 @@ def _route_complexity_keywords(msg: str) -> str:
     if _is_truly_easy: return "easy"
     if len(msg) >= ADAPTIVE_THINK_THRESHOLD: return "hard"
     if any(t in m for t in _hard) or len(msg) > 200: return "hard"
+
+    # Multi-requirement technical specs (bullet-like lists of requirements)
+    # are inherently hard even if no single "hard" keyword matched —
+    # e.g. "Supports GET, SET, DELETE / Works across nodes / Handles failures..."
+    _requirement_count = m.count(":") + m.count(";") + sum(1 for w in
+        ["support", "handle", "use", "include", "bonus", "must", "should", "requires"]
+        if w in m)
+    if _requirement_count >= 3 and len(msg) > 150:
+        return "hard"
+
     return "medium"
 
 _CLASSIFY_SCHEMA = {
