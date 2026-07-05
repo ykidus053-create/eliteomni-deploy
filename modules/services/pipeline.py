@@ -689,6 +689,14 @@ def build_system_prompt(skill: str, memory: list, episodic: list,
         from modules.services.prompts import ANTI_SYCOPHANCY_PROMPT
         parts.append(ANTI_SYCOPHANCY_PROMPT.strip())
     except Exception as _e: print(f"[pipeline] suppressed: {_e}")
+
+    try:
+        from modules.services.prompts import MEMORY_APPLICATION_PROMPT, SAFETY_REFUSAL_PROMPT, HONESTY_AND_UNCERTAINTY_PROMPT
+        parts.append(MEMORY_APPLICATION_PROMPT.strip())
+        parts.append(SAFETY_REFUSAL_PROMPT.strip())
+        parts.append(HONESTY_AND_UNCERTAINTY_PROMPT.strip())
+    except Exception as _e:
+        print(f"[pipeline] supplementary prompt blocks suppressed: {_e}")
     if complexity == "hard":
         parts.append(
             "## RIGOR REQUIREMENT (hard complexity)\n"
