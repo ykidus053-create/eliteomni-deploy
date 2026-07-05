@@ -373,6 +373,69 @@ def gpt5_math(problem: str, complexity: str = "hard") -> str:
     )
 
 
+
+# ── FILE SYSTEM TOOLS ─────────────────────────────────────────────────────────
+
+def tool_read_file(path: str, max_chars: int = 8000) -> str:
+    """Read a file from disk and return its contents."""
+    import os
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.exists(path):
+            return f"[FILE ERROR] File not found: {path}"
+        if os.path.getsize(path) == 0:
+            return f"[FILE ERROR] File is empty: {path}"
+        with open(path, "r", errors="replace") as f:
+            content = f.read(max_chars)
+        truncated = " [TRUNCATED]" if len(content) == max_chars else ""
+        return content + truncated
+    except Exception as e:
+        return f"[FILE ERROR] {e}"
+
+def tool_write_file(path: str, content: str) -> str:
+    """Write content to a file, creating directories as needed."""
+    import os
+    try:
+        path = os.path.expanduser(path)
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+        return f"[FILE OK] Written {len(content)} chars to {path}"
+    except Exception as e:
+        return f"[FILE ERROR] {e}"
+
+def tool_list_files(directory: str = ".", pattern: str = "*") -> str:
+    """List files in a directory matching an optional glob pattern."""
+    import os, glob
+    try:
+        directory = os.path.expanduser(directory)
+        matches = glob.glob(os.path.join(directory, "**", pattern), recursive=True)
+        matches = [m for m in matches if os.path.isfile(m)][:50]
+        if not matches:
+            return f"[FILE] No files found in {directory} matching {pattern}"
+        return "\n".join(matches)
+    except Exception as e:
+        return f"[FILE ERROR] {e}"
+
+def tool_patch_file(path: str, old: str, new: str) -> str:
+    """Replace an exact string in a file — safe surgical edit."""
+    import os
+    try:
+        path = os.path.expanduser(path)
+        with open(path, "r") as f:
+            content = f.read()
+        if old not in content:
+            return f"[PATCH ERROR] String not found in {path}"
+        count = content.count(old)
+        if count > 1:
+            return f"[PATCH ERROR] String appears {count} times — must be unique"
+        content = content.replace(old, new, 1)
+        with open(path, "w") as f:
+            f.write(content)
+        return f"[PATCH OK] Applied to {path}"
+    except Exception as e:
+        return f"[PATCH ERROR] {e}"
+
 def tool_arxiv(query: str, max_results: int = 3) -> str:
     """
     Search arXiv for academic papers. Free, no API key needed.
