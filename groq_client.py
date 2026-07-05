@@ -360,7 +360,7 @@ def _dynamic_max_tokens(msgs: list) -> int:
     of a heuristic guess based on message content. Removes the main source
     of truncation-driven continuation round-trips.
     """
-    return 15000
+    return 16000
 
 
 def _groq_thinking_effort(complexity: str) -> str:
