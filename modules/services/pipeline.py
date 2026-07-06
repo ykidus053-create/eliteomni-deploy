@@ -428,28 +428,26 @@ def verification_pipeline(text: str, msg: str, skill: str, complexity: str = 'me
                          f"Consider re-asking with more detail.")
         except Exception as _e: print(f"[pipeline] suppressed: {_e}")
     if skill == "coder":
-        from modules.services.tools import _extract_code_blocks, tool_lint, tool_exec
+        from modules.services.tools import _extract_code_blocks, tool_lint_multi, tool_exec_multi, _detect_language
         blocks = _extract_code_blocks(text)
         lint_issues = []
         exec_results = []
-
         for i, block in enumerate(blocks[:4]):
-            # Step 1: syntax check
-            lint = tool_lint(block)
-            if lint != "OK":
-                lint_issues.append(f"Block {i+1} syntax: {lint}")
+            lang = _detect_language(block)
+            lint = tool_lint_multi(block, language=lang)
+            if lint != "OK" and not lint.startswith("[LINT SKIPPED"):
+                lint_issues.append(f"Block {i+1} ({lang}) syntax: {lint}")
                 continue
-
-            # Step 2: actually run it — catch runtime errors
-            # Only execute blocks that look self-contained (have if __name__ or test_ functions)
-            has_main = "if __name__" in block or "def test_" in block
-            has_assert = "assert " in block
+            has_main = "if __name__" in block or "def test_" in block or "func main" in block or "fn main" in block
+            has_assert = "assert " in block or "assert!" in block
             if has_main or has_assert:
-                result = tool_exec(block, timeout=8)
-                if result.startswith("[LINT") or result.startswith("[BLOCKED") or "Error" in result or "Traceback" in result:
-                    exec_results.append(f"Block {i+1} FAILED: {result[:200]}")
+                result = tool_exec_multi(block, language=lang, timeout=15)
+                if result.startswith("[EXEC SKIPPED"):
+                    continue
+                if result.startswith("[LINT") or result.startswith("[BLOCKED") or result.startswith("[COMPILE") or "Error" in result or "Traceback" in result:
+                    exec_results.append(f"Block {i+1} ({lang}) FAILED: {result[:200]}")
                 else:
-                    exec_results.append(f"Block {i+1} PASSED: {result[:100] or 'no output'}")
+                    exec_results.append(f"Block {i+1} ({lang}) PASSED: {result[:100] or 'no output'}")
 
         if lint_issues:
             text += "\n\n> ⚠️ **Syntax errors:** " + " | ".join(lint_issues)
