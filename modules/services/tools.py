@@ -466,6 +466,78 @@ def tool_verify_imports(code: str, language: str = None) -> str:
         return "⚠️ UNVERIFIED PACKAGES (possible hallucination): " + " | ".join(flagged)
     return f"OK — verified {len(packages)} package(s) exist in registry"
 
+
+# ── AUTO TEST GENERATION & VERIFICATION ───────────────────────────────────────
+
+def tool_generate_and_run_test(code: str, task_description: str, language: str = None, timeout: int = 15) -> dict:
+    """Generate a test for the given code, run it, and report pass/fail.
+    This closes the loop between 'code that runs' and 'code that's correct'."""
+    lang = language or _detect_language(code)
+    result = {"test_code": "", "test_output": "", "passed": False, "skipped": False}
+
+    try:
+        from modules.core.http_client import groq_generate
+        from modules.services.pipeline import build_chatml
+    except ImportError as ie:
+        result["test_output"] = f"[SKIPPED] import error: {ie}"
+        result["skipped"] = True
+        return result
+
+    lang_test_frameworks = {
+        "python": "pytest-style functions (def test_xxx) using plain assert statements",
+        "javascript": "Node's built-in assert module, plain function calls",
+        "typescript": "Node's built-in assert module, plain function calls",
+        "go": "Go's standard testing package (func TestXxx(t *testing.T))",
+        "rust": "Rust's built-in #[test] attribute with assert! macros",
+    }
+    framework = lang_test_frameworks.get(lang, "simple assertions")
+
+    test_prompt = (
+        f"Write a minimal but meaningful test for this {lang} code that verifies it correctly "
+        f"solves the task: {task_description[:300]}\n\n"
+        f"Use {framework}. Output ONLY the test code in a code block, no explanation. "
+        f"The test must be self-contained and runnable — include the necessary imports and "
+        f"a way to execute it (e.g. if __name__ == '__main__' for Python, func main calling tests for Go).\n\n"
+        f"Code to test:\n```{lang}\n{code[:1500]}\n```"
+    )
+
+    test_response = groq_generate(
+        build_chatml("You are a senior test engineer. Output only runnable test code.", [], test_prompt),
+        max_tokens=800
+    )
+    if not test_response:
+        result["test_output"] = "[SKIPPED] test generation returned empty"
+        result["skipped"] = True
+        return result
+
+    test_blocks = _extract_code_blocks(test_response)
+    if not test_blocks:
+        result["test_output"] = "[SKIPPED] no test code block found in response"
+        result["skipped"] = True
+        return result
+
+    test_code = test_blocks[0]
+    result["test_code"] = test_code
+
+    # For Python, combine original code + test into one runnable script
+    if lang == "python":
+        combined = code + "\n\n" + test_code
+        exec_out = tool_exec(combined, timeout=timeout)
+    else:
+        # For compiled/other languages, run the test code standalone
+        # (assumes test imports or redefines what it needs — best effort)
+        exec_out = tool_exec_multi(test_code, language=lang, timeout=timeout)
+
+    result["test_output"] = exec_out
+
+    failure_markers = ("Error", "Traceback", "FAILED", "[TIMEOUT", "[EXEC ERROR", "[COMPILE ERROR", "panic:")
+    if any(marker in exec_out for marker in failure_markers):
+        result["passed"] = False
+    else:
+        result["passed"] = True
+
+    return result
+
 def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3) -> dict:
     result = {
         "patched_code": original_code, "diff": "",
@@ -525,6 +597,14 @@ def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3
 
         result["patched_code"] = patched
         result["diff"]         = _render_diff(original_code, patched)
+
+        test_result = tool_generate_and_run_test(patched, task, language=_lang)
+        result["test"] = test_result
+        if not test_result.get("skipped") and not test_result.get("passed"):
+            task          = f"{task}\n\n[Generated test failed: {test_result['test_output'][:300]}. Fix the code so the test passes.]"
+            original_code = patched
+            continue
+
         result["success"]      = True
         break
     return result
