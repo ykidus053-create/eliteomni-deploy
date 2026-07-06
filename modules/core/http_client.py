@@ -143,10 +143,10 @@ def _rate_on_success():
 
 # ── CEREBRAS RATE LIMITER ────────────────────────────────────────────────────
 _cbrs_rate_lock        = _threading.Lock()
-_cbrs_bucket_tokens    = 3.0
+_cbrs_bucket_tokens    = 1.0
 _cbrs_bucket_last      = time.time()
 _CBRS_BUCKET_RATE      = 1.0 / 12.0  # 5 RPM = 1 token per 12s
-_CBRS_BUCKET_MAX       = 3.0
+_CBRS_BUCKET_MAX       = 1.0
 
 def _cbrs_rate_wait():
     global _cbrs_bucket_tokens, _cbrs_bucket_last
