@@ -1018,6 +1018,10 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                 _wait = 15 * (2 ** _attempt)
                 print(f"[Cerebras] 429 backoff {_wait}s attempt {_attempt+1}/4")
                 _t.sleep(_wait)
+                # Push the shared throttle forward so the NEXT request (from any user)
+                # also respects this cooldown, not just this retry loop.
+                with _cbrs_lock:
+                    _cbrs_last_call = _cbrs_time.time()
                 continue
             raise
         except Exception as e:
