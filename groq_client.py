@@ -903,12 +903,16 @@ _cbrs_last_call = 0.0
 _CBRS_MIN_GAP = 13.0  # seconds between requests
 
 def _cbrs_wait():
+    """Wait until it's safe to START a new request.
+    Gap is measured from when the PREVIOUS request FINISHED (response end),
+    not from when it started — so slow generations don't eat into the safety margin."""
     global _cbrs_last_call
     with _cbrs_lock:
         elapsed = _cbrs_time.time() - _cbrs_last_call
         if elapsed < _CBRS_MIN_GAP:
             _cbrs_time.sleep(_CBRS_MIN_GAP - elapsed)
-        _cbrs_last_call = _cbrs_time.time()
+        # NOTE: _cbrs_last_call is now updated at the END of cerebras_stream(),
+        # not here, so the timer starts counting from response completion.
 
 def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     max_tokens = min(max_tokens, 16000)  # GLM-4.7 hard ceiling
@@ -1028,3 +1032,9 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
             print(f"[Cerebras stream error] {e}")
             yield f"[Cerebras error: {e}]"
             break
+
+    # Stamp the clock at RESPONSE COMPLETION (success or failure) — not at request start.
+    # This ensures the 13s gap represents genuine idle time between Cerebras calls,
+    # not time spent waiting on a slow generation.
+    with _cbrs_lock:
+        _cbrs_last_call = _cbrs_time.time()
