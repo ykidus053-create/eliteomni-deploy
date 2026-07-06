@@ -621,6 +621,100 @@ def tool_fetch_api_reference(url: str, max_chars: int = 4000) -> str:
     except Exception as e:
         return f"[FETCH ERROR] {e}"
 
+
+# ── MULTI-FILE PROJECT AWARENESS ──────────────────────────────────────────────
+
+def tool_read_project_context(entry_file: str, max_files: int = 8, max_chars_per_file: int = 2000) -> str:
+    """Read a file plus its local imports/dependencies to build a coherent picture
+    of the surrounding codebase before editing. Prevents blind single-file edits
+    that break cross-file interfaces."""
+    import os
+
+    entry_file = os.path.expanduser(entry_file)
+    if not os.path.exists(entry_file):
+        return f"[PROJECT CONTEXT ERROR] File not found: {entry_file}"
+
+    base_dir = os.path.dirname(os.path.abspath(entry_file))
+    visited = set()
+    to_visit = [entry_file]
+    collected = []
+
+    def _find_local_imports(content, file_path):
+        """Find import statements pointing to local files (not external packages)."""
+        found = []
+        file_dir = os.path.dirname(file_path)
+        ext = os.path.splitext(file_path)[1]
+
+        if ext == ".py":
+            for m in re.finditer(r'^\s*from\s+(\.[\w\.]*)\s+import|^\s*import\s+([\w\.]+)', content, re.MULTILINE):
+                mod = (m.group(1) or m.group(2) or "").lstrip(".")
+                if mod:
+                    candidate = os.path.join(file_dir, mod.replace(".", os.sep) + ".py")
+                    if os.path.exists(candidate):
+                        found.append(candidate)
+        elif ext in (".js", ".ts", ".jsx", ".tsx"):
+            for m in re.finditer(r'(?:import.*?from\s+|require\()[\'"](\.[^\'"\)]*)[\'"]', content):
+                rel = m.group(1)
+                for cand_ext in ("", ".js", ".ts", ".jsx", ".tsx", "/index.js", "/index.ts"):
+                    candidate = os.path.normpath(os.path.join(file_dir, rel + cand_ext))
+                    if os.path.exists(candidate) and os.path.isfile(candidate):
+                        found.append(candidate)
+                        break
+        return found
+
+    while to_visit and len(collected) < max_files:
+        current = to_visit.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+
+        try:
+            with open(current, "r", errors="replace") as f:
+                content = f.read(max_chars_per_file * 2)
+        except Exception as e:
+            collected.append(f"--- {current} ---\n[READ ERROR: {e}]")
+            continue
+
+        truncated_content = content[:max_chars_per_file]
+        truncated_note = " [TRUNCATED]" if len(content) > max_chars_per_file else ""
+        collected.append(f"--- {current} ---\n{truncated_content}{truncated_note}")
+
+        local_imports = _find_local_imports(content, current)
+        for imp in local_imports:
+            if imp not in visited and imp not in to_visit:
+                to_visit.append(imp)
+
+    header = f"[PROJECT CONTEXT: {len(collected)} file(s), entry point {entry_file}]\n\n"
+    return header + "\n\n".join(collected)
+
+def tool_list_project_structure(directory: str = ".", max_depth: int = 3, ignore_dirs: tuple = ("node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build")) -> str:
+    """Return a tree-like overview of a project's file structure so the model
+    understands the codebase layout before making changes."""
+    import os
+
+    directory = os.path.expanduser(directory)
+    if not os.path.isdir(directory):
+        return f"[STRUCTURE ERROR] Not a directory: {directory}"
+
+    lines = []
+    base_depth = directory.rstrip(os.sep).count(os.sep)
+
+    for root, dirs, files in os.walk(directory):
+        depth = root.rstrip(os.sep).count(os.sep) - base_depth
+        if depth >= max_depth:
+            dirs[:] = []
+            continue
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+        indent = "  " * depth
+        lines.append(f"{indent}{os.path.basename(root)}/")
+        for fname in sorted(files)[:30]:
+            lines.append(f"{indent}  {fname}")
+        if len(lines) > 200:
+            lines.append("... [truncated, too many files]")
+            break
+
+    return "\n".join(lines) if lines else f"[STRUCTURE] Empty directory: {directory}"
+
 def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3) -> dict:
     result = {
         "patched_code": original_code, "diff": "",
