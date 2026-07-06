@@ -538,6 +538,89 @@ def tool_generate_and_run_test(code: str, task_description: str, language: str =
 
     return result
 
+
+# ── LIVE DOCUMENTATION FETCH ──────────────────────────────────────────────────
+
+def tool_fetch_docs(package: str, ecosystem: str = "auto", query: str = "") -> str:
+    """Fetch real documentation for a package instead of guessing API signatures from training data.
+    Tries the package's official docs/README source based on ecosystem."""
+    import urllib.request, json as _json, re as _re
+
+    package = package.strip()
+
+    def _get(url, timeout=8):
+        req = urllib.request.Request(url, headers={"User-Agent": "eliteomni-docs-fetch/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode(errors="replace")
+
+    try:
+        if ecosystem in ("pypi", "auto"):
+            try:
+                data = _json.loads(_get(f"https://pypi.org/pypi/{package}/json"))
+                info = data.get("info", {})
+                summary = info.get("summary", "")
+                description = info.get("description", "")[:3000]
+                home = info.get("home_page") or info.get("project_url", "")
+                version = info.get("version", "unknown")
+                result = f"[PyPI: {package} v{version}]\n{summary}\n\n{description}"
+                if home:
+                    result += f"\n\nHomepage: {home}"
+                return result[:4000]
+            except Exception:
+                if ecosystem == "pypi":
+                    return f"[DOCS ERROR] Could not fetch PyPI docs for '{package}'"
+
+        if ecosystem in ("npm", "auto"):
+            try:
+                data = _json.loads(_get(f"https://registry.npmjs.org/{package}"))
+                latest_tag = data.get("dist-tags", {}).get("latest", "")
+                latest = data.get("versions", {}).get(latest_tag, {})
+                description = latest.get("description", "") or data.get("description", "")
+                readme = data.get("readme", "")[:3000]
+                homepage = latest.get("homepage", "")
+                result = f"[npm: {package} v{latest_tag}]\n{description}\n\n{readme}"
+                if homepage:
+                    result += f"\n\nHomepage: {homepage}"
+                return result[:4000]
+            except Exception:
+                if ecosystem == "npm":
+                    return f"[DOCS ERROR] Could not fetch npm docs for '{package}'"
+
+        if ecosystem in ("crates", "auto"):
+            try:
+                data = _json.loads(_get(f"https://crates.io/api/v1/crates/{package}"))
+                crate = data.get("crate", {})
+                description = crate.get("description", "")
+                version = crate.get("newest_version", "unknown")
+                docs_url = crate.get("documentation") or f"https://docs.rs/{package}"
+                result = f"[crates.io: {package} v{version}]\n{description}\n\nDocs: {docs_url}"
+                return result[:4000]
+            except Exception:
+                if ecosystem == "crates":
+                    return f"[DOCS ERROR] Could not fetch crates.io docs for '{package}'"
+
+        return f"[DOCS NOT FOUND] Could not locate documentation for '{package}' in any ecosystem"
+    except Exception as e:
+        return f"[DOCS ERROR] {e}"
+
+def tool_fetch_api_reference(url: str, max_chars: int = 4000) -> str:
+    """Fetch a specific documentation URL directly (e.g. official API reference page).
+    Use when you know the exact doc page and need to verify a specific API signature."""
+    import urllib.request, re as _re
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (eliteomni-docs-fetch)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode(errors="replace")
+
+        # Strip scripts/styles, then tags, to get readable text
+        text = _re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=_re.DOTALL | _re.IGNORECASE)
+        text = _re.sub(r"<[^>]+>", " ", text)
+        text = _re.sub(r"\s+", " ", text).strip()
+        return text[:max_chars]
+    except Exception as e:
+        return f"[FETCH ERROR] {e}"
+
 def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3) -> dict:
     result = {
         "patched_code": original_code, "diff": "",
