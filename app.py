@@ -3489,7 +3489,7 @@ async def stream_chat(req: Request):
                 ]
                 def _tool_cont_worker():
                     try:
-                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=4096, model="zai-glm-4.7"):
+                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=16000, model="zai-glm-4.7"):
                             loop.call_soon_threadsafe(tok_q.put_nowait, t2)
                     except Exception as e:
                         print(f"[tool cont] {e}")
@@ -3560,7 +3560,7 @@ async def stream_chat(req: Request):
             _cont_chunks2 = []
             def _mcp_cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs2, max_tokens=4096, model=ctx.get("model")):
+                    for tok in mistral_stream(_cont_msgs2, max_tokens=16000, model=ctx.get("model")):
                         loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[mcp cont worker] {e}")
@@ -3599,7 +3599,7 @@ async def stream_chat(req: Request):
             _cont_chunks = []
             def _cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs, max_tokens=4096, model=ctx.get("model")):
+                    for tok in mistral_stream(_cont_msgs, max_tokens=16000, model=ctx.get("model")):
                         loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[cont worker] {e}")

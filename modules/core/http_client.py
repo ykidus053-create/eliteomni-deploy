@@ -148,10 +148,17 @@ _cbrs_bucket_last      = time.time()
 _CBRS_BUCKET_RATE      = 1.0 / 12.0  # 5 RPM = 1 token per 12s
 _CBRS_BUCKET_MAX       = 1.0
 
+_cbrs_penalty_until = 0.0  # circuit breaker: hard stop timestamp after a real 429
+
 def _cbrs_rate_wait():
     global _cbrs_bucket_tokens, _cbrs_bucket_last
     with _cbrs_rate_lock:
+        # Circuit breaker: if we were 429'd recently, wait out the penalty first
         now = time.time()
+        if now < _cbrs_penalty_until:
+            time.sleep(_cbrs_penalty_until - now)
+            now = time.time()
+
         elapsed = now - _cbrs_bucket_last
         _cbrs_bucket_tokens = min(_CBRS_BUCKET_MAX, _cbrs_bucket_tokens + elapsed * _CBRS_BUCKET_RATE)
         _cbrs_bucket_last = now
@@ -161,6 +168,14 @@ def _cbrs_rate_wait():
             wait = (1.0 - _cbrs_bucket_tokens) / _CBRS_BUCKET_RATE
             time.sleep(wait)
             _cbrs_bucket_tokens = 0.0
+
+def _cbrs_report_429():
+    """Call this whenever Cerebras actually returns a 429 — extends the safety margin."""
+    global _cbrs_penalty_until, _cbrs_bucket_tokens
+    with _cbrs_rate_lock:
+        _cbrs_penalty_until = time.time() + 30.0  # hard 30s cooldown on real rate-limit hit
+        _cbrs_bucket_tokens = 0.0
+        print("[Cerebras] 429 detected — engaging 30s circuit breaker cooldown")
 
 # ── MISTRAL STREAM ────────────────────────────────────────────────────────────
 def mistral_stream(msgs: list, max_tokens: int = 2000, model: str = None, skill: str = None, tools: list = None):
