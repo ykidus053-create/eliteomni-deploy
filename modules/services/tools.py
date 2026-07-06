@@ -195,6 +195,111 @@ def tool_lint(code: str) -> str:
             issues.append(f"Line {i}: exceeds 120 chars")
     return "OK" if not issues else "; ".join(issues[:5])
 
+
+# ── MULTI-LANGUAGE LINT + EXEC ────────────────────────────────────────────────
+
+def _detect_language(code: str) -> str:
+    """Best-effort language detection from code content."""
+    if re.search(r'^\s*package\s+\w+', code, re.MULTILINE) and "func main" in code:
+        return "go"
+    if re.search(r'\bfn\s+main\s*\(', code) and "let " in code:
+        return "rust"
+    if re.search(r'^\s*(import|export)\s', code, re.MULTILINE) and (":" in code and "interface" in code or "type " in code):
+        return "typescript"
+    if re.search(r'\b(const|let|var)\s+\w+\s*=', code) and "function" in code or "=>" in code:
+        return "javascript"
+    if "public class" in code or "public static void main" in code:
+        return "java"
+    return "python"
+
+def tool_lint_multi(code: str, language: str = None) -> str:
+    """Lint code in the detected or specified language."""
+    lang = language or _detect_language(code)
+    if lang == "python":
+        return tool_lint(code)
+    tmp = None
+    try:
+        ext = {"go": ".go", "rust": ".rs", "typescript": ".ts", "javascript": ".js", "java": ".java"}.get(lang, ".txt")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False) as f:
+            f.write(code)
+            tmp = f.name
+        if lang == "go":
+            result = subprocess.run(["gofmt", "-l", tmp], capture_output=True, text=True, timeout=10)
+            if result.stdout.strip():
+                return f"gofmt issues: {result.stdout.strip()}"
+            check = subprocess.run(["go", "vet", tmp], capture_output=True, text=True, timeout=15)
+            return "OK" if check.returncode == 0 else check.stderr[:500]
+        elif lang == "rust":
+            check = subprocess.run(["rustc", "--edition", "2021", "--crate-type", "bin", "-o", "/dev/null", tmp],
+                                   capture_output=True, text=True, timeout=20)
+            return "OK" if check.returncode == 0 else check.stderr[:500]
+        elif lang == "typescript":
+            check = subprocess.run(["npx", "--yes", "tsc", "--noEmit", "--target", "es2020", tmp],
+                                   capture_output=True, text=True, timeout=20)
+            return "OK" if check.returncode == 0 else (check.stdout + check.stderr)[:500]
+        elif lang == "javascript":
+            check = subprocess.run(["node", "--check", tmp], capture_output=True, text=True, timeout=10)
+            return "OK" if check.returncode == 0 else check.stderr[:500]
+        else:
+            return "OK"  # no linter available for this language
+    except FileNotFoundError as e:
+        return f"[LINT SKIPPED] toolchain not installed: {e}"
+    except subprocess.TimeoutExpired:
+        return "[LINT TIMEOUT]"
+    except Exception as e:
+        return f"[LINT ERROR]: {e}"
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except Exception: pass
+
+def tool_exec_multi(code: str, language: str = None, timeout: int = 15) -> str:
+    """Execute code in the detected or specified language."""
+    lang = language or _detect_language(code)
+    if lang == "python":
+        return tool_exec(code, timeout=timeout)
+    if _EXEC_BLOCKED.search(code):
+        return "[BLOCKED]: Code contains restricted operations."
+    tmp = None
+    try:
+        if lang == "go":
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".go", delete=False) as f:
+                f.write(code)
+                tmp = f.name
+            result = subprocess.run(["go", "run", tmp], capture_output=True, text=True, timeout=timeout)
+        elif lang == "rust":
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".rs", delete=False) as f:
+                f.write(code)
+                tmp = f.name
+            binpath = tmp + ".bin"
+            compile_r = subprocess.run(["rustc", "-O", "-o", binpath, tmp], capture_output=True, text=True, timeout=timeout)
+            if compile_r.returncode != 0:
+                return f"[COMPILE ERROR]: {compile_r.stderr[:500]}"
+            result = subprocess.run([binpath], capture_output=True, text=True, timeout=timeout)
+            try: os.unlink(binpath)
+            except Exception: pass
+        elif lang in ("javascript", "typescript"):
+            ext = ".ts" if lang == "typescript" else ".js"
+            with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False) as f:
+                f.write(code)
+                tmp = f.name
+            runner = ["npx", "--yes", "ts-node", tmp] if lang == "typescript" else ["node", tmp]
+            result = subprocess.run(runner, capture_output=True, text=True, timeout=timeout)
+        else:
+            return f"[EXEC SKIPPED] No runner configured for {lang}"
+        out = (result.stdout + result.stderr).strip()
+        return out[:800] if out else "(no output)"
+    except FileNotFoundError as e:
+        return f"[EXEC SKIPPED] toolchain not installed: {e}"
+    except subprocess.TimeoutExpired:
+        return f"[TIMEOUT after {timeout}s]"
+    except Exception as e:
+        return f"[EXEC ERROR]: {e}"
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except Exception: pass
+
 def _strip_verbose_output(output: str, max_lines: int = 15) -> str:
     lines = output.strip().split("\n")
     if len(lines) <= max_lines:
@@ -259,6 +364,108 @@ def _render_diff(original: str, patched: str, filename: str = "code.py") -> str:
     ))
     return "".join(diff) if diff else "(no changes)"
 
+
+# ── DEPENDENCY / PACKAGE VERIFICATION ─────────────────────────────────────────
+
+def tool_verify_package(name: str, ecosystem: str = "auto") -> str:
+    """Check whether a package actually exists in its registry before trusting an import.
+    ecosystem: 'pypi', 'npm', 'crates', or 'auto' (guess from name/context)."""
+    import urllib.request, json as _json
+
+    name = name.strip()
+    if not name:
+        return "[VERIFY ERROR] empty package name"
+
+    registries = {
+        "pypi":   f"https://pypi.org/pypi/{name}/json",
+        "npm":    f"https://registry.npmjs.org/{name}",
+        "crates": f"https://crates.io/api/v1/crates/{name}",
+    }
+
+    def _check(eco):
+        url = registries[eco]
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "eliteomni-dep-check/1.0"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                if resp.status == 200:
+                    data = _json.loads(resp.read().decode())
+                    if eco == "pypi":
+                        latest = data.get("info", {}).get("version", "unknown")
+                        return f"EXISTS on PyPI (latest: {latest})"
+                    elif eco == "npm":
+                        latest = data.get("dist-tags", {}).get("latest", "unknown")
+                        return f"EXISTS on npm (latest: {latest})"
+                    elif eco == "crates":
+                        latest = data.get("crate", {}).get("newest_version", "unknown")
+                        return f"EXISTS on crates.io (latest: {latest})"
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None  # not found in this registry
+            return f"[CHECK ERROR {eco}]: HTTP {e.code}"
+        except Exception as e:
+            return f"[CHECK ERROR {eco}]: {e}"
+        return None
+
+    if ecosystem != "auto":
+        result = _check(ecosystem)
+        return result if result else f"NOT FOUND on {ecosystem} — likely hallucinated or misspelled"
+
+    # auto mode: try all three, report all hits
+    hits = []
+    for eco in ("pypi", "npm", "crates"):
+        result = _check(eco)
+        if result and not result.startswith("[CHECK ERROR"):
+            hits.append(result)
+    if hits:
+        return " | ".join(hits)
+    return f"NOT FOUND in PyPI, npm, or crates.io — likely hallucinated or misspelled package: '{name}'"
+
+def tool_verify_imports(code: str, language: str = None) -> str:
+    """Extract import/require statements from code and verify each package exists.
+    Returns a summary flagging any packages that could not be found."""
+    lang = language or _detect_language(code)
+    packages = set()
+
+    if lang == "python":
+        for m in re.finditer(r'^\s*(?:from|import)\s+([a-zA-Z0-9_\.]+)', code, re.MULTILINE):
+            pkg = m.group(1).split(".")[0]
+            if pkg not in ("os", "sys", "re", "json", "time", "math", "typing", "collections",
+                          "itertools", "functools", "subprocess", "threading", "datetime",
+                          "pathlib", "abc", "dataclasses", "enum", "asyncio", "unittest",
+                          "logging", "random", "string", "io", "copy", "hashlib", "uuid"):
+                packages.add(("pypi", pkg))
+    elif lang in ("javascript", "typescript"):
+        for m in re.finditer(r'(?:require\(|from\s+)[\'"]([a-zA-Z0-9_\-@/]+)[\'"]', code):
+            pkg = m.group(1)
+            if not pkg.startswith(".") and not pkg.startswith("/"):
+                packages.add(("npm", pkg.split("/")[0] if not pkg.startswith("@") else "/".join(pkg.split("/")[:2])))
+    elif lang == "rust":
+        for m in re.finditer(r'^\s*use\s+([a-zA-Z0-9_]+)::', code, re.MULTILINE):
+            pkg = m.group(1)
+            if pkg not in ("std", "core", "alloc", "self", "crate", "super"):
+                packages.add(("crates", pkg))
+    elif lang == "go":
+        for m in re.finditer(r'"([a-zA-Z0-9_\-\./]+)"', code):
+            imp = m.group(1)
+            if "." in imp and "/" in imp:  # heuristic: external module path like github.com/x/y
+                packages.add(("go", imp))
+
+    if not packages:
+        return "OK — no external dependencies detected"
+
+    flagged = []
+    for eco, pkg in list(packages)[:10]:  # cap to avoid excessive network calls
+        if eco == "go":
+            flagged_note = f"'{pkg}' — Go modules not verified (no registry check implemented)"
+            continue
+        result = tool_verify_package(pkg, ecosystem=eco)
+        if "NOT FOUND" in result:
+            flagged.append(f"'{pkg}': {result}")
+
+    if flagged:
+        return "⚠️ UNVERIFIED PACKAGES (possible hallucination): " + " | ".join(flagged)
+    return f"OK — verified {len(packages)} package(s) exist in registry"
+
 def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3) -> dict:
     result = {
         "patched_code": original_code, "diff": "",
@@ -299,13 +506,14 @@ def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3
         if not blocks:
             continue
         patched     = blocks[0]
-        lint        = tool_lint(patched)
+        _lang       = _detect_language(patched)
+        lint        = tool_lint_multi(patched, language=_lang)
         result["lint"] = lint
-        if lint != "OK":
+        if lint != "OK" and not lint.startswith("[LINT SKIPPED"):
             task          = f"{task}\n\n[Previous lint error: {lint}. Fix it.]"
             original_code = patched
             continue
-        exec_out            = tool_exec(patched)
+        exec_out            = tool_exec_multi(patched, language=_lang)
         result["exec_output"] = exec_out
         result["patched_code"] = patched
         result["diff"]         = _render_diff(original_code, patched)
