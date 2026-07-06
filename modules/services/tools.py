@@ -515,6 +515,14 @@ def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3
             continue
         exec_out            = tool_exec_multi(patched, language=_lang)
         result["exec_output"] = exec_out
+
+        dep_check = tool_verify_imports(patched, language=_lang)
+        result["dependency_check"] = dep_check
+        if "UNVERIFIED PACKAGES" in dep_check:
+            task          = f"{task}\n\n[Dependency check failed: {dep_check}. Use only real, verified packages.]"
+            original_code = patched
+            continue
+
         result["patched_code"] = patched
         result["diff"]         = _render_diff(original_code, patched)
         result["success"]      = True
