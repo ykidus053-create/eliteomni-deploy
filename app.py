@@ -3577,7 +3577,7 @@ async def stream_chat(req: Request):
             chunks.append(final)
 
         # ── Auto-continuation: resume if response was cut off ──────────────
-        _max_continuations = 8  # allow long builds to continue across many passes given the 4K/pass ceiling
+        _max_continuations = 48  # long-build mode: ~48 passes * 4K = ~190K cumulative tokens, expect long runtime + rate-limit waits
         _continuation = 0
         while _continuation < _max_continuations and final:
             _trunc = False
