@@ -3585,8 +3585,12 @@ async def stream_chat(req: Request):
             # Only continue on hard unambiguous signals
             if final.count('```') % 2 != 0:  # unclosed code block
                 _trunc = True
-            _tok_estimate = len(final.split())
-            if _tok_estimate >= ctx.get('max_t', 9999) * 0.97:  # hit token ceiling
+            # Rough token estimate: ~1.3 tokens per word for English text/code mix
+            _tok_estimate = int(len(final.split()) * 1.3)
+            if _tok_estimate >= ctx.get('max_t', 9999) * 0.90:  # hit token ceiling (with margin)
+                _trunc = True
+            # Also catch mid-function/mid-statement cutoffs for code
+            if ctx.get("skill") == "coder" and _stripped and not _stripped.endswith((".", "!", "?", "}", ")", "]", "`", ";", ":")):
                 _trunc = True
             if not _trunc:
                 break
@@ -3599,8 +3603,14 @@ async def stream_chat(req: Request):
             _cont_chunks = []
             def _cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs, max_tokens=16000, model=ctx.get("model")):
-                        loop.call_soon_threadsafe(tok_q.put_nowait, tok)
+                    from model_router import is_cerebras, cerebras_model_name
+                    _cont_model = ctx.get("model") or "cerebras/zai-glm-4.7"
+                    if is_cerebras(_cont_model):
+                        for tok in cerebras_stream(_cont_msgs, max_tokens=16000, model=cerebras_model_name(_cont_model)):
+                            loop.call_soon_threadsafe(tok_q.put_nowait, tok)
+                    else:
+                        for tok in cerebras_stream(_cont_msgs, max_tokens=16000, model="zai-glm-4.7"):
+                            loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[cont worker] {e}")
                 finally:
