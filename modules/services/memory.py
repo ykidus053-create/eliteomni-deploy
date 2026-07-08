@@ -47,10 +47,34 @@ def _load_rag_from_db():
     except Exception as e:
         print(f"[RAG] Load error: {e}")
 
+def _migrate_memory_table(con):
+    """
+    Fix a stale 'memory' table that may have been created by older code with
+    a different schema (missing the 'text' column). CREATE TABLE IF NOT EXISTS
+    is a no-op once any table with that name exists, so a wrong old schema
+    persists forever otherwise. This checks actual columns and migrates.
+    """
+    try:
+        cols = [row[1] for row in con.execute("PRAGMA table_info(memory)").fetchall()]
+        if cols and "text" not in cols:
+            print(f"[MemoryMigration] 'memory' table missing 'text' column (has: {cols}) — migrating")
+            con.execute("ALTER TABLE memory RENAME TO memory_old_broken")
+            con.execute("""CREATE TABLE memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                source TEXT DEFAULT 'conversation',
+                ts REAL NOT NULL
+            )""")
+            con.commit()
+            print("[MemoryMigration] migrated successfully — old data preserved in memory_old_broken")
+    except Exception as _me:
+        print(f"[MemoryMigration] check failed (likely table doesn't exist yet, fine): {_me}")
+
 def _db_init():
     con = _sqlite3.connect(_DB_PATH, check_same_thread=False)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
+    _migrate_memory_table(con)
     con.execute("""CREATE TABLE IF NOT EXISTS memory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         text TEXT NOT NULL,
@@ -475,15 +499,110 @@ DEBUGGING PROTOCOL (when fixing existing code):
 
 }
 
-def classify_skill(msg: str) -> str:
-    m = msg.lower()
-    if any(t in m for t in SKILLS["safety"]["meta"]): return "safety"
-    scores = {n: sum(1 for t in s["meta"] if t in m)
-              for n, s in SKILLS.items() if n not in ("safety","general")}
-    best = max(scores, key=scores.get) if scores else "general"
-    return best if scores.get(best, 0) > 0 else "general"
+_CODER_KEYWORDS_STRONG = [
+    # explicit build/implement verbs
+    "build a", "design and implement", "implement a", "write a program", "write a function",
+    "write a script", "create a class", "create an api", "create a service",
+    # systems / distributed computing
+    "distributed", "consensus", "raft", "paxos", "replication", "sharding",
+    "partitioning", "consistent hashing", "load balanc", "microservice",
+    "rate limiter", "message queue", "pub/sub", "event driven", "circuit breaker",
+    "cache invalidation", "eventual consistency", "cap theorem", "quorum",
+    "leader election", "vector clock", "gossip protocol", "two-phase commit",
+    # data structures / algorithms
+    "linked list", "binary search", "binary tree", "hash table", "hash map",
+    "graph traversal", "dijkstra", "dynamic programming", "big o", "time complexity",
+    "space complexity", "sorting algorithm", "recursion", "backtracking",
+    "trie", "heap", "priority queue", "bloom filter", "lru", "lfu", "ttl expiration",
+    # databases / storage
+    "key-value store", "database schema", "sql query", "index optimization",
+    "transaction isolation", "acid properties", "b-tree", "lsm tree", "wal",
+    # languages / frameworks
+    "python", "javascript", "typescript", "java ", "golang", "rust ", "c++",
+    "react", "vue", "angular", "django", "flask", "fastapi", "express.js",
+    "node.js", "spring boot", "docker", "kubernetes", "terraform", "ci/cd",
+    # code artifacts
+    "function", "class ", "method", "endpoint", "middleware", "decorator",
+    "async", "await", "closure", "generator", "iterator", "type hint",
+    "unit test", "integration test", "mock", "dependency injection",
+    "code", "debug", "algorithm", "refactor", "compile", "syntax error",
+    "stack trace", "exception handling", "api", "sdk", "cli tool",
+    "regex", "json parsing", "serialization", "deserialization",
+]
 
-def route_complexity(msg: str) -> str:
+_RESEARCHER_KEYWORDS_STRONG = [
+    "research", "explain", "analyze", "analyse", "compare", "history of",
+    "comprehensive", "essay", "how does", "why does", "pros and cons",
+    "summarize", "guide", "tutorial", "step by step", "what is", "tell me about",
+    "describe", "overview", "breakdown", "deep dive", "walk me through",
+    "background", "context", "implications", "consequences", "causes", "effects",
+    "trade-off", "tradeoffs", "advantages and disadvantages", "differences between",
+    "which is better", "should i use", "when to use", "best practices for",
+]
+
+_CALCULATOR_KEYWORDS_STRONG = [
+    "calculate", "compute", "sqrt", "equation", "formula", "percent", "%",
+    "times", "plus", "minus", "divided", "equals", "how much", "solve", "convert",
+    "multiply", "square root", "derivative", "integral", "logarithm",
+]
+
+import re as _clf_re
+
+_CODER_PATTERNS = [
+    r"\bbuild (a|an|the)\b.{0,40}\b(store|service|system|api|app|server|engine|pipeline|queue|cache)\b",
+    r"\bdesign (a|an|the)\b.{0,40}\b(system|architecture|api|service|schema|database)\b",
+    r"\bimplement (a|an|the)\b",
+    r"\bwrite (a|an|the)?\s*(function|class|script|program|algorithm|method)\b",
+    r"\bhandles?\s+node\s+failures?\b",
+    r"\bmultiple\s+nodes?\b",
+    r"\b(get|set|delete)\s*,\s*(get|set|delete)\b",  # "GET, SET, DELETE" style API listing
+    r"\bfix\s+(this|the)\s+(bug|error|code|function)\b",
+    r"\bwhy\s+(is|does)\s+this\s+(code|function|error)\b",
+]
+
+def _classify_skill_keywords(msg: str) -> str:
+    """
+    Strengthened fallback keyword-based skill classifier — used if LLM
+    classification fails or times out. Combines weighted keyword scoring
+    across a broad technical vocabulary with regex phrase-pattern detection
+    for common ways technical requests are phrased (e.g. "design a system
+    that handles node failures"), so complex requests route correctly even
+    without the LLM classifier and even when they don't contain single
+    trigger words like "code" or "implement".
+    """
+    m = msg.lower()
+    if any(t in m for t in SKILLS["safety"]["meta"]):
+        return "safety"
+
+    coder_score = sum(1 for t in _CODER_KEYWORDS_STRONG if t in m)
+    researcher_score = sum(1 for t in _RESEARCHER_KEYWORDS_STRONG if t in m)
+    calculator_score = sum(1 for t in _CALCULATOR_KEYWORDS_STRONG if t in m)
+
+    # Regex phrase patterns — catch technical requests that don't hit single keywords
+    for pattern in _CODER_PATTERNS:
+        if _clf_re.search(pattern, m):
+            coder_score += 3  # weighted higher — a full phrase match is a stronger signal
+
+    # Structural signals: bullet-list-style technical specs (colons, multiple
+    # short clauses) strongly suggest a systems/coding design request
+    _bullet_like = m.count(":") >= 1 and (m.count(",") + m.count(";")) >= 3
+    if _bullet_like and any(w in m for w in ["support", "handle", "use", "include", "node", "server"]):
+        coder_score += 2
+
+    # Original SKILLS meta lists still contribute, for backward compatibility
+    for name in ("coder", "researcher", "calculator"):
+        if name in SKILLS:
+            extra = sum(1 for t in SKILLS[name]["meta"] if t in m)
+            if name == "coder": coder_score += extra
+            elif name == "researcher": researcher_score += extra
+            elif name == "calculator": calculator_score += extra
+
+    scores = {"coder": coder_score, "researcher": researcher_score, "calculator": calculator_score}
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "general"
+
+def _route_complexity_keywords(msg: str) -> str:
+    """Fallback keyword-based complexity classifier — used if LLM classification fails."""
     m = msg.lower()
     _easy = [
         "hi","hey","hello","thanks","okay","yes","no","what time","who is",
@@ -492,7 +611,7 @@ def route_complexity(msg: str) -> str:
         "what comes next","true or false","is a","is an","is the",
         "one word","one number",
         "closest planet","days in","days are","reply with","just say",
-    ]  # removed: hello world, print, def, 2+2 — these route to coder which forces medium
+    ]
     _hard = ["research","explain in detail","compare","analyze","history of",
              "comprehensive","implement","algorithm","step by step","essay",
              "write a report","in depth","deep dive","thoroughly",
@@ -501,7 +620,6 @@ def route_complexity(msg: str) -> str:
              "design a","optimize","recompute","execution","trade-off",
              "questions","q1","q2","q3","1.","2.","3.","4.","5.",
              "distributed","multiworker","multi-worker","parallel tasks"]
-    # Karpathy: keyword must appear WITHOUT complex qualifiers to be easy
     _complex_qualifiers = ["impact", "effect", "analysis", "difference", "compare",
                            "explain", "describe", "relationship", "between", "implications",
                            "strategy", "approach", "design", "architecture", "optimize"]
@@ -512,7 +630,178 @@ def route_complexity(msg: str) -> str:
     if _is_truly_easy: return "easy"
     if len(msg) >= ADAPTIVE_THINK_THRESHOLD: return "hard"
     if any(t in m for t in _hard) or len(msg) > 200: return "hard"
+
+    # Multi-requirement technical specs (bullet-like lists of requirements)
+    # are inherently hard even if no single "hard" keyword matched —
+    # e.g. "Supports GET, SET, DELETE / Works across nodes / Handles failures..."
+    _requirement_count = m.count(":") + m.count(";") + sum(1 for w in
+        ["support", "handle", "use", "include", "bonus", "must", "should", "requires"]
+        if w in m)
+    if _requirement_count >= 3 and len(msg) > 150:
+        return "hard"
+
     return "medium"
+
+_CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "skill": {"type": "string", "enum": ["general", "coder", "researcher", "calculator", "safety"]},
+        "complexity": {"type": "string", "enum": ["easy", "medium", "hard"]},
+        "confidence": {"type": "number"},
+    },
+    "required": ["skill", "complexity", "confidence"],
+    "additionalProperties": False
+}
+
+_CLASSIFY_FEWSHOT = """Examples:
+
+Message: "hey"
+-> {"skill": "general", "complexity": "easy", "confidence": 0.98}
+
+Message: "what's the capital of Japan"
+-> {"skill": "general", "complexity": "easy", "confidence": 0.95}
+
+Message: "write a function to reverse a linked list in python"
+-> {"skill": "coder", "complexity": "medium", "confidence": 0.9}
+
+Message: "design a distributed rate limiter that handles 100k req/s, discuss tradeoffs between token bucket and sliding window, and implement it in python"
+-> {"skill": "coder", "complexity": "hard", "confidence": 0.95}
+
+Message: "compare microservices vs monolith architecture for a 10-person startup"
+-> {"skill": "researcher", "complexity": "hard", "confidence": 0.9}
+
+Message: "what's 15% of 340"
+-> {"skill": "calculator", "complexity": "easy", "confidence": 0.97}
+
+Message: "yes"
+(context: previous assistant message asked "should I use microservices or a monolith for your startup, considering your team size and scaling needs?")
+-> {"skill": "researcher", "complexity": "medium", "confidence": 0.6}
+"""
+
+_classify_cache = {}
+
+def _llm_classify(msg: str, history: list = None) -> dict:
+    """
+    Fast single-call LLM classification of skill + complexity using structured
+    JSON output, few-shot examples, and a confidence score. Far more reliable
+    than keyword matching since it understands intent/phrasing and context,
+    not just literal substring hits on the isolated message.
+
+    Low-confidence results default to a conservative ("medium" or higher)
+    complexity rather than risking under-serving a hard question.
+    Falls back to keyword heuristics entirely on any failure.
+    """
+    _recent_ctx = ""
+    if history:
+        _recent_ctx = " ".join(
+            str(h.get("content", ""))[:150] for h in history[-2:] if h.get("content")
+        )
+
+    _cache_key = (msg[:200] + "||" + _recent_ctx[:200])
+    if _cache_key in _classify_cache:
+        return _classify_cache[_cache_key]
+
+    try:
+        import urllib.request, json as _json, os as _os
+        _key = _os.environ.get("CEREBRAS_API_KEY", "")
+        if not _key:
+            raise RuntimeError("no cerebras key")
+
+        _context_line = f"\nRecent conversation context: {_recent_ctx}" if _recent_ctx else ""
+        _prompt = (
+            "Classify this user message. skill: 'coder' (code/programming/debugging), "
+            "'researcher' (research/analysis/explanation/comparison/essay-style), "
+            "'calculator' (math/arithmetic/computation), 'safety' (harmful/dangerous requests), "
+            "or 'general' (casual chat, simple factual Q&A, greetings). "
+            "complexity: 'easy' (greeting, simple fact, one-line answer), "
+            "'medium' (needs a paragraph or two, some reasoning), "
+            "'hard' (needs deep multi-step reasoning, detailed code, thorough research, "
+            "comparison, design, or analysis). "
+            "Consider conversation context if given — a short reply like 'yes' or 'do it' "
+            "inherits the complexity of what it's responding to, not its own length. "
+            "Also output a confidence score 0-1 for your classification.\n\n"
+            f"{_CLASSIFY_FEWSHOT}\n"
+            f"Now classify:{_context_line}\nMessage: {msg[:500]}"
+        )
+        payload = _json.dumps({
+            "model": "zai-glm-4.7",
+            "messages": [{"role": "user", "content": _prompt}],
+            "max_completion_tokens": 1500,
+            "temperature": 0.0,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "classification", "schema": _CLASSIFY_SCHEMA, "strict": True}
+            }
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.cerebras.ai/v1/chat/completions",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "curl/7.88.1",
+            }
+        )
+        with urllib.request.urlopen(req, timeout=4) as r:
+            _raw_body = r.read()
+            data = _json.loads(_raw_body)
+
+        _choices = data.get("choices", [])
+        if not _choices:
+            print(f"[LLM classify] no choices in response: {str(data)[:300]}")
+            raise RuntimeError("no choices in response")
+
+        _message = _choices[0].get("message", {})
+        _finish_reason = _choices[0].get("finish_reason", "")
+        _content = _message.get("content", "") or _message.get("reasoning", "")
+        if not _content:
+            print(f"[LLM classify] empty content. finish_reason={_finish_reason} full message keys={list(_message.keys())} message={str(_message)[:800]}")
+            raise RuntimeError("empty content in response")
+        if _finish_reason == "length":
+            print(f"[LLM classify] response was truncated (finish_reason=length) — content len={len(_content)}, last 200 chars: {_content[-200:]}")
+
+        # GLM-4.7 sometimes embeds the JSON at the end of a reasoning trace
+        # rather than in a clean content field — extract the last JSON object.
+        try:
+            result = _json.loads(_content)
+        except _json.JSONDecodeError:
+            print(f"[LLM classify] RAW CONTENT (first 1500 chars): {_content[:1500]}")
+            _last_brace = _content.rfind("{")
+            if _last_brace == -1:
+                raise RuntimeError("no JSON object found in reasoning content")
+            _candidate = _content[_last_brace:]
+            _last_close = _candidate.rfind("}")
+            if _last_close == -1:
+                raise RuntimeError("no closing brace found in reasoning content")
+            result = _json.loads(_candidate[:_last_close+1])
+
+        if not (result.get("skill") and result.get("complexity")):
+            raise RuntimeError("incomplete classification result")
+
+        # Conservative fallback: low confidence + "easy" gets bumped to "medium"
+        # to avoid under-serving a question that might actually need real reasoning.
+        confidence = result.get("confidence", 1.0)
+        if confidence < 0.65 and result["complexity"] == "easy":
+            print(f"[LLM classify] low confidence ({confidence}) on 'easy' — bumping to 'medium'")
+            result["complexity"] = "medium"
+
+        _classify_cache[_cache_key] = result
+        if len(_classify_cache) > 500:
+            _classify_cache.clear()
+        return result
+    except Exception as _e:
+        print(f"[LLM classify] falling back to keywords: {_e}")
+        return {
+            "skill": _classify_skill_keywords(msg),
+            "complexity": _route_complexity_keywords(msg),
+            "confidence": 0.5,
+        }
+
+def classify_skill(msg: str, history: list = None) -> str:
+    return _llm_classify(msg, history)["skill"]
+
+def route_complexity(msg: str, history: list = None) -> str:
+    return _llm_classify(msg, history)["complexity"]
 
 def tool_weather(location: str) -> str:
     """Get real-time weather from Open-Meteo (free, no API key needed)."""

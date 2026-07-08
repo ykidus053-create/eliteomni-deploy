@@ -707,7 +707,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         # Claude: never send empty turns, truncate long history turns
         if c and len(c) > 2:
             hist_msgs.append({"role": r, "content": c[:800]})
-    max_t = 64000  # generous ceiling; model's own judgment decides actual length
+    max_t = 16000  # fixed generous ceiling — Claude-style, no per-request heuristic
     mode  = "extended_think" if effort == "high" else ("think" if effort == "medium" else "fast")
 
     # ── DECIDE: routing strategy ───────────────────────────────────────────────
@@ -767,9 +767,16 @@ def pipeline_sync(msg: str, history: list) -> dict:
         fast_msgs = [m for m in prompt if m.get("role") == "system"][:1]
         fast_msgs += [m for m in prompt if m.get("role") != "system"][-4:]
         fast_msgs[0]["content"] = fast_msgs[0]["content"][:500]  # cap system prompt at 500 chars
+        # Guarantee the reasoning-depth instruction survives truncation — appended fresh, not
+        # relying on it surviving inside the 500-char cap of the full system prompt.
+        fast_msgs[0]["content"] += (
+            "\n\nBefore answering, think in a <think> block if the question needs real reasoning "
+            "(coding, multi-step logic, design, comparison). Skip thinking for simple/trivial questions. "
+            "You decide the depth based on actual difficulty."
+        )
         # 2. Stream chunks directly instead of joining (lower perceived latency)
         chunks = []
-        for chunk in mistral_stream_traced(fast_msgs, max_tokens=400, model=_tier["models"][0], label="fast_tier"):  # 3. max_tokens=400
+        for chunk in mistral_stream_traced(fast_msgs, max_tokens=4000, model=_tier["models"][0], label="fast_tier"):  # raised from 400 — let model decide its own depth
             chunks.append(chunk)
         fast_response = "".join(chunks)
         if fast_response:
@@ -1309,7 +1316,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
     )
     _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
-    max_t = 640000 if (skill == "coder" or _is_large_scope) else 16000
+    max_t = 16000  # fixed generous ceiling — Claude-style, no per-request heuristic
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
@@ -1451,6 +1458,20 @@ def pipeline_stream(msg: str, history: list):
     rlhf_note             = _safe(_f_rlhf,  "",         "rlhf")
     _mem_ctx              = _safe(_f_memctx, "",        "memctx")
     _ex2.shutdown(wait=False)
+
+    # ── Visible "thinking" indicator before the slow deliberate pipeline ────
+    # Matches the exact condition in route_to_reasoning_engine that triggers
+    # the multi-stage prover/skeptic/judge pipeline, so the user sees progress
+    # instead of silence during that blocking call.
+    if complexity in ("hard", "medium") and skill in ("coder", "researcher", "calculator"):
+        import random as _rthink
+        _thinking_msgs = [
+            "🤔 *Thinking through this carefully...*\n\n",
+            "🧠 *Working through the details...*\n\n",
+            "🔍 *Reasoning step by step...*\n\n",
+        ]
+        yield _rthink.choice(_thinking_msgs)
+
     system          = build_system_prompt(skill, _mem_working, _mem_episodic, rlhf_note, ctx_sum or "", complexity)
     if _mem_ctx: system += _mem_ctx
     system          = trim_system_prompt(system, complexity)
@@ -2706,6 +2727,42 @@ async function send(){
     const r=addBub('','assistant',false,true,skillName);
     aiBub=r.bub;
     aiBub.innerHTML='<span class="cursor" id="cur"></span>';
+    let thinkingBox=null, thinkingDone=false;
+    function ensureThinkingBox(){
+      if(thinkingBox) return thinkingBox;
+      thinkingBox=document.createElement('div');
+      thinkingBox.className='eo-thinking';
+      thinkingBox.style.cssText='font-style:italic;opacity:.65;font-size:.88em;padding:8px 0 10px 0;border-left:2px solid var(--bd,#3a3a3a);padding-left:10px;margin-bottom:8px;transition:opacity .3s ease;cursor:pointer;';
+      thinkingBox.title='Click to expand/collapse';
+      const label=document.createElement('div');
+      label.style.cssText='font-weight:600;opacity:.8;margin-bottom:2px;font-style:normal;';
+      label.textContent='\uD83D\uDCAD Thinking';
+      const body=document.createElement('div');
+      body.className='eo-thinking-body';
+      thinkingBox.appendChild(label);
+      thinkingBox.appendChild(body);
+      let _userExpanded=false;
+      thinkingBox.addEventListener('click',()=>{
+        const isHidden = body.style.display==='none';
+        body.style.display = isHidden ? 'block' : 'none';
+        _userExpanded = isHidden;
+        thinkingBox._userExpanded = _userExpanded;
+      });
+      if(aiBub && aiBub.parentElement){ aiBub.parentElement.insertBefore(thinkingBox, aiBub); }
+      return thinkingBox;
+    }
+    function collapseThinking(){
+      if(!thinkingBox || thinkingDone) return;
+      thinkingDone=true;
+      thinkingBox.style.opacity='.4';
+      const label=thinkingBox.querySelector('div');
+      if(label) label.textContent='\uD83D\uDCAD Thought process (click to expand)';
+      // Only auto-hide the body if the user hasn't manually expanded it
+      if(!thinkingBox._userExpanded){
+        const body=thinkingBox.querySelector('.eo-thinking-body');
+        if(body){ body.style.display='none'; }
+      }
+    }
 
     // ── Claude-style rAF throttled streaming ──────────────────────
     // Tokens accumulate in fullText, rAF renders at 60fps max
@@ -2739,6 +2796,46 @@ async function send(){
       if(done)break;
       const raw=decoder.decode(value,{stream:true});
       buf+=raw;
+      // Strip \x00THINKING\x00...\x00/THINKING\x00 markers into the thinking box
+      while(true){
+        const tStart=buf.indexOf('\x00THINKING\x00');
+        if(tStart===-1) break;
+        const tEnd=buf.indexOf('\x00/THINKING\x00', tStart);
+        if(tEnd===-1){
+          // Thinking block still open/streaming — show partial content live, hide from main buf
+          const partial=buf.slice(tStart+11);
+          const box=ensureThinkingBox();
+          const body=box.querySelector('.eo-thinking-body');
+          if(body) body.textContent=partial;
+          buf=buf.slice(0,tStart);
+          break;
+        }
+        const thinkContent=buf.slice(tStart+11, tEnd);
+        const box=ensureThinkingBox();
+        const body=box.querySelector('.eo-thinking-body');
+        if(body) body.textContent=thinkContent;
+        buf=buf.slice(0,tStart)+buf.slice(tEnd+12);
+      }
+      // Strip \x00THINKING\x00...\x00/THINKING\x00 markers into the thinking box
+      while(true){
+        const tStart=buf.indexOf('\x00THINKING\x00');
+        if(tStart===-1) break;
+        const tEnd=buf.indexOf('\x00/THINKING\x00', tStart);
+        if(tEnd===-1){
+          // Thinking block still open/streaming — show partial content live, hide from main buf
+          const partial=buf.slice(tStart+11);
+          const box=ensureThinkingBox();
+          const body=box.querySelector('.eo-thinking-body');
+          if(body) body.textContent=partial;
+          buf=buf.slice(0,tStart);
+          break;
+        }
+        const thinkContent=buf.slice(tStart+11, tEnd);
+        const box=ensureThinkingBox();
+        const body=box.querySelector('.eo-thinking-body');
+        if(body) body.textContent=thinkContent;
+        buf=buf.slice(0,tStart)+buf.slice(tEnd+12);
+      }
 
       // Parse metadata from first newline-terminated JSON line
       if(!metaParsed){
@@ -2751,12 +2848,15 @@ async function send(){
             metaParsed=true;
           }catch(e){metaParsed=true;}
           fullText=buf;
+          if(fullText.trim().length>0) collapseThinking();
         } else if(buf.length>200){
           metaParsed=true;
           fullText=buf;
+          if(fullText.trim().length>0) collapseThinking();
         }
       } else {
         fullText=buf;
+        if(fullText.trim().length>0) collapseThinking();
       }
 
       // Schedule one rAF per frame — never blocks, never per-token
@@ -3310,16 +3410,26 @@ async def stream_chat(req: Request):
     async def _gen():
         import asyncio as _asyncio
         _loop = _asyncio.get_event_loop()
+        # ── Visible "thinking" indicator while context/reasoning builds ────
+        _quick_skill_guess = classify_skill(msg) if 'classify_skill' in dir() else "general"
+        if len(msg) > 100 or _quick_skill_guess in ("coder", "researcher", "calculator"):
+            import random as _rthink0
+            _think_text = _rthink0.choice([
+                "Thinking through the approach...",
+                "Working through this...",
+                "Reasoning through the details...",
+            ])
+            yield "\x00THINKING\x00" + _think_text + "\x00/THINKING\x00\n"
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
         try:
-            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=8)
+            ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=10)
         except _asyncio.TimeoutError:
             print("[stream_chat] ctx timeout — fast first token with minimal ctx (history preserved)")
             from modules.core.constants import get_infra_tier
             _infra_t = get_infra_tier("medium")
             _fallback_msgs = [{"role": h.get("role","user"), "content": h.get("content","")} for h in (hist or [])[-10:] if h.get("content")]
             _fallback_msgs.append({"role": "user", "content": msg})
-            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 2048, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
+            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 16000, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
         yield ""
 
         if False: yield
@@ -3379,7 +3489,7 @@ async def stream_chat(req: Request):
                 ]
                 def _tool_cont_worker():
                     try:
-                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=4096, model="zai-glm-4.7"):
+                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=16000, model="zai-glm-4.7"):
                             loop.call_soon_threadsafe(tok_q.put_nowait, t2)
                     except Exception as e:
                         print(f"[tool cont] {e}")
@@ -3450,7 +3560,7 @@ async def stream_chat(req: Request):
             _cont_chunks2 = []
             def _mcp_cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs2, max_tokens=4096, model=ctx.get("model")):
+                    for tok in mistral_stream(_cont_msgs2, max_tokens=16000, model=ctx.get("model")):
                         loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[mcp cont worker] {e}")
@@ -3467,7 +3577,7 @@ async def stream_chat(req: Request):
             chunks.append(final)
 
         # ── Auto-continuation: resume if response was cut off ──────────────
-        _max_continuations = 3
+        _max_continuations = 1  # safety net only — fixed generous token budget means truncation should be rare
         _continuation = 0
         while _continuation < _max_continuations and final:
             _trunc = False
@@ -3496,7 +3606,7 @@ async def stream_chat(req: Request):
             _cont_chunks = []
             def _cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs, max_tokens=4096, model=ctx.get("model")):
+                    for tok in mistral_stream(_cont_msgs, max_tokens=16000, model=ctx.get("model")):
                         loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[cont worker] {e}")
@@ -4755,10 +4865,20 @@ async def speech_to_text(request: Request):
 
 
 if __name__ == "__main__":
-    import uvicorn
-    from modules.services.mcp import mcp_discover_all
-    mcp_discover_all()
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    import uvicorn, os, sys, traceback
+    try:
+        from modules.services.mcp import mcp_discover_all
+        mcp_discover_all()
+    except Exception as _e:
+        print(f"[STARTUP] mcp_discover_all failed (non-fatal): {_e}", flush=True)
+    _port = int(os.environ.get("PORT", 8080))
+    print(f"[STARTUP] About to start uvicorn on port {_port}", flush=True)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=_port)
+    except Exception as _e:
+        print(f"[STARTUP] FATAL: uvicorn.run raised: {_e}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)
 
 # ── NIGHTLY SELF-OPTIMIZATION ─────────────────────────────────────────────────
 import threading as _nth, time as _ntt
@@ -5212,7 +5332,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
     )
     _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
-    max_t = 640000 if (skill == "coder" or _is_large_scope) else 16000
+    max_t = 16000  # fixed generous ceiling — Claude-style, no per-request heuristic
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():

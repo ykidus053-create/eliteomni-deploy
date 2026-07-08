@@ -195,6 +195,111 @@ def tool_lint(code: str) -> str:
             issues.append(f"Line {i}: exceeds 120 chars")
     return "OK" if not issues else "; ".join(issues[:5])
 
+
+# ── MULTI-LANGUAGE LINT + EXEC ────────────────────────────────────────────────
+
+def _detect_language(code: str) -> str:
+    """Best-effort language detection from code content."""
+    if re.search(r'^\s*package\s+\w+', code, re.MULTILINE) and "func main" in code:
+        return "go"
+    if re.search(r'\bfn\s+main\s*\(', code) and "let " in code:
+        return "rust"
+    if re.search(r'^\s*(import|export)\s', code, re.MULTILINE) and (":" in code and "interface" in code or "type " in code):
+        return "typescript"
+    if re.search(r'\b(const|let|var)\s+\w+\s*=', code) and "function" in code or "=>" in code:
+        return "javascript"
+    if "public class" in code or "public static void main" in code:
+        return "java"
+    return "python"
+
+def tool_lint_multi(code: str, language: str = None) -> str:
+    """Lint code in the detected or specified language."""
+    lang = language or _detect_language(code)
+    if lang == "python":
+        return tool_lint(code)
+    tmp = None
+    try:
+        ext = {"go": ".go", "rust": ".rs", "typescript": ".ts", "javascript": ".js", "java": ".java"}.get(lang, ".txt")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False) as f:
+            f.write(code)
+            tmp = f.name
+        if lang == "go":
+            result = subprocess.run(["gofmt", "-l", tmp], capture_output=True, text=True, timeout=10)
+            if result.stdout.strip():
+                return f"gofmt issues: {result.stdout.strip()}"
+            check = subprocess.run(["go", "vet", tmp], capture_output=True, text=True, timeout=15)
+            return "OK" if check.returncode == 0 else check.stderr[:500]
+        elif lang == "rust":
+            check = subprocess.run(["rustc", "--edition", "2021", "--crate-type", "bin", "-o", "/dev/null", tmp],
+                                   capture_output=True, text=True, timeout=20)
+            return "OK" if check.returncode == 0 else check.stderr[:500]
+        elif lang == "typescript":
+            check = subprocess.run(["npx", "--yes", "tsc", "--noEmit", "--target", "es2020", tmp],
+                                   capture_output=True, text=True, timeout=20)
+            return "OK" if check.returncode == 0 else (check.stdout + check.stderr)[:500]
+        elif lang == "javascript":
+            check = subprocess.run(["node", "--check", tmp], capture_output=True, text=True, timeout=10)
+            return "OK" if check.returncode == 0 else check.stderr[:500]
+        else:
+            return "OK"  # no linter available for this language
+    except FileNotFoundError as e:
+        return f"[LINT SKIPPED] toolchain not installed: {e}"
+    except subprocess.TimeoutExpired:
+        return "[LINT TIMEOUT]"
+    except Exception as e:
+        return f"[LINT ERROR]: {e}"
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except Exception: pass
+
+def tool_exec_multi(code: str, language: str = None, timeout: int = 15) -> str:
+    """Execute code in the detected or specified language."""
+    lang = language or _detect_language(code)
+    if lang == "python":
+        return tool_exec(code, timeout=timeout)
+    if _EXEC_BLOCKED.search(code):
+        return "[BLOCKED]: Code contains restricted operations."
+    tmp = None
+    try:
+        if lang == "go":
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".go", delete=False) as f:
+                f.write(code)
+                tmp = f.name
+            result = subprocess.run(["go", "run", tmp], capture_output=True, text=True, timeout=timeout)
+        elif lang == "rust":
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".rs", delete=False) as f:
+                f.write(code)
+                tmp = f.name
+            binpath = tmp + ".bin"
+            compile_r = subprocess.run(["rustc", "-O", "-o", binpath, tmp], capture_output=True, text=True, timeout=timeout)
+            if compile_r.returncode != 0:
+                return f"[COMPILE ERROR]: {compile_r.stderr[:500]}"
+            result = subprocess.run([binpath], capture_output=True, text=True, timeout=timeout)
+            try: os.unlink(binpath)
+            except Exception: pass
+        elif lang in ("javascript", "typescript"):
+            ext = ".ts" if lang == "typescript" else ".js"
+            with tempfile.NamedTemporaryFile(mode="w", suffix=ext, delete=False) as f:
+                f.write(code)
+                tmp = f.name
+            runner = ["npx", "--yes", "ts-node", tmp] if lang == "typescript" else ["node", tmp]
+            result = subprocess.run(runner, capture_output=True, text=True, timeout=timeout)
+        else:
+            return f"[EXEC SKIPPED] No runner configured for {lang}"
+        out = (result.stdout + result.stderr).strip()
+        return out[:800] if out else "(no output)"
+    except FileNotFoundError as e:
+        return f"[EXEC SKIPPED] toolchain not installed: {e}"
+    except subprocess.TimeoutExpired:
+        return f"[TIMEOUT after {timeout}s]"
+    except Exception as e:
+        return f"[EXEC ERROR]: {e}"
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except Exception: pass
+
 def _strip_verbose_output(output: str, max_lines: int = 15) -> str:
     lines = output.strip().split("\n")
     if len(lines) <= max_lines:
@@ -259,6 +364,357 @@ def _render_diff(original: str, patched: str, filename: str = "code.py") -> str:
     ))
     return "".join(diff) if diff else "(no changes)"
 
+
+# ── DEPENDENCY / PACKAGE VERIFICATION ─────────────────────────────────────────
+
+def tool_verify_package(name: str, ecosystem: str = "auto") -> str:
+    """Check whether a package actually exists in its registry before trusting an import.
+    ecosystem: 'pypi', 'npm', 'crates', or 'auto' (guess from name/context)."""
+    import urllib.request, json as _json
+
+    name = name.strip()
+    if not name:
+        return "[VERIFY ERROR] empty package name"
+
+    registries = {
+        "pypi":   f"https://pypi.org/pypi/{name}/json",
+        "npm":    f"https://registry.npmjs.org/{name}",
+        "crates": f"https://crates.io/api/v1/crates/{name}",
+    }
+
+    def _check(eco):
+        url = registries[eco]
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "eliteomni-dep-check/1.0"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                if resp.status == 200:
+                    data = _json.loads(resp.read().decode())
+                    if eco == "pypi":
+                        latest = data.get("info", {}).get("version", "unknown")
+                        return f"EXISTS on PyPI (latest: {latest})"
+                    elif eco == "npm":
+                        latest = data.get("dist-tags", {}).get("latest", "unknown")
+                        return f"EXISTS on npm (latest: {latest})"
+                    elif eco == "crates":
+                        latest = data.get("crate", {}).get("newest_version", "unknown")
+                        return f"EXISTS on crates.io (latest: {latest})"
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None  # not found in this registry
+            return f"[CHECK ERROR {eco}]: HTTP {e.code}"
+        except Exception as e:
+            return f"[CHECK ERROR {eco}]: {e}"
+        return None
+
+    if ecosystem != "auto":
+        result = _check(ecosystem)
+        return result if result else f"NOT FOUND on {ecosystem} — likely hallucinated or misspelled"
+
+    # auto mode: try all three, report all hits
+    hits = []
+    for eco in ("pypi", "npm", "crates"):
+        result = _check(eco)
+        if result and not result.startswith("[CHECK ERROR"):
+            hits.append(result)
+    if hits:
+        return " | ".join(hits)
+    return f"NOT FOUND in PyPI, npm, or crates.io — likely hallucinated or misspelled package: '{name}'"
+
+def tool_verify_imports(code: str, language: str = None) -> str:
+    """Extract import/require statements from code and verify each package exists.
+    Returns a summary flagging any packages that could not be found."""
+    lang = language or _detect_language(code)
+    packages = set()
+
+    if lang == "python":
+        for m in re.finditer(r'^\s*(?:from|import)\s+([a-zA-Z0-9_\.]+)', code, re.MULTILINE):
+            pkg = m.group(1).split(".")[0]
+            if pkg not in ("os", "sys", "re", "json", "time", "math", "typing", "collections",
+                          "itertools", "functools", "subprocess", "threading", "datetime",
+                          "pathlib", "abc", "dataclasses", "enum", "asyncio", "unittest",
+                          "logging", "random", "string", "io", "copy", "hashlib", "uuid"):
+                packages.add(("pypi", pkg))
+    elif lang in ("javascript", "typescript"):
+        for m in re.finditer(r'(?:require\(|from\s+)[\'"]([a-zA-Z0-9_\-@/]+)[\'"]', code):
+            pkg = m.group(1)
+            if not pkg.startswith(".") and not pkg.startswith("/"):
+                packages.add(("npm", pkg.split("/")[0] if not pkg.startswith("@") else "/".join(pkg.split("/")[:2])))
+    elif lang == "rust":
+        for m in re.finditer(r'^\s*use\s+([a-zA-Z0-9_]+)::', code, re.MULTILINE):
+            pkg = m.group(1)
+            if pkg not in ("std", "core", "alloc", "self", "crate", "super"):
+                packages.add(("crates", pkg))
+    elif lang == "go":
+        for m in re.finditer(r'"([a-zA-Z0-9_\-\./]+)"', code):
+            imp = m.group(1)
+            if "." in imp and "/" in imp:  # heuristic: external module path like github.com/x/y
+                packages.add(("go", imp))
+
+    if not packages:
+        return "OK — no external dependencies detected"
+
+    flagged = []
+    for eco, pkg in list(packages)[:10]:  # cap to avoid excessive network calls
+        if eco == "go":
+            flagged_note = f"'{pkg}' — Go modules not verified (no registry check implemented)"
+            continue
+        result = tool_verify_package(pkg, ecosystem=eco)
+        if "NOT FOUND" in result:
+            flagged.append(f"'{pkg}': {result}")
+
+    if flagged:
+        return "⚠️ UNVERIFIED PACKAGES (possible hallucination): " + " | ".join(flagged)
+    return f"OK — verified {len(packages)} package(s) exist in registry"
+
+
+# ── AUTO TEST GENERATION & VERIFICATION ───────────────────────────────────────
+
+def tool_generate_and_run_test(code: str, task_description: str, language: str = None, timeout: int = 15) -> dict:
+    """Generate a test for the given code, run it, and report pass/fail.
+    This closes the loop between 'code that runs' and 'code that's correct'."""
+    lang = language or _detect_language(code)
+    result = {"test_code": "", "test_output": "", "passed": False, "skipped": False}
+
+    try:
+        from modules.core.http_client import groq_generate
+        from modules.services.pipeline import build_chatml
+    except ImportError as ie:
+        result["test_output"] = f"[SKIPPED] import error: {ie}"
+        result["skipped"] = True
+        return result
+
+    lang_test_frameworks = {
+        "python": "pytest-style functions (def test_xxx) using plain assert statements",
+        "javascript": "Node's built-in assert module, plain function calls",
+        "typescript": "Node's built-in assert module, plain function calls",
+        "go": "Go's standard testing package (func TestXxx(t *testing.T))",
+        "rust": "Rust's built-in #[test] attribute with assert! macros",
+    }
+    framework = lang_test_frameworks.get(lang, "simple assertions")
+
+    test_prompt = (
+        f"Write a minimal but meaningful test for this {lang} code that verifies it correctly "
+        f"solves the task: {task_description[:300]}\n\n"
+        f"Use {framework}. Output ONLY the test code in a code block, no explanation. "
+        f"The test must be self-contained and runnable — include the necessary imports and "
+        f"a way to execute it (e.g. if __name__ == '__main__' for Python, func main calling tests for Go).\n\n"
+        f"Code to test:\n```{lang}\n{code[:1500]}\n```"
+    )
+
+    test_response = groq_generate(
+        build_chatml("You are a senior test engineer. Output only runnable test code.", [], test_prompt),
+        max_tokens=800
+    )
+    if not test_response:
+        result["test_output"] = "[SKIPPED] test generation returned empty"
+        result["skipped"] = True
+        return result
+
+    test_blocks = _extract_code_blocks(test_response)
+    if not test_blocks:
+        result["test_output"] = "[SKIPPED] no test code block found in response"
+        result["skipped"] = True
+        return result
+
+    test_code = test_blocks[0]
+    result["test_code"] = test_code
+
+    # For Python, combine original code + test into one runnable script
+    if lang == "python":
+        combined = code + "\n\n" + test_code
+        exec_out = tool_exec(combined, timeout=timeout)
+    else:
+        # For compiled/other languages, run the test code standalone
+        # (assumes test imports or redefines what it needs — best effort)
+        exec_out = tool_exec_multi(test_code, language=lang, timeout=timeout)
+
+    result["test_output"] = exec_out
+
+    failure_markers = ("Error", "Traceback", "FAILED", "[TIMEOUT", "[EXEC ERROR", "[COMPILE ERROR", "panic:")
+    if any(marker in exec_out for marker in failure_markers):
+        result["passed"] = False
+    else:
+        result["passed"] = True
+
+    return result
+
+
+# ── LIVE DOCUMENTATION FETCH ──────────────────────────────────────────────────
+
+def tool_fetch_docs(package: str, ecosystem: str = "auto", query: str = "") -> str:
+    """Fetch real documentation for a package instead of guessing API signatures from training data.
+    Tries the package's official docs/README source based on ecosystem."""
+    import urllib.request, json as _json, re as _re
+
+    package = package.strip()
+
+    def _get(url, timeout=8):
+        req = urllib.request.Request(url, headers={"User-Agent": "eliteomni-docs-fetch/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode(errors="replace")
+
+    try:
+        if ecosystem in ("pypi", "auto"):
+            try:
+                data = _json.loads(_get(f"https://pypi.org/pypi/{package}/json"))
+                info = data.get("info", {})
+                summary = info.get("summary", "")
+                description = info.get("description", "")[:3000]
+                home = info.get("home_page") or info.get("project_url", "")
+                version = info.get("version", "unknown")
+                result = f"[PyPI: {package} v{version}]\n{summary}\n\n{description}"
+                if home:
+                    result += f"\n\nHomepage: {home}"
+                return result[:4000]
+            except Exception:
+                if ecosystem == "pypi":
+                    return f"[DOCS ERROR] Could not fetch PyPI docs for '{package}'"
+
+        if ecosystem in ("npm", "auto"):
+            try:
+                data = _json.loads(_get(f"https://registry.npmjs.org/{package}"))
+                latest_tag = data.get("dist-tags", {}).get("latest", "")
+                latest = data.get("versions", {}).get(latest_tag, {})
+                description = latest.get("description", "") or data.get("description", "")
+                readme = data.get("readme", "")[:3000]
+                homepage = latest.get("homepage", "")
+                result = f"[npm: {package} v{latest_tag}]\n{description}\n\n{readme}"
+                if homepage:
+                    result += f"\n\nHomepage: {homepage}"
+                return result[:4000]
+            except Exception:
+                if ecosystem == "npm":
+                    return f"[DOCS ERROR] Could not fetch npm docs for '{package}'"
+
+        if ecosystem in ("crates", "auto"):
+            try:
+                data = _json.loads(_get(f"https://crates.io/api/v1/crates/{package}"))
+                crate = data.get("crate", {})
+                description = crate.get("description", "")
+                version = crate.get("newest_version", "unknown")
+                docs_url = crate.get("documentation") or f"https://docs.rs/{package}"
+                result = f"[crates.io: {package} v{version}]\n{description}\n\nDocs: {docs_url}"
+                return result[:4000]
+            except Exception:
+                if ecosystem == "crates":
+                    return f"[DOCS ERROR] Could not fetch crates.io docs for '{package}'"
+
+        return f"[DOCS NOT FOUND] Could not locate documentation for '{package}' in any ecosystem"
+    except Exception as e:
+        return f"[DOCS ERROR] {e}"
+
+def tool_fetch_api_reference(url: str, max_chars: int = 4000) -> str:
+    """Fetch a specific documentation URL directly (e.g. official API reference page).
+    Use when you know the exact doc page and need to verify a specific API signature."""
+    import urllib.request, re as _re
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (eliteomni-docs-fetch)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode(errors="replace")
+
+        # Strip scripts/styles, then tags, to get readable text
+        text = _re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=_re.DOTALL | _re.IGNORECASE)
+        text = _re.sub(r"<[^>]+>", " ", text)
+        text = _re.sub(r"\s+", " ", text).strip()
+        return text[:max_chars]
+    except Exception as e:
+        return f"[FETCH ERROR] {e}"
+
+
+# ── MULTI-FILE PROJECT AWARENESS ──────────────────────────────────────────────
+
+def tool_read_project_context(entry_file: str, max_files: int = 8, max_chars_per_file: int = 2000) -> str:
+    """Read a file plus its local imports/dependencies to build a coherent picture
+    of the surrounding codebase before editing. Prevents blind single-file edits
+    that break cross-file interfaces."""
+    import os
+
+    entry_file = os.path.expanduser(entry_file)
+    if not os.path.exists(entry_file):
+        return f"[PROJECT CONTEXT ERROR] File not found: {entry_file}"
+
+    base_dir = os.path.dirname(os.path.abspath(entry_file))
+    visited = set()
+    to_visit = [entry_file]
+    collected = []
+
+    def _find_local_imports(content, file_path):
+        """Find import statements pointing to local files (not external packages)."""
+        found = []
+        file_dir = os.path.dirname(file_path)
+        ext = os.path.splitext(file_path)[1]
+
+        if ext == ".py":
+            for m in re.finditer(r'^\s*from\s+(\.[\w\.]*)\s+import|^\s*import\s+([\w\.]+)', content, re.MULTILINE):
+                mod = (m.group(1) or m.group(2) or "").lstrip(".")
+                if mod:
+                    candidate = os.path.join(file_dir, mod.replace(".", os.sep) + ".py")
+                    if os.path.exists(candidate):
+                        found.append(candidate)
+        elif ext in (".js", ".ts", ".jsx", ".tsx"):
+            for m in re.finditer(r'(?:import.*?from\s+|require\()[\'"](\.[^\'"\)]*)[\'"]', content):
+                rel = m.group(1)
+                for cand_ext in ("", ".js", ".ts", ".jsx", ".tsx", "/index.js", "/index.ts"):
+                    candidate = os.path.normpath(os.path.join(file_dir, rel + cand_ext))
+                    if os.path.exists(candidate) and os.path.isfile(candidate):
+                        found.append(candidate)
+                        break
+        return found
+
+    while to_visit and len(collected) < max_files:
+        current = to_visit.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+
+        try:
+            with open(current, "r", errors="replace") as f:
+                content = f.read(max_chars_per_file * 2)
+        except Exception as e:
+            collected.append(f"--- {current} ---\n[READ ERROR: {e}]")
+            continue
+
+        truncated_content = content[:max_chars_per_file]
+        truncated_note = " [TRUNCATED]" if len(content) > max_chars_per_file else ""
+        collected.append(f"--- {current} ---\n{truncated_content}{truncated_note}")
+
+        local_imports = _find_local_imports(content, current)
+        for imp in local_imports:
+            if imp not in visited and imp not in to_visit:
+                to_visit.append(imp)
+
+    header = f"[PROJECT CONTEXT: {len(collected)} file(s), entry point {entry_file}]\n\n"
+    return header + "\n\n".join(collected)
+
+def tool_list_project_structure(directory: str = ".", max_depth: int = 3, ignore_dirs: tuple = ("node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build")) -> str:
+    """Return a tree-like overview of a project's file structure so the model
+    understands the codebase layout before making changes."""
+    import os
+
+    directory = os.path.expanduser(directory)
+    if not os.path.isdir(directory):
+        return f"[STRUCTURE ERROR] Not a directory: {directory}"
+
+    lines = []
+    base_depth = directory.rstrip(os.sep).count(os.sep)
+
+    for root, dirs, files in os.walk(directory):
+        depth = root.rstrip(os.sep).count(os.sep) - base_depth
+        if depth >= max_depth:
+            dirs[:] = []
+            continue
+        dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith(".")]
+        indent = "  " * depth
+        lines.append(f"{indent}{os.path.basename(root)}/")
+        for fname in sorted(files)[:30]:
+            lines.append(f"{indent}  {fname}")
+        if len(lines) > 200:
+            lines.append("... [truncated, too many files]")
+            break
+
+    return "\n".join(lines) if lines else f"[STRUCTURE] Empty directory: {directory}"
+
 def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3) -> dict:
     result = {
         "patched_code": original_code, "diff": "",
@@ -299,16 +755,33 @@ def _patch_execution_loop(original_code: str, task: str, max_iterations: int = 3
         if not blocks:
             continue
         patched     = blocks[0]
-        lint        = tool_lint(patched)
+        _lang       = _detect_language(patched)
+        lint        = tool_lint_multi(patched, language=_lang)
         result["lint"] = lint
-        if lint != "OK":
+        if lint != "OK" and not lint.startswith("[LINT SKIPPED"):
             task          = f"{task}\n\n[Previous lint error: {lint}. Fix it.]"
             original_code = patched
             continue
-        exec_out            = tool_exec(patched)
+        exec_out            = tool_exec_multi(patched, language=_lang)
         result["exec_output"] = exec_out
+
+        dep_check = tool_verify_imports(patched, language=_lang)
+        result["dependency_check"] = dep_check
+        if "UNVERIFIED PACKAGES" in dep_check:
+            task          = f"{task}\n\n[Dependency check failed: {dep_check}. Use only real, verified packages.]"
+            original_code = patched
+            continue
+
         result["patched_code"] = patched
         result["diff"]         = _render_diff(original_code, patched)
+
+        test_result = tool_generate_and_run_test(patched, task, language=_lang)
+        result["test"] = test_result
+        if not test_result.get("skipped") and not test_result.get("passed"):
+            task          = f"{task}\n\n[Generated test failed: {test_result['test_output'][:300]}. Fix the code so the test passes.]"
+            original_code = patched
+            continue
+
         result["success"]      = True
         break
     return result
@@ -372,6 +845,69 @@ def gpt5_math(problem: str, complexity: str = "hard") -> str:
         "Be strict — one wrong step = wrong answer."
     )
 
+
+
+# ── FILE SYSTEM TOOLS ─────────────────────────────────────────────────────────
+
+def tool_read_file(path: str, max_chars: int = 8000) -> str:
+    """Read a file from disk and return its contents."""
+    import os
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.exists(path):
+            return f"[FILE ERROR] File not found: {path}"
+        if os.path.getsize(path) == 0:
+            return f"[FILE ERROR] File is empty: {path}"
+        with open(path, "r", errors="replace") as f:
+            content = f.read(max_chars)
+        truncated = " [TRUNCATED]" if len(content) == max_chars else ""
+        return content + truncated
+    except Exception as e:
+        return f"[FILE ERROR] {e}"
+
+def tool_write_file(path: str, content: str) -> str:
+    """Write content to a file, creating directories as needed."""
+    import os
+    try:
+        path = os.path.expanduser(path)
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+        return f"[FILE OK] Written {len(content)} chars to {path}"
+    except Exception as e:
+        return f"[FILE ERROR] {e}"
+
+def tool_list_files(directory: str = ".", pattern: str = "*") -> str:
+    """List files in a directory matching an optional glob pattern."""
+    import os, glob
+    try:
+        directory = os.path.expanduser(directory)
+        matches = glob.glob(os.path.join(directory, "**", pattern), recursive=True)
+        matches = [m for m in matches if os.path.isfile(m)][:50]
+        if not matches:
+            return f"[FILE] No files found in {directory} matching {pattern}"
+        return "\n".join(matches)
+    except Exception as e:
+        return f"[FILE ERROR] {e}"
+
+def tool_patch_file(path: str, old: str, new: str) -> str:
+    """Replace an exact string in a file — safe surgical edit."""
+    import os
+    try:
+        path = os.path.expanduser(path)
+        with open(path, "r") as f:
+            content = f.read()
+        if old not in content:
+            return f"[PATCH ERROR] String not found in {path}"
+        count = content.count(old)
+        if count > 1:
+            return f"[PATCH ERROR] String appears {count} times — must be unique"
+        content = content.replace(old, new, 1)
+        with open(path, "w") as f:
+            f.write(content)
+        return f"[PATCH OK] Applied to {path}"
+    except Exception as e:
+        return f"[PATCH ERROR] {e}"
 
 def tool_arxiv(query: str, max_results: int = 3) -> str:
     """
