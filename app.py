@@ -3489,7 +3489,7 @@ async def stream_chat(req: Request):
                 ]
                 def _tool_cont_worker():
                     try:
-                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=16000, model="zai-glm-4.7"):
+                        for t2 in cerebras_stream(_cont_msgs3, max_tokens=4096, model="zai-glm-4.7"):
                             loop.call_soon_threadsafe(tok_q.put_nowait, t2)
                     except Exception as e:
                         print(f"[tool cont] {e}")
@@ -3560,7 +3560,7 @@ async def stream_chat(req: Request):
             _cont_chunks2 = []
             def _mcp_cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs2, max_tokens=16000, model=ctx.get("model")):
+                    for tok in mistral_stream(_cont_msgs2, max_tokens=4096, model=ctx.get("model")):
                         loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[mcp cont worker] {e}")
@@ -3577,7 +3577,7 @@ async def stream_chat(req: Request):
             chunks.append(final)
 
         # ── Auto-continuation: resume if response was cut off ──────────────
-        _max_continuations = 1  # safety net only — fixed generous token budget means truncation should be rare
+        _max_continuations = 8  # allow long builds to continue across many passes given the 4K/pass ceiling
         _continuation = 0
         while _continuation < _max_continuations and final:
             _trunc = False
@@ -3606,7 +3606,7 @@ async def stream_chat(req: Request):
             _cont_chunks = []
             def _cont_worker():
                 try:
-                    for tok in mistral_stream(_cont_msgs, max_tokens=16000, model=ctx.get("model")):
+                    for tok in mistral_stream(_cont_msgs, max_tokens=4096, model=ctx.get("model")):
                         loop.call_soon_threadsafe(tok_q.put_nowait, tok)
                 except Exception as e:
                     print(f"[cont worker] {e}")
