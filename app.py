@@ -3475,8 +3475,15 @@ async def stream_chat(req: Request):
             # Only continue on hard unambiguous signals
             if final.count('```') % 2 != 0:  # unclosed code block
                 _trunc = True
-            _tok_estimate = len(final.split())
-            if _tok_estimate >= ctx.get('max_t', 9999) * 0.97:  # hit token ceiling
+            _tok_estimate = len(final) // 4  # rough chars-to-tokens estimate
+            _cerebras_ceiling = 7500  # real Cerebras free-tier context ceiling, leaves headroom
+            _effective_max = min(ctx.get('max_t', 9999), _cerebras_ceiling)
+            if _tok_estimate >= _effective_max * 0.90:  # hit realistic token ceiling
+                _trunc = True
+            # Mid-method cutoff heuristic: response ends without closing braces/
+            # colons in an incomplete function body (common Cerebras truncation signal)
+            _last_lines = _stripped.split("\n")[-3:]
+            if _last_lines and not any(l.strip().endswith((":","}",")",";","'''")) for l in _last_lines) and len(_stripped) > 200:
                 _trunc = True
             if not _trunc:
                 break
