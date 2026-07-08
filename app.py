@@ -3476,7 +3476,7 @@ async def stream_chat(req: Request):
             if final.count('```') % 2 != 0:  # unclosed code block
                 _trunc = True
             _tok_estimate = len(final) // 4  # rough chars-to-tokens estimate
-            _cerebras_ceiling = 7500  # real Cerebras free-tier context ceiling, leaves headroom
+            _cerebras_ceiling = 7500  # ~8192 total ctx cap on free tier, minus headroom for system prompt+history
             _effective_max = min(ctx.get('max_t', 9999), _cerebras_ceiling)
             if _tok_estimate >= _effective_max * 0.90:  # hit realistic token ceiling
                 _trunc = True
