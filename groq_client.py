@@ -989,7 +989,13 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
         "temperature": 0.2,
         "stream": True,
     }).encode()
-    import requests as _rq, time as _t
+    req = urllib.request.Request(
+        CEREBRAS_URL, data=payload,
+        headers={"Authorization": f"Bearer {CEREBRAS_API_KEY}",
+                 "Content-Type": "application/json",
+                 "User-Agent": "curl/7.88.1"}
+    )
+    import time as _t
     _cbrs_wait()
     _buf = ""
     _in_think = False
