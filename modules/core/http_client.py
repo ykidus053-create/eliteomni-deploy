@@ -382,10 +382,11 @@ def _vision_call(msgs: list, max_tokens: int = 800, model: str = "mistral-small-
         # Override session's default Accept: text/event-stream header — this
         # is a non-streaming call and must receive a single JSON response,
         # not SSE chunks.
+        _live_key_early = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
         _r = _session.post(
             "https://api.mistral.ai/v1/chat/completions",
             json={"model": model, "messages": msgs, "max_tokens": max_tokens, "temperature": 0.3},
-            headers={"Accept": "application/json"},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {_live_key_early}", "Content-Type": "application/json"},
             timeout=30,
         ) if _USE_SESSION else None
         if _r and _r.status_code == 200:
@@ -621,9 +622,11 @@ def mistral_ocr(file_b64: str, filename: str = "document.pdf") -> str:
     """Extract text from a PDF or image using mistral-ocr-latest."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "pdf"
     mime = "application/pdf" if ext == "pdf" else f"image/{ext}"
+    _live_key = os.environ.get("MISTRAL_API_KEY", "") or MISTRAL_API_KEY
     try:
         resp = _session.post(
             "https://api.mistral.ai/v1/ocr",
+            headers={"Authorization": f"Bearer {_live_key}", "Content-Type": "application/json"},
             json={
                 "model": "mistral-ocr-latest",
                 "document": {

@@ -356,11 +356,52 @@ def _verification_gate(msgs: list, response: str, generate_fn) -> str:
 
 def _dynamic_max_tokens(msgs: list) -> int:
     """
-    Claude-style: one fixed, generous token budget for every request instead
-    of a heuristic guess based on message content. Removes the main source
-    of truncation-driven continuation round-trips.
+    Decides token budget dynamically based on request complexity.
+    Never cuts off mid-response again.
     """
-    return 16000
+    user_msg = next((m.get("content","") for m in reversed(msgs) if m.get("role")=="user"), "")
+    msg_len = len(user_msg)
+    m = user_msg.lower()
+
+    # ── Signal detection ─────────────────────────────────────────────────
+    is_code        = any(k in m for k in ["code", "function", "script", "implement", "write a program", "class ", "def ", "algorithm"])
+    is_long_form   = any(k in m for k in ["essay", "report", "explain in detail", "comprehensive", "full", "complete guide", "step by step", "walkthrough"])
+    is_list        = any(k in m for k in ["list", "enumerate", "all the", "every ", "compare", "pros and cons", "table"])
+    is_multi_part  = m.count("?") >= 2 or any(k in m for k in ["and also", "also tell me", "additionally", "furthermore", "multiple", "several"])
+    is_creative    = any(k in m for k in ["story", "poem", "write a ", "narrative", "dialogue", "screenplay", "chapter"])
+    is_short       = any(k in m for k in ["briefly", "in one sentence", "tldr", "quick", "just tell me", "yes or no", "one word"])
+    is_math        = any(k in m for k in ["calculate", "solve", "equation", "proof", "derive", "integral", "matrix"])
+    is_analysis    = any(k in m for k in ["analyze", "analyse", "breakdown", "deep dive", "thoroughly", "in depth", "architecture"])
+
+    # ── Base allocation ──────────────────────────────────────────────────
+    if is_short:
+        base = 256
+    elif msg_len < 80:
+        base = 512
+    elif msg_len < 200:
+        base = 1024
+    else:
+        base = 1500
+
+    # ── Multipliers ──────────────────────────────────────────────────────
+    multiplier = 1.0
+    if is_code:        multiplier += 0.8
+    if is_long_form:   multiplier += 1.0
+    if is_list:        multiplier += 0.4
+    if is_multi_part:  multiplier += 0.5
+    if is_creative:    multiplier += 0.7
+    if is_math:        multiplier += 0.4
+    if is_analysis:    multiplier += 0.6
+
+    # ── Conversation depth bonus ─────────────────────────────────────────
+    non_system = [m for m in msgs if m.get("role") != "system"]
+    if len(non_system) > 6:
+        multiplier += 0.3  # deep conversation = longer context needed
+
+    budget = int(base * multiplier)
+
+    # ── Hard clamp: never below 512, never above 8000 ────────────────────
+    return max(512, min(budget, 8000))
 
 
 def _groq_thinking_effort(complexity: str) -> str:
@@ -903,16 +944,12 @@ _cbrs_last_call = 0.0
 _CBRS_MIN_GAP = 13.0  # seconds between requests
 
 def _cbrs_wait():
-    """Wait until it's safe to START a new request.
-    Gap is measured from when the PREVIOUS request FINISHED (response end),
-    not from when it started — so slow generations don't eat into the safety margin."""
     global _cbrs_last_call
     with _cbrs_lock:
         elapsed = _cbrs_time.time() - _cbrs_last_call
         if elapsed < _CBRS_MIN_GAP:
             _cbrs_time.sleep(_CBRS_MIN_GAP - elapsed)
-        # NOTE: _cbrs_last_call is now updated at the END of cerebras_stream(),
-        # not here, so the timer starts counting from response completion.
+        _cbrs_last_call = _cbrs_time.time()
 
 def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     max_tokens = min(max_tokens, 16000)  # GLM-4.7 hard ceiling
@@ -952,19 +989,13 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
         "temperature": 0.2,
         "stream": True,
     }).encode()
-    req = urllib.request.Request(
-        CEREBRAS_URL, data=payload,
-        headers={"Authorization": f"Bearer {CEREBRAS_API_KEY}",
-                 "Content-Type": "application/json",
-                 "User-Agent": "curl/7.88.1",
-                 }
-    )
+    import requests as _rq, time as _t
     _cbrs_wait()
     _buf = ""
     _in_think = False
-    _think_marker_open = False
-    import time as _t, urllib.error as _ue
     _cbrs_ok = False
+    _tokens_yielded = False  # once True, we NEVER retry — would corrupt output
+
     for _attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
@@ -1026,19 +1057,57 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                 _wait = 15 * (2 ** _attempt)
                 print(f"[Cerebras] 429 backoff {_wait}s attempt {_attempt+1}/4")
                 _t.sleep(_wait)
-                # Push the shared throttle forward so the NEXT request (from any user)
-                # also respects this cooldown, not just this retry loop.
-                with _cbrs_lock:
-                    _cbrs_last_call = _cbrs_time.time()
                 continue
-            raise
-        except Exception as e:
-            print(f"[Cerebras stream error] {e}")
-            yield f"[Cerebras error: {e}]"
+            resp.raise_for_status()
+
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                line = raw_line.strip()
+                if not line or line == "data: [DONE]":
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    chunk = _json.loads(line[6:])
+                    delta = chunk["choices"][0].get("delta", {})
+                    token = delta.get("content") or delta.get("reasoning_content") or ""
+                    if not token:
+                        continue
+                    _buf += token
+                    while True:
+                        if _in_think:
+                            end = _buf.find("</think>")
+                            if end == -1:
+                                _buf = ""; break
+                            _buf = _buf[end + 8:]; _in_think = False
+                        else:
+                            start = _buf.find("<think>")
+                            if start == -1:
+                                out, _buf = _buf, ""
+                                if out:
+                                    _tokens_yielded = True
+                                    yield out
+                                break
+                            if start > 0:
+                                _tokens_yielded = True
+                                yield _buf[:start]
+                            _buf = _buf[start + 7:]; _in_think = True
+                except Exception as _pe:
+                    print(f"[Cerebras parse skip] {_pe}")
+                    continue
+
+            _cbrs_ok = True
             break
 
-    # Stamp the clock at RESPONSE COMPLETION (success or failure) — not at request start.
-    # This ensures the 13s gap represents genuine idle time between Cerebras calls,
-    # not time spent waiting on a slow generation.
-    with _cbrs_lock:
-        _cbrs_last_call = _cbrs_time.time()
+        except _rq.exceptions.Timeout:
+            print(f"[Cerebras] timeout on attempt {_attempt+1} (tokens_yielded={_tokens_yielded})")
+            if _tokens_yielded:
+                break  # don't retry mid-stream — would duplicate/corrupt output
+            _t.sleep(2)
+            continue
+        except Exception as e:
+            print(f"[Cerebras stream error] {e}")
+            if not _tokens_yielded:
+                yield f"[Cerebras error: {e}]"
+            break
