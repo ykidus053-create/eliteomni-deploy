@@ -1,7 +1,13 @@
 import re
 from pathlib import Path
 
-CLAUDE_FABLE_PROMPT = Path(__file__).with_name("claude-fable-5.md").read_text(encoding="utf-8")
+_PROMPT_DIR = Path(__file__).parent
+
+CLAUDE_FABLE_PROMPT = (
+    (_PROMPT_DIR / "claude-fable-5.md").read_text(encoding="utf-8")
+    + "\n\n"
+    + (_PROMPT_DIR / "claude-desktop-code.md").read_text(encoding="utf-8")
+)
 
 INSTRUCTION_PERSISTENCE_DIRECTIVE = """
 
