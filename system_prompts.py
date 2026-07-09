@@ -1,4 +1,7 @@
 import re
+from pathlib import Path
+
+CLAUDE_FABLE_PROMPT = Path(__file__).with_name("claude-fable-5.md").read_text(encoding="utf-8")
 
 INSTRUCTION_PERSISTENCE_DIRECTIVE = """
 
@@ -152,5 +155,16 @@ def build_adaptive_prompt(skill: str, user_msg: str) -> str:
 
 def build_agentic_prompt(skill: str = "agentic", user_msg: str = "") -> str:
     return SYSTEM_PROMPTS["agentic"]
+
+DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPTS["general"]
+
+
+# Claude Fable 5 Base Prompt
+for role in SYSTEM_PROMPTS:
+    SYSTEM_PROMPTS[role] = (
+        CLAUDE_FABLE_PROMPT
+        + "\n\n"
+        + SYSTEM_PROMPTS[role]
+    )
 
 DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPTS["general"]
