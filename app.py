@@ -3467,6 +3467,7 @@ async def stream_chat(req: Request):
         _t.Thread(target=_worker, daemon=True, name="groq_tok").start()
 
         buf = ""
+        _last_finish_reason = ""
         while True:
             tok = await tok_q.get()
             if tok is None:
@@ -3592,7 +3593,6 @@ async def stream_chat(req: Request):
         else:
             _max_continuations = 1
         _continuation = 0
-        _last_finish_reason = ""
         while _continuation < _max_continuations and final:
             _trunc = False
             _stripped = final.rstrip()
