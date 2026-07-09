@@ -995,7 +995,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                  "Content-Type": "application/json",
                  "User-Agent": "curl/7.88.1"}
     )
-    import time as _t
+    import time as _t, urllib.error as _ue
     _cbrs_wait()
     _buf = ""
     _in_think = False
