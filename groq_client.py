@@ -976,7 +976,11 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                         continue
                     try:
                         chunk = _json.loads(line[6:])
-                        delta = chunk["choices"][0].get("delta", {})
+                        _choice0 = chunk["choices"][0]
+                        _fr = _choice0.get("finish_reason")
+                        if _fr:
+                            yield "\x00FINISH_REASON\x00" + _fr
+                        delta = _choice0.get("delta", {})
                         token = delta.get("content") or delta.get("reasoning_content") or ""
                         if not token:
                             continue

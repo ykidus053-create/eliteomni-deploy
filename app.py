@@ -3471,6 +3471,9 @@ async def stream_chat(req: Request):
             tok = await tok_q.get()
             if tok is None:
                 break
+            if tok.startswith("\x00FINISH_REASON\x00"):
+                _last_finish_reason = tok[len("\x00FINISH_REASON\x00"):]
+                continue
             if tok.startswith("\x00TOOLCALL\x00"):
                 _tc = json.loads(tok[len("\x00TOOLCALL\x00"):])
                 from modules.services.mcp import mcp_call as _mcp_call
@@ -3571,27 +3574,38 @@ async def stream_chat(req: Request):
                 tok = await tok_q.get()
                 if tok is None:
                     break
+                if tok.startswith("\x00FINISH_REASON\x00"):
+                    _last_finish_reason = tok[len("\x00FINISH_REASON\x00"):]
+                    continue
                 _cont_chunks2.append(tok)
                 yield tok
             final = "".join(_cont_chunks2)
             chunks.append(final)
 
         # ── Auto-continuation: resume if response was cut off ──────────────
-        _max_continuations = 1  # safety net only — fixed generous token budget means truncation should be rare
+        _skill = ctx.get("skill", "general")
+        _complexity = ctx.get("complexity", "medium")
+        if _skill == "coder" or _complexity == "hard":
+            _max_continuations = 8
+        elif _skill == "researcher":
+            _max_continuations = 4
+        else:
+            _max_continuations = 1
         _continuation = 0
+        _last_finish_reason = ""
         while _continuation < _max_continuations and final:
             _trunc = False
             _stripped = final.rstrip()
-            # Only continue on hard unambiguous signals
-            if final.count('```') % 2 != 0:  # unclosed code block
+            if _last_finish_reason == "length":
                 _trunc = True
-            # Rough token estimate: ~1.3 tokens per word for English text/code mix
-            _tok_estimate = int(len(final.split()) * 1.3)
-            if _tok_estimate >= ctx.get('max_t', 9999) * 0.90:  # hit token ceiling (with margin)
-                _trunc = True
-            # Also catch mid-function/mid-statement cutoffs for code
-            if ctx.get("skill") == "coder" and _stripped and not _stripped.endswith((".", "!", "?", "}", ")", "]", "`", ";", ":")):
-                _trunc = True
+            elif not _last_finish_reason:
+                if final.count('```') % 2 != 0:
+                    _trunc = True
+                _tok_estimate = int(len(final.split()) * 1.3)
+                if _tok_estimate >= ctx.get('max_t', 9999) * 0.90:
+                    _trunc = True
+                if _skill == "coder" and _stripped and not _stripped.endswith((".", "!", "?", "}", ")", "]", "`", ";", ":")):
+                    _trunc = True
             if not _trunc:
                 break
             _continuation += 1
@@ -3620,6 +3634,9 @@ async def stream_chat(req: Request):
                 tok = await tok_q.get()
                 if tok is None:
                     break
+                if tok.startswith("\x00FINISH_REASON\x00"):
+                    _last_finish_reason = tok[len("\x00FINISH_REASON\x00"):]
+                    continue
                 _cont_chunks.append(tok)
                 yield tok
             final = final + "".join(_cont_chunks)
