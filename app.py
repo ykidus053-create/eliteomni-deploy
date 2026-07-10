@@ -3587,7 +3587,7 @@ async def stream_chat(req: Request):
         _skill = ctx.get("skill", "general")
         _complexity = ctx.get("complexity", "medium")
         if _skill == "coder":
-            _max_continuations = 8  # coder always gets full budget
+            _max_continuations = 12  # coder: 12 x 16k = 192k tokens ceiling
         elif _complexity == "hard":
             _max_continuations = 3
         elif _complexity == "medium":
