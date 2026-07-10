@@ -999,6 +999,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     _cbrs_wait()
     _buf = ""
     _in_think = False
+    _think_marker_open = False
     _cbrs_ok = False
     _tokens_yielded = False  # once True, we NEVER retry — would corrupt output
 
