@@ -3426,10 +3426,14 @@ async def stream_chat(req: Request):
         except _asyncio.TimeoutError:
             print("[stream_chat] ctx timeout — fast first token with minimal ctx (history preserved)")
             from modules.core.constants import get_infra_tier
-            _infra_t = get_infra_tier("medium")
+            from modules.pipeline import classify_skill as _cs, route_complexity as _rc
+            _fb_skill = _cs(msg)
+            _fb_complexity = _rc(msg)
+            _infra_t = get_infra_tier(_fb_complexity, _fb_skill)
             _fallback_msgs = [{"role": h.get("role","user"), "content": h.get("content","")} for h in (hist or [])[-10:] if h.get("content")]
             _fallback_msgs.append({"role": "user", "content": msg})
-            ctx = {"skill": "general", "complexity": "medium", "effort": "medium", "msgs": _fallback_msgs, "max_t": 16000, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
+            ctx = {"skill": _fb_skill, "complexity": _fb_complexity, "effort": "medium", "msgs": _fallback_msgs, "max_t": 16000, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}
+            print(f"[stream_chat] fallback classified skill={_fb_skill} complexity={_fb_complexity}")
         yield ""
 
         if False: yield
