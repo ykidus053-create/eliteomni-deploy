@@ -3586,12 +3586,14 @@ async def stream_chat(req: Request):
         # ── Auto-continuation: resume if response was cut off ──────────────
         _skill = ctx.get("skill", "general")
         _complexity = ctx.get("complexity", "medium")
-        if _skill == "coder" or _complexity == "hard":
-            _max_continuations = 8
-        elif _skill == "researcher":
-            _max_continuations = 4
-        else:
+        if _skill == "coder":
+            _max_continuations = 8  # coder always gets full budget
+        elif _complexity == "hard":
+            _max_continuations = 3
+        elif _complexity == "medium":
             _max_continuations = 1
+        else:
+            _max_continuations = 0  # easy — never needs continuation
         _continuation = 0
         while _continuation < _max_continuations and final:
             _trunc = False
