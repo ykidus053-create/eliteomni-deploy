@@ -994,7 +994,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             from reflexion_loop import reflexion_verify
             from modules.core.http_client import mistral_generate
             # AI runs its own code, reads stderr, and rewrites it before outputting
-            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000))
+            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000), task=msg, model=model if "model" in dir() else "")
         except Exception as _re:
             print(f"[ReflexionInject] {_re}")
 
@@ -1021,7 +1021,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             from reflexion_loop import reflexion_verify
             from modules.core.http_client import mistral_generate
             # AI runs its own code, reads stderr, and rewrites it before outputting
-            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000))
+            final = reflexion_verify(final, lambda p, m="": mistral_generate(p, max_tokens=4000), task=msg, model=model if "model" in dir() else "")
         except Exception as _re:
             print(f"[ReflexionInject] {_re}")
 

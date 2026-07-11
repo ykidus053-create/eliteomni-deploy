@@ -203,17 +203,17 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
         logic_flaws = llm_logic_audit(impl_code, test_code, generate_fn) if not is_cutoff else []
         
         # Upgraded: Run both the AI's tests AND the adversarial tests
+        ok, output = run_in_persistent_sandbox(impl_code, test_code)
+
         # Upgraded: Predictive AST Mutation
         try:
             from ast_mutator import predict_error_lines
             from rlef_engine import get_relevant_traces
             rlef_ctx = get_relevant_traces(output) if not ok else ""
             suspicious = predict_error_lines(impl_code, rlef_ctx)
-            if suspicious and round_num == 1:
-                print(f"[Predictive] Pre-emptively scanning suspicious lines: {suspicious}")
+            if suspicious:
+                print(f"[Predictive] Suspicious lines this round: {suspicious}")
         except: pass
-        
-        ok, output = run_in_persistent_sandbox(impl_code, test_code)
         adv_test_code = generate_adversarial_tests(task, impl_code, generate_fn) if ok else ""
         adv_ok, adv_output = run_in_persistent_sandbox(impl_code, adv_test_code) if adv_test_code else (True, "")
         
