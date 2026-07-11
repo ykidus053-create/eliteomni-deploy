@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 import urllib.request, urllib.parse
 
 # ── AGENTIC LOOP CONFIG (Claude Code: query.ts while-true loop) ───────────────
-AGENTIC_MAX_ITERS = 2   # allow 5 tool-use iterations
+AGENTIC_MAX_ITERS = max(1, min(int(os.environ.get("ELITE_AGENTIC_MAX_ITERS", "3")), 5))
 # Tool reliability: pre-execute obvious tools before generation
 # Counterfactual/causal triggers → deep reasoning mode
 COUNTERFACTUAL_TRIGGERS = ["what if", "what would happen if", "hypothetically", "imagine if",
@@ -768,6 +768,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     system = inject_template(system, msg)
     prompt      = build_chatml(system, hist_msgs, _final_msg)
     seen_sents: set = set()
+    response_parts: list[str] = []
     # KV cache hint: system prompt is stable — always first message, never mutated
 
     # FAST PATH — skip agentic loop for easy/general queries
@@ -795,7 +796,8 @@ def pipeline_sync(msg: str, history: list) -> dict:
             return {"response": fast_response, "skill": skill, "mode": "fast",
                     "effort": "low", "complexity": complexity, "vetoed": False,
                     "latency_ms": int((time.time() - t_start) * 1000)}
-    for iteration in range(AGENTIC_MAX_ITERS):
+    _agentic_iters = (AGENTIC_MAX_ITERS if complexity == "hard" else min(2, AGENTIC_MAX_ITERS))
+    for iteration in range(_agentic_iters):
         if not response:
             if complexity == "hard" and skill in ("researcher", "coder"):
                 response = tree_search_best(prompt, max_t, skill, len(msg))
@@ -826,7 +828,9 @@ def pipeline_sync(msg: str, history: list) -> dict:
 
         if expanded != response:
             response = expanded
-            if iteration < AGENTIC_MAX_ITERS - 1:
+            if response and (not response_parts or response != response_parts[-1]):
+                response_parts.append(response)
+            if iteration < _agentic_iters - 1:
                 scratchpad_save(f"loop_{iteration}", response[:120])
                 seen_summary = "; ".join(list(seen_sents)[:5])
                 anti_repeat  = (
@@ -844,7 +848,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         break
 
     # ── FINALIZE (GPT-5.5 style: verify + trim + continue if incomplete) ─────
-    final = response or ""
+    final = "\n\n".join(response_parts).strip() or response or ""
 
     # 1. SELF-VERIFICATION — check own work before outputting
     if final and complexity == "hard":
@@ -939,22 +943,6 @@ def pipeline_sync(msg: str, history: list) -> dict:
             except Exception as _le:
                 print(f"[LoopEngine] error: {_le}")
 
-        # ── Loop Engineering (ReAct + Reflexion + Agentic + Search) ──────────
-        if complexity in ("medium", "hard") or skill == "researcher":
-            try:
-                from modules.loop_engine import run_loops
-                from modules.services.pipeline import generate_sync as _gsync
-                def _gen_fn(messages):
-                    from modules.core.http_client import mistral_stream
-                    _sys = next((m["content"] for m in messages if m["role"]=="system"), system)
-                    _msgs = [m for m in messages if m["role"] != "system"]
-                    return "".join(mistral_stream(_msgs, max_tokens=1500, model=_tier["models"][0]))
-                _looped = run_loops(msg, system, _gen_fn, skill, complexity, search_ctx, final)
-                if _looped and len(_looped) > len(final) * 0.5:
-                    final = _looped
-                    print(f"[LoopEngine] result applied len={len(final)}")
-            except Exception as _le:
-                print(f"[LoopEngine] skipped: {_le}")
         # ── Auto-execute code blocks and append results ──────────────────────
         try:
             from modules.code_executor import extract_code_blocks, run_code_safe
@@ -5552,7 +5540,15 @@ from modules.quality_kernel import install_runtime_hooks
 install_runtime_hooks(globals())
 # END ACTIVE QUALITY KERNEL V18
 
-# BEGIN FRONTIER GAP V20
-from modules.frontier_runtime import install_frontier_runtime
-install_frontier_runtime(globals())
-# END FRONTIER GAP V20
+# BEGIN FRONTIER RUNTIME V21
+from modules.frontier_runtime_v21 import (
+    install_frontier_runtime_v21,
+    runtime_status as _frontier_v21_status,
+)
+
+@app.get("/runtime/v21")
+async def frontier_runtime_v21_status():
+    return _frontier_v21_status()
+
+install_frontier_runtime_v21(globals())
+# END FRONTIER RUNTIME V21

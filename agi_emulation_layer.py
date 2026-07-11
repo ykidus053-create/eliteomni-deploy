@@ -99,3 +99,22 @@ def synthesize_meta_skill(domain: str, generate_fn) -> dict:
 def start_agi_emulation(generate_fn):
     start_curiosity_engine(generate_fn)
     print("[Startup] ✓ AGI Emulation Layer started (Curiosity Engine + Prompt Evolution).")
+
+# BEGIN SAFE STARTUP V21
+_AGI_THREAD_V21 = None
+
+
+def start_agi_emulation(generate_fn):
+    """Opt-in startup guard installed by Frontier Runtime V21."""
+    global _AGI_THREAD_V21
+    enabled = __import__("os").environ.get("ELITE_ENABLE_AGI_EMULATION", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        print("[Startup] AGI Emulation disabled (ELITE_ENABLE_AGI_EMULATION=0)")
+        return None
+    if _AGI_THREAD_V21 is not None and _AGI_THREAD_V21.is_alive():
+        return _AGI_THREAD_V21
+    _AGI_THREAD_V21 = threading.Thread(target=curiosity_engine_loop, args=(generate_fn,), daemon=True, name='curiosity_engine')
+    _AGI_THREAD_V21.start()
+    print('[Startup] ✓ AGI Emulation started explicitly.')
+    return _AGI_THREAD_V21
+# END SAFE STARTUP V21
