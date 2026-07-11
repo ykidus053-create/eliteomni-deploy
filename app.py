@@ -549,7 +549,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
     # Upgraded: Cross-File Codebase RAG & Goal Tracker
     try:
         from code_rag import get_relevant_code_context
-        _code_ctx = get_relevant_code_context(msg, top_k=3)
+        _code_ctx = get_relevant_code_context(msg, top_k=int(os.environ.get('ELITE_CODE_RAG_TOP_K', '8')))
         if _code_ctx: memory.insert(0, _code_ctx)
     except: pass
     try:
@@ -5551,3 +5551,8 @@ async def update_god_prompt_endpoint(request: Request):
 from modules.quality_kernel import install_runtime_hooks
 install_runtime_hooks(globals())
 # END ACTIVE QUALITY KERNEL V18
+
+# BEGIN FRONTIER GAP V20
+from modules.frontier_runtime import install_frontier_runtime
+install_frontier_runtime(globals())
+# END FRONTIER GAP V20
