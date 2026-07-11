@@ -169,3 +169,61 @@ def build_memory_context(msg: str) -> str:
         return ""
     lines = "\n".join(f"- {f}" for f in facts[:10])
     return f"\n[MEMORY - from past conversations]\n{lines}\n[/MEMORY]\n"
+
+# BEGIN ACTIVE ROUTER V18
+import os as _quality_os_v18
+
+_QUALITY_DEFAULT_MODEL_V18 = _quality_os_v18.getenv(
+    "ELITE_MODEL_GENERAL",
+    "cerebras/zai-glm-4.7",
+)
+_QUALITY_MODEL_FAST_V18 = _quality_os_v18.getenv(
+    "ELITE_MODEL_FAST",
+    _QUALITY_DEFAULT_MODEL_V18,
+)
+_QUALITY_MODEL_REASONING_V18 = _quality_os_v18.getenv(
+    "ELITE_MODEL_REASONING",
+    _QUALITY_DEFAULT_MODEL_V18,
+)
+_QUALITY_MODEL_CODER_V18 = _quality_os_v18.getenv(
+    "ELITE_MODEL_CODER",
+    _QUALITY_DEFAULT_MODEL_V18,
+)
+_QUALITY_MODEL_RESEARCH_V18 = _quality_os_v18.getenv(
+    "ELITE_MODEL_RESEARCH",
+    _QUALITY_DEFAULT_MODEL_V18,
+)
+
+_ROUTING_TABLE = {
+    ("general", "easy"): _QUALITY_MODEL_FAST_V18,
+    ("general", "medium"): _QUALITY_DEFAULT_MODEL_V18,
+    ("general", "hard"): _QUALITY_MODEL_REASONING_V18,
+    ("researcher", "easy"): _QUALITY_MODEL_RESEARCH_V18,
+    ("researcher", "medium"): _QUALITY_MODEL_RESEARCH_V18,
+    ("researcher", "hard"): _QUALITY_MODEL_RESEARCH_V18,
+    ("coder", "easy"): _QUALITY_MODEL_CODER_V18,
+    ("coder", "medium"): _QUALITY_MODEL_CODER_V18,
+    ("coder", "hard"): _QUALITY_MODEL_CODER_V18,
+    ("calculator", "easy"): _QUALITY_MODEL_FAST_V18,
+    ("calculator", "medium"): _QUALITY_MODEL_REASONING_V18,
+    ("calculator", "hard"): _QUALITY_MODEL_REASONING_V18,
+    ("safety", "easy"): _QUALITY_DEFAULT_MODEL_V18,
+    ("safety", "medium"): _QUALITY_DEFAULT_MODEL_V18,
+    ("safety", "hard"): _QUALITY_MODEL_REASONING_V18,
+}
+
+
+def route_model_v3(skill: str, complexity: str) -> tuple[str, str]:
+    skill_key = (skill or "general").strip().lower()
+    complexity_key = (complexity or "medium").strip().lower()
+    model = _ROUTING_TABLE.get(
+        (skill_key, complexity_key),
+        _QUALITY_DEFAULT_MODEL_V18,
+    )
+    provider = "cerebras" if model.startswith("cerebras/") else "mistral"
+    print(
+        "[route_model_v3:v18] "
+        f"skill={skill_key} complexity={complexity_key} model={model}"
+    )
+    return provider, model
+# END ACTIVE ROUTER V18

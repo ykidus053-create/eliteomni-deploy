@@ -793,3 +793,14 @@ def mistral_generate_best_of(
             print(f"[best_of_n] critique pass failed: {_e}")
 
     return best
+
+# BEGIN MODEL CONFIG V18
+MISTRAL_MODEL = os.environ.get(
+    "ELITE_MODEL_GENERAL",
+    MISTRAL_MODEL,
+)
+CODESTRAL_MODEL = os.environ.get(
+    "ELITE_MODEL_CODER",
+    CODESTRAL_MODEL,
+)
+# END MODEL CONFIG V18
