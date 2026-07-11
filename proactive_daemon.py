@@ -35,3 +35,22 @@ def start_proactive_daemon():
     t = threading.Thread(target=_proactive_loop, daemon=True, name="proactive_daemon")
     t.start()
     print("[Startup] ✓ Proactive Daemon started (Memory Consolidator + RAG Indexer).")
+
+# BEGIN SAFE STARTUP V21
+_PROACTIVE_THREAD_V21 = None
+
+
+def start_proactive_daemon():
+    """Opt-in startup guard installed by Frontier Runtime V21."""
+    global _PROACTIVE_THREAD_V21
+    enabled = __import__("os").environ.get("ELITE_ENABLE_PROACTIVE_DAEMON", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        print("[Startup] Proactive Daemon disabled (ELITE_ENABLE_PROACTIVE_DAEMON=0)")
+        return None
+    if _PROACTIVE_THREAD_V21 is not None and _PROACTIVE_THREAD_V21.is_alive():
+        return _PROACTIVE_THREAD_V21
+    _PROACTIVE_THREAD_V21 = threading.Thread(target=_proactive_loop, daemon=True, name='proactive_daemon')
+    _PROACTIVE_THREAD_V21.start()
+    print('[Startup] ✓ Proactive Daemon started explicitly.')
+    return _PROACTIVE_THREAD_V21
+# END SAFE STARTUP V21

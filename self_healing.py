@@ -25,3 +25,22 @@ def start_self_healing_daemon(generate_fn):
     t = threading.Thread(target=_ci_loop, args=(generate_fn,), daemon=True, name="self_healing_ci")
     t.start()
     print("[Startup] ✓ Self-Healing CI/CD Daemon started.")
+
+# BEGIN SAFE STARTUP V21
+_SELF_HEALING_THREAD_V21 = None
+
+
+def start_self_healing_daemon(generate_fn):
+    """Opt-in startup guard installed by Frontier Runtime V21."""
+    global _SELF_HEALING_THREAD_V21
+    enabled = __import__("os").environ.get("ELITE_ENABLE_SELF_HEALING", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        print("[Startup] Self-Healing Daemon disabled (ELITE_ENABLE_SELF_HEALING=0)")
+        return None
+    if _SELF_HEALING_THREAD_V21 is not None and _SELF_HEALING_THREAD_V21.is_alive():
+        return _SELF_HEALING_THREAD_V21
+    _SELF_HEALING_THREAD_V21 = threading.Thread(target=_ci_loop, args=(generate_fn,), daemon=True, name='self_healing_ci')
+    _SELF_HEALING_THREAD_V21.start()
+    print('[Startup] ✓ Self-Healing Daemon started explicitly.')
+    return _SELF_HEALING_THREAD_V21
+# END SAFE STARTUP V21

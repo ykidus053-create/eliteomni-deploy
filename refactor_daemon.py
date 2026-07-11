@@ -52,3 +52,22 @@ def start_refactor_daemon(generate_fn):
     t = threading.Thread(target=_refactor_loop, args=(generate_fn,), daemon=True, name="refactor_daemon")
     t.start()
     print("[Startup] ✓ Autonomous Refactoring Daemon started.")
+
+# BEGIN SAFE STARTUP V21
+_REFACTOR_THREAD_V21 = None
+
+
+def start_refactor_daemon(generate_fn):
+    """Opt-in startup guard installed by Frontier Runtime V21."""
+    global _REFACTOR_THREAD_V21
+    enabled = __import__("os").environ.get("ELITE_ENABLE_REFACTOR_DAEMON", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        print("[Startup] Refactor Daemon disabled (ELITE_ENABLE_REFACTOR_DAEMON=0)")
+        return None
+    if _REFACTOR_THREAD_V21 is not None and _REFACTOR_THREAD_V21.is_alive():
+        return _REFACTOR_THREAD_V21
+    _REFACTOR_THREAD_V21 = threading.Thread(target=_refactor_loop, args=(generate_fn,), daemon=True, name='refactor_daemon')
+    _REFACTOR_THREAD_V21.start()
+    print('[Startup] ✓ Refactor Daemon started explicitly.')
+    return _REFACTOR_THREAD_V21
+# END SAFE STARTUP V21

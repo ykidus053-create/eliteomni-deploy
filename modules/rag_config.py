@@ -50,7 +50,7 @@ class RagConfig(BaseSettings):
             raise ValueError("weight must be between 0 and 1")
         return v
 
-    model_config = SettingsConfigDict(env_file=".env", populate_by_name=True)
+    model_config = SettingsConfigDict(env_file=".env", populate_by_name=True, extra="ignore")
 
 
 config = RagConfig()
