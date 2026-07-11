@@ -707,7 +707,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         # Claude: never send empty turns, truncate long history turns
         if c and len(c) > 2:
             hist_msgs.append({"role": r, "content": c[:800]})
-    max_t = 16000  # fixed generous ceiling — Claude-style, no per-request heuristic
+    max_t = 32000  # fixed generous ceiling — Claude-style, no per-request heuristic
     mode  = "extended_think" if effort == "high" else ("think" if effort == "medium" else "fast")
 
     # ── DECIDE: routing strategy ───────────────────────────────────────────────
@@ -1316,7 +1316,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
     )
     _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
-    max_t = 16000  # fixed generous ceiling — Claude-style, no per-request heuristic
+    max_t = 32000  # fixed generous ceiling — Claude-style, no per-request heuristic
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
@@ -5358,7 +5358,7 @@ def _build_stream_context(msg: str, hist: list) -> dict:
         "from scratch", "complete application", "complete platform", "full app", "build me", "build a", "full stack", "fullstack", "entire app", "whole app", "all files", "every file", "10000", "10k lines", "full project", "full website", "full backend", "full frontend"
     )
     _is_large_scope = any(k in clean_msg.lower() for k in _LARGE_SCOPE_KEYWORDS)
-    max_t = 16000  # fixed generous ceiling — Claude-style, no per-request heuristic
+    max_t = 32000  # fixed generous ceiling — Claude-style, no per-request heuristic
     mode  = ("extended_think" if effort == "high" else
              ("think" if effort == "medium" else "fast"))
     if search_ctx and search_ctx.strip():
