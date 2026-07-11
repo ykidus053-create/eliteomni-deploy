@@ -167,65 +167,96 @@ def extract_code_blocks(text: str) -> dict:
     return {"implementation": impl_code, "tests": test_code}
 
 def _set_limits():
+    """Applied inside the child process (via preexec_fn) — safe there since
+    the child has its own single main thread. Never call this in the parent."""
     resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
-    resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_AS, (300 * 1024 * 1024, 300 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))  # prevent fork bombs
 
-class _SandboxTimeout(Exception):
-    pass
 
-def _alarm_handler(signum, frame):
-    raise _SandboxTimeout("Sandbox execution exceeded time limit")
+def _sandbox_preexec():
+    """Runs in the child process right after fork, before exec — safe to
+    apply rlimits here since it executes in that process's single thread."""
+    try:
+        _set_limits()
+    except Exception:
+        pass  # rlimits may not be settable on all platforms
+
+
+_SANDBOX_RUNNER_SOURCE = "\n".join([
+    "import sys, io, json, traceback",
+    "",
+    "def _run():",
+    "    payload = json.loads(sys.stdin.read())",
+    "    impl_code = payload[\"impl\"]",
+    "    test_code = payload[\"test\"]",
+    "    old_stdout, old_stderr = sys.stdout, sys.stderr",
+    "    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()",
+    "    sandbox_globals = {}",
+    "    success = False",
+    "    output = \"\"",
+    "    try:",
+    "        exec(impl_code, sandbox_globals)",
+    "        if test_code:",
+    "            sandbox_globals[\"pytest\"] = __import__(\"pytest\")",
+    "            exec(test_code, sandbox_globals)",
+    "        success = True",
+    "    except AssertionError as e:",
+    "        output = \"AssertionError: \" + str(e)",
+    "    except Exception:",
+    "        output = traceback.format_exc()",
+    "    finally:",
+    "        output = output + \"\\n--- stdout/stderr ---\\n\" + sys.stdout.getvalue() + sys.stderr.getvalue()",
+    "        sys.stdout, sys.stderr = old_stdout, old_stderr",
+    "    print(json.dumps({\"success\": success, \"output\": output[:1000]}))",
+    "",
+    "if __name__ == \"__main__\":",
+    "    _run()",
+])
+
 
 def run_in_persistent_sandbox(impl_code: str, test_code: str, timeout_seconds: int = 8) -> tuple[bool, str]:
     """
-    Runs impl+test code in an isolated exec() with:
-    - CPU/memory limits applied (Fix 8/9: _set_limits now actually called)
-    - Wall-clock timeout via SIGALRM (Fix 9: prevents infinite loops hanging the process)
-    Note: still same-process exec(), not full sandboxing — for hard isolation use subprocess.
+    Runs impl+test code in a REAL isolated subprocess:
+    - Separate OS process — a crash, hang, or fork bomb in generated code
+      cannot take down the parent (production) process.
+    - CPU/memory/process-count limits applied via preexec_fn in the child.
+    - Wall-clock timeout via subprocess.run(timeout=...), which works safely
+      from ANY thread (unlike signal.alarm, which is main-thread-only and
+      was crashing every call when this ran inside a worker thread).
     """
-    import signal
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    sys.stdout = StringIO()
-    sys.stderr = StringIO()
-    sandbox_globals = {}
-    success = False
-    output = ""
-    old_handler = None
+    import subprocess, json, tempfile, os as _os
+
+    payload = json.dumps({"impl": impl_code, "test": test_code})
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(_SANDBOX_RUNNER_SOURCE)
+        runner_path = f.name
+
     try:
+        proc = subprocess.run(
+            [sys.executable, runner_path],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            preexec_fn=_sandbox_preexec if _os.name == "posix" else None,
+        )
+        if proc.returncode != 0 and not proc.stdout.strip():
+            err = (proc.stderr or "")[-1000:]
+            return False, "SandboxCrash: subprocess exited " + str(proc.returncode) + " before completing.\n" + err
         try:
-            _set_limits()
-        except Exception:
-            pass  # rlimits may not be settable on all platforms (e.g. non-POSIX)
-        old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.alarm(timeout_seconds)
-        exec(impl_code, sandbox_globals)
-        if test_code:
-            sandbox_globals['pytest'] = __import__('pytest')
-            exec(test_code, sandbox_globals)
-            success = True
-        else:
-            success = True
-    except _SandboxTimeout:
-        success = False
-        output = f"TimeoutError: Execution exceeded {timeout_seconds}s wall-clock limit (possible infinite loop)."
-    except AssertionError as e:
-        success = False
-        output = f"AssertionError: {e}"
-    except Exception as e:
-        success = False
-        import traceback
-        output = traceback.format_exc()
+            result = json.loads(proc.stdout.strip().splitlines()[-1])
+            return bool(result.get("success")), str(result.get("output", ""))[:1000]
+        except (json.JSONDecodeError, IndexError):
+            return False, "SandboxParseError: could not parse sandbox output.\nstdout:" + proc.stdout[:500] + "\nstderr:" + proc.stderr[:500]
+    except subprocess.TimeoutExpired:
+        return False, "TimeoutError: Execution exceeded " + str(timeout_seconds) + "s wall-clock limit (possible infinite loop)."
     finally:
-        signal.alarm(0)
-        if old_handler is not None:
-            signal.signal(signal.SIGALRM, old_handler)
-        # Fix 10: put the exception/error FIRST, stdout/stderr noise AFTER —
-        # so truncation to 1000 chars never cuts off the root-cause traceback
-        output = output + "\n--- stdout/stderr ---\n" + sys.stdout.getvalue() + sys.stderr.getvalue()
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
-    return success, output[:1000]
+        try:
+            _os.unlink(runner_path)
+        except OSError:
+            pass
 
 def generate_adversarial_tests(task: str, impl_code: str, generate_fn) -> str:
     """Upgraded: Spawns an independent agent to write tests designed to break the code."""
