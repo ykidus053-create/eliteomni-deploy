@@ -1003,6 +1003,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
     _cbrs_ok = False
     _tokens_yielded = False  # once True, we NEVER retry — would corrupt output
 
+    _fr_seen = False
     for _attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
@@ -1017,6 +1018,7 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                         _choice0 = chunk["choices"][0]
                         _fr = _choice0.get("finish_reason")
                         if _fr:
+                            _fr_seen = True
                             yield "\x00FINISH_REASON\x00" + _fr
                         delta = _choice0.get("delta", {})
                         token = delta.get("content") or delta.get("reasoning_content") or ""
@@ -1027,7 +1029,6 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                             if _in_think:
                                 end = _buf.find("</think>")
                                 if end == -1:
-                                    # Stream thinking content live as it arrives
                                     if _buf:
                                         if not _think_marker_open:
                                             yield "\x00THINKING\x00"
@@ -1048,15 +1049,23 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                                 start = _buf.find("<think>")
                                 if start == -1:
                                     out, _buf = _buf, ""
-                                    if out: yield out
+                                    if out:
+                                        _tokens_yielded = True
+                                        yield out
                                     break
-                                if start > 0: yield _buf[:start]
+                                if start > 0:
+                                    _tokens_yielded = True
+                                    yield _buf[:start]
                                 _buf = _buf[start + 7:]; _in_think = True
                     except Exception:
                         continue
             if _think_marker_open:
                 yield "\x00/THINKING\x00"
                 _think_marker_open = False
+            if not _fr_seen:
+                # Stream ended without an explicit finish_reason — treat as
+                # length-truncated so continuation logic knows to resume.
+                yield "\x00FINISH_REASON\x00length"
             _cbrs_ok = True
             break
         except _ue.HTTPError as _he:
@@ -1065,56 +1074,21 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                 print(f"[Cerebras] 429 backoff {_wait}s attempt {_attempt+1}/4")
                 _t.sleep(_wait)
                 continue
-            resp.raise_for_status()
-
-            for raw_line in resp.iter_lines(decode_unicode=True):
-                if not raw_line:
-                    continue
-                line = raw_line.strip()
-                if not line or line == "data: [DONE]":
-                    continue
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    chunk = _json.loads(line[6:])
-                    delta = chunk["choices"][0].get("delta", {})
-                    token = delta.get("content") or delta.get("reasoning_content") or ""
-                    if not token:
-                        continue
-                    _buf += token
-                    while True:
-                        if _in_think:
-                            end = _buf.find("</think>")
-                            if end == -1:
-                                _buf = ""; break
-                            _buf = _buf[end + 8:]; _in_think = False
-                        else:
-                            start = _buf.find("<think>")
-                            if start == -1:
-                                out, _buf = _buf, ""
-                                if out:
-                                    _tokens_yielded = True
-                                    yield out
-                                break
-                            if start > 0:
-                                _tokens_yielded = True
-                                yield _buf[:start]
-                            _buf = _buf[start + 7:]; _in_think = True
-                except Exception as _pe:
-                    print(f"[Cerebras parse skip] {_pe}")
-                    continue
-
-            _cbrs_ok = True
+            print(f"[Cerebras] HTTPError {_he.code}: {_he}")
+            if not _tokens_yielded:
+                yield f"[Cerebras error: {_he}]"
+            yield "\x00FINISH_REASON\x00error"
             break
-
         except _rq.exceptions.Timeout:
             print(f"[Cerebras] timeout on attempt {_attempt+1} (tokens_yielded={_tokens_yielded})")
             if _tokens_yielded:
-                break  # don't retry mid-stream — would duplicate/corrupt output
+                yield "\x00FINISH_REASON\x00length"
+                break
             _t.sleep(2)
             continue
         except Exception as e:
             print(f"[Cerebras stream error] {e}")
             if not _tokens_yielded:
                 yield f"[Cerebras error: {e}]"
+            yield "\x00FINISH_REASON\x00error"
             break
