@@ -1,0 +1,98 @@
+[
+  {
+    "id": "code-shadowing",
+    "category": "coding",
+    "prompt": "Explain and fix this Python error with a minimal runnable example and a regression test: UnboundLocalError: cannot access local variable 'compress_history' where it is not associated with a value.",
+    "must_include": [
+      "unboundlocalerror",
+      "test_"
+    ],
+    "must_not_include": [
+      "todo",
+      "notimplementederror"
+    ],
+    "min_urls": 0,
+    "expect_code": true,
+    "expect_tests": true,
+    "min_chars": 500
+  },
+  {
+    "id": "code-transaction",
+    "category": "coding",
+    "prompt": "Design a small Python transaction manager with per-transaction state, commit, rollback, and crash-safe append-only WAL framing. Include executable pytest tests. Do not call it production-ready.",
+    "must_include": [
+      "rollback",
+      "pytest"
+    ],
+    "must_not_include": [
+      "production-ready",
+      "todo"
+    ],
+    "min_urls": 0,
+    "expect_code": true,
+    "expect_tests": true,
+    "min_chars": 900
+  },
+  {
+    "id": "code-concurrency",
+    "category": "coding",
+    "prompt": "Implement a thread-safe bounded LRU cache in Python using only the standard library. Include concurrent tests and explain invariants.",
+    "must_include": [
+      "lock",
+      "test"
+    ],
+    "must_not_include": [
+      "todo",
+      "pass #"
+    ],
+    "min_urls": 0,
+    "expect_code": true,
+    "expect_tests": true,
+    "min_chars": 700
+  },
+  {
+    "id": "research-current",
+    "category": "research",
+    "prompt": "Research a current AI software-development benchmark. Explain what it measures, its limitations, and cite at least two independent current sources with URLs near the claims.",
+    "must_include": [
+      "http"
+    ],
+    "must_not_include": [
+      "as an ai language model"
+    ],
+    "min_urls": 2,
+    "expect_code": false,
+    "expect_tests": false,
+    "min_chars": 500
+  },
+  {
+    "id": "research-disagreement",
+    "category": "research",
+    "prompt": "Compare two current credible viewpoints about whether coding-agent benchmarks are saturating. Cite at least two source domains, state publication dates, and clearly label your inference.",
+    "must_include": [
+      "inference"
+    ],
+    "must_not_include": [
+      "guaranteed"
+    ],
+    "min_urls": 2,
+    "expect_code": false,
+    "expect_tests": false,
+    "min_chars": 600
+  },
+  {
+    "id": "reasoning-constraints",
+    "category": "reasoning",
+    "prompt": "A deployment can use exactly two of these safeguards: canary, database backup, feature flag, read-only verification. A rollback requires a backup or feature flag. Production writes require a canary. Choose a valid pair for a write deployment and justify it without adding unstated assumptions.",
+    "must_include": [
+      "canary"
+    ],
+    "must_not_include": [
+      "all four"
+    ],
+    "min_urls": 0,
+    "expect_code": false,
+    "expect_tests": false,
+    "min_chars": 180
+  }
+]
