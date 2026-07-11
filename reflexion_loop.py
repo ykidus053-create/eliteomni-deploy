@@ -8,14 +8,16 @@ import sys
 from io import StringIO
 from code_rag import get_relevant_code_context
 
+# Fix 5: removed dangerously generic words that false-positive on legitimate code
+# (e.g. a class literally named "RepositoryInterface" or a docstring saying
+# "this wraps the underlying client" would previously be permanently flagged
+# as a stub with no way for the LLM to fix it — infinite reflexion loop).
+# Kept only phrases that are near-unambiguous signals of unfinished/prototype code.
 PROTOTYPE_PHRASES = [
     "for simplicity", "for educational purposes", "basic version", "simplified",
-    "example implementation", "skeleton", "stub", "placeholder", "demo", "toy",
-    "in real implementation", "extend as needed", "similarly for others",
-    "production implementation", "actual implementation", "full implementation",
-    "for demonstration", "quick script", "minimal viable", "extensible",
-    "future-proof", "base class", "abstract", "architectural foundation",
-    "interface", "scaffolding", "wrapper"
+    "example implementation", "in real implementation", "extend as needed",
+    "similarly for others", "for demonstration", "quick script", "minimal viable",
+    "not fully implemented", "left as an exercise", "todo: implement",
 ]
 
 def has_stub(code: str) -> bool:
@@ -81,7 +83,18 @@ def check_enterprise_compliance(code: str) -> tuple[list, bool]:
                 if isinstance(node.func, ast.Name): func_name = node.func.id
                 elif isinstance(node.func, ast.Attribute): func_name = node.func.attr
                 if func_name in banned_calls: violations.append(f"SECURITY VIOLATION: Use of '{func_name}()' is strictly banned.")
-                if func_name in ('get', 'post', 'put', 'delete', 'request', 'connect', 'create_connection'):
+                # Fix 6: only flag missing timeout when the call target looks like an
+                # actual network client (requests/httpx/urllib3/socket), not any object
+                # exposing .get()/.connect() such as a dict, cache, or ORM session.
+                _network_receiver_hints = ('requests', 'httpx', 'session', 'client', 'conn', 'socket', 'urllib3')
+                _receiver_name = ""
+                if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                    _receiver_name = node.func.value.id.lower()
+                _looks_like_network_call = (
+                    func_name in ('get', 'post', 'put', 'delete', 'request', 'connect', 'create_connection')
+                    and any(hint in _receiver_name for hint in _network_receiver_hints)
+                )
+                if _looks_like_network_call:
                     has_timeout = any(kw.arg == 'timeout' for kw in node.keywords)
                     if not has_timeout: violations.append(f"PRODUCTION SAFETY: Network call '{func_name}()' missing 'timeout' argument.")
             if isinstance(node, ast.ClassDef):
@@ -100,8 +113,11 @@ def check_enterprise_compliance(code: str) -> tuple[list, bool]:
                 for alias in node.names:
                     if 'logging' in alias.name: has_logging = True
                     if 'prometheus_client' in alias.name or 'opentelemetry' in alias.name or 'datadog' in alias.name: has_metrics = True
-        if not has_logging and len(code.split('\n')) > 20: violations.append("Missing 'import logging'.")
-        if not has_metrics and len(code.split('\n')) > 50: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing.")
+        # Fix 7: raised thresholds — small helper scripts shouldn't be forced to add
+        # logging/metrics boilerplate that has nothing to do with the actual task,
+        # which previously burned reflexion rounds on style instead of correctness.
+        if not has_logging and len(code.split('\n')) > 60: violations.append("Missing 'import logging'.")
+        if not has_metrics and len(code.split('\n')) > 150: violations.append("OBSERVABILITY VIOLATION: Missing metrics/tracing.")
     except SyntaxError as e:
         if "unexpected EOF" in str(e) or "incomplete input" in str(e):
             is_cutoff = True
@@ -117,7 +133,10 @@ def principal_engineer_veto(impl_code: str, task: str, generate_fn) -> str:
     try:
         raw = generate_fn(prompt, max_tokens=200)
         if "VETO" in raw.upper(): return raw.strip()
-    except: pass
+    except Exception as e:
+        # Fix 2: log failure instead of silently approving — a failed veto call
+        # should not be indistinguishable from a genuinely clean review
+        print(f"[principal_engineer_veto] LLM call failed, defaulting to APPROVED: {e}")
     return "APPROVED"
 
 def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
@@ -130,7 +149,9 @@ def llm_logic_audit(impl_code: str, test_code: str, generate_fn) -> list:
         import json
         match = re.search(r'\[.*\]', raw, re.DOTALL)
         if match: return json.loads(match.group())
-    except: pass
+    except Exception as e:
+        # Fix 2: log failure instead of silently returning "no flaws found"
+        print(f"[llm_logic_audit] LLM call failed, defaulting to no flaws: {e}")
     return []
 
 def extract_code_blocks(text: str) -> dict:
@@ -149,7 +170,20 @@ def _set_limits():
     resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
     resource.setrlimit(resource.RLIMIT_AS, (150 * 1024 * 1024, 150 * 1024 * 1024))
 
-def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str]:
+class _SandboxTimeout(Exception):
+    pass
+
+def _alarm_handler(signum, frame):
+    raise _SandboxTimeout("Sandbox execution exceeded time limit")
+
+def run_in_persistent_sandbox(impl_code: str, test_code: str, timeout_seconds: int = 8) -> tuple[bool, str]:
+    """
+    Runs impl+test code in an isolated exec() with:
+    - CPU/memory limits applied (Fix 8/9: _set_limits now actually called)
+    - Wall-clock timeout via SIGALRM (Fix 9: prevents infinite loops hanging the process)
+    Note: still same-process exec(), not full sandboxing — for hard isolation use subprocess.
+    """
+    import signal
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     sys.stdout = StringIO()
@@ -157,7 +191,14 @@ def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str
     sandbox_globals = {}
     success = False
     output = ""
+    old_handler = None
     try:
+        try:
+            _set_limits()
+        except Exception:
+            pass  # rlimits may not be settable on all platforms (e.g. non-POSIX)
+        old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.alarm(timeout_seconds)
         exec(impl_code, sandbox_globals)
         if test_code:
             sandbox_globals['pytest'] = __import__('pytest')
@@ -165,6 +206,9 @@ def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str
             success = True
         else:
             success = True
+    except _SandboxTimeout:
+        success = False
+        output = f"TimeoutError: Execution exceeded {timeout_seconds}s wall-clock limit (possible infinite loop)."
     except AssertionError as e:
         success = False
         output = f"AssertionError: {e}"
@@ -173,7 +217,12 @@ def run_in_persistent_sandbox(impl_code: str, test_code: str) -> tuple[bool, str
         import traceback
         output = traceback.format_exc()
     finally:
-        output += sys.stdout.getvalue() + sys.stderr.getvalue()
+        signal.alarm(0)
+        if old_handler is not None:
+            signal.signal(signal.SIGALRM, old_handler)
+        # Fix 10: put the exception/error FIRST, stdout/stderr noise AFTER —
+        # so truncation to 1000 chars never cuts off the root-cause traceback
+        output = output + "\n--- stdout/stderr ---\n" + sys.stdout.getvalue() + sys.stderr.getvalue()
         sys.stdout = old_stdout
         sys.stderr = old_stderr
     return success, output[:1000]
@@ -191,7 +240,12 @@ def generate_adversarial_tests(task: str, impl_code: str, generate_fn) -> str:
     except:
         return ""
 
-def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = 5) -> str:
+def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = "", max_rounds: int = None, skill: str = "coder") -> str:
+    # Fix 11: honor skill-specific round budget from get_max_rounds() when caller
+    # doesn't explicitly override — previously the skill-aware budget was defined
+    # but never actually wired into this function's default.
+    if max_rounds is None:
+        max_rounds = get_max_rounds(skill)
     blocks = extract_code_blocks(raw_output)
     impl_code, test_code = blocks["implementation"], blocks["tests"]
     memory = []
@@ -214,8 +268,12 @@ def reflexion_verify(raw_output: str, generate_fn, task: str = "", model: str = 
             if suspicious:
                 print(f"[Predictive] Suspicious lines this round: {suspicious}")
         except: pass
-        adv_test_code = generate_adversarial_tests(task, impl_code, generate_fn) if ok else ""
+        # Fix 3: always attempt adversarial generation, even if primary tests failed —
+        # otherwise robustness signal is completely absent on every early round
+        adv_test_code = generate_adversarial_tests(task, impl_code, generate_fn)
         adv_ok, adv_output = run_in_persistent_sandbox(impl_code, adv_test_code) if adv_test_code else (True, "")
+        if not adv_test_code:
+            print("[Reflexion] Adversarial test generation returned nothing this round — skipping adversarial gate.")
         
         if not stubs and not enterprise_violations and "APPROVED" in veto and not logic_flaws and ok and adv_ok:
             print(f"[Reflexion] SOTA Agentic Loop: Pytests & Adversarial Tests 100% passed on round {round_num}")

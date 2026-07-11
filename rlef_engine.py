@@ -25,12 +25,30 @@ def _hash_task(task: str) -> str:
     import hashlib
     return hashlib.md5(task.encode()).hexdigest()[:12]
 
+def _extract_error_type(error_trace: str) -> str:
+    """
+    Fix 12: broadened error-type extraction. The original only matched
+    'SomeError:' / 'SomeException:' at any position, but multi-line tracebacks
+    and non-standard formats (AssertionError without colon-suffix, custom
+    exceptions not ending in Error/Exception, TimeoutError from our own
+    sandbox) previously fell through to "Unknown", silently disabling RLEF's
+    learning for a large class of real failures.
+    """
+    # Standard "SomeError: message" or "SomeException: message" anywhere in text
+    match = re.search(r'(\w+(?:Error|Exception)):', error_trace)
+    if match:
+        return match.group(1)
+    # Our own sandbox timeout uses "TimeoutError:" already covered above, but
+    # also catch bare "AssertionError" with no colon (e.g. from assert statements)
+    match2 = re.search(r'\b(\w+(?:Error|Exception))\b', error_trace)
+    if match2:
+        return match2.group(1)
+    return "Unknown"
+
 def record_execution_trace(task: str, error_trace: str, broken_code: str, fix_applied: str, success: bool):
     """Upgraded: Saves the exact (Error -> Fix) pair so the AI never repeats a mistake."""
     try:
-        error_type = "Unknown"
-        match = re.search(r'(\w+Error|Exception):', error_trace)
-        if match: error_type = match.group(1)
+        error_type = _extract_error_type(error_trace)
         
         with _lock:
             con = sqlite3.connect(DB)
@@ -44,9 +62,7 @@ def record_execution_trace(task: str, error_trace: str, broken_code: str, fix_ap
 def get_relevant_traces(error_trace: str, limit: int = 3) -> str:
     """Upgraded: When the AI hits an error, it retrieves past fixes for similar errors."""
     try:
-        error_type = "Unknown"
-        match = re.search(r'(\w+Error|Exception):', error_trace)
-        if match: error_type = match.group(1)
+        error_type = _extract_error_type(error_trace)
         
         with _lock:
             con = sqlite3.connect(DB)
