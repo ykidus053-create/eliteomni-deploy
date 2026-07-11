@@ -15,6 +15,46 @@ from modules.services.search import tool_search, tool_web_fetch
 from modules.services.tools import _grep_codebase, tool_exec, tool_lint
 from modules.services.memory import db_mem_save, tool_calc, tool_weather, tool_time
 from modules.services.mcp import run_mcp_tools
+
+# BEGIN AGENTS PIPELINE BRIDGE V25
+def build_chatml(
+    system: str,
+    history: list,
+    user_msg: str,
+    complexity: str = "medium",
+) -> list:
+    """Delegate prompt construction to the canonical pipeline implementation."""
+    from modules.services.pipeline import build_chatml as _build_chatml
+
+    return _build_chatml(
+        system,
+        history,
+        user_msg,
+        complexity=complexity,
+    )
+
+
+def generate_sync(
+    msgs: list,
+    max_new: int,
+    skill: str,
+    msg_len: int,
+    provider: str = "mistral",
+    model: str | None = None,
+) -> str:
+    """Delegate generation without creating an import-time circular dependency."""
+    from modules.services.pipeline import generate_sync as _generate_sync
+
+    return _generate_sync(
+        msgs,
+        max_new,
+        skill,
+        msg_len,
+        provider=provider,
+        model=model,
+    )
+# END AGENTS PIPELINE BRIDGE V25
+
 def groq_generate(msgs, max_tokens=1000, **kwargs):
     return "".join(_mistral_stream(msgs, max_tokens=max_tokens))
 # AUTO-SPLIT FROM app.py lines 2945-3379
