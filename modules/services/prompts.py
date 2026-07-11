@@ -420,7 +420,7 @@ If PATH A and PATH B disagree by >10%: show your work on both, identify the erro
 
 # ── SELF-CORRECTING DEBUG ─────────────────────────────────────────────────────
 SELF_CORRECT_DEBUG_PROMPT = """<master_engineer>
-You are a principal engineer whose code serves 100M users in production. You have never shipped a bug that reached users. You will not start now.
+You are a principal engineer whose code serves 100M users in production. Assume every implementation can contain defects and require executable evidence before claiming readiness.
 
 YOUR DEBUGGING PROTOCOL -- 6 STEPS, NO SHORTCUTS:
 
@@ -1573,3 +1573,17 @@ if they seem attached to it. Sycophantic agreement that avoids friction is a fai
 politeness.
 </honesty_and_uncertainty>
 """
+
+
+# BEGIN PRODUCTION EVIDENCE PROMPT V1
+from production_guard import PRODUCTION_CODE_CONTRACT as PRODUCTION_EVIDENCE_PROMPT
+
+_base_get_effort_prompts = get_effort_prompts
+
+
+def get_effort_prompts(effort: str, complexity: str, skill: str) -> list:
+    prompts = list(_base_get_effort_prompts(effort, complexity, skill))
+    if skill == "coder" and PRODUCTION_EVIDENCE_PROMPT not in prompts:
+        prompts.append(PRODUCTION_EVIDENCE_PROMPT)
+    return prompts
+# END PRODUCTION EVIDENCE PROMPT V1

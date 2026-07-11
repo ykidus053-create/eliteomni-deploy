@@ -1483,3 +1483,101 @@ MANDATORY FULL-APP GENERATION RULES — STRICTLY FOLLOW ALL:
 9. Each file MUST be complete and runnable as-is with no edits required
 10. Output ALL code even if response is very long — never stop early
 """
+
+
+# BEGIN PRODUCTION EVIDENCE PIPELINE V1
+from production_guard import (
+    PRODUCTION_CODE_CONTRACT as _PRODUCTION_CODE_CONTRACT,
+    audit_production_response as _audit_production_response,
+    format_audit_for_model as _format_production_audit,
+)
+
+_base_formal_verify_without_production_gate = formal_verify
+
+
+def formal_verify(text: str, skill: str, original_msg: str) -> tuple:
+    result = _base_formal_verify_without_production_gate(
+        text,
+        skill,
+        original_msg,
+    )
+    is_valid, violations = result[0], list(result[1])
+    checked_text = result[2] if len(result) > 2 else text
+
+    report = _audit_production_response(original_msg, checked_text)
+    if report.required and not report.approved:
+        for violation in report.violations:
+            tagged = f"Production evidence: {violation}"
+            if tagged not in violations:
+                violations.append(tagged)
+        is_valid = False
+
+    return is_valid, violations, checked_text
+
+
+_base_verification_pipeline_without_production_gate = verification_pipeline
+
+
+def verification_pipeline(
+    text: str,
+    msg: str,
+    skill: str,
+    complexity: str = "medium",
+) -> str:
+    verified = _base_verification_pipeline_without_production_gate(
+        text,
+        msg,
+        skill,
+        complexity,
+    )
+    report = _audit_production_response(msg, verified)
+    if not report.required or report.approved:
+        return verified
+
+    try:
+        from modules.core.http_client import mistral_generate
+
+        correction_prompt = (
+            _PRODUCTION_CODE_CONTRACT
+            + "\n\nORIGINAL REQUEST:\n"
+            + msg[:1000]
+            + "\n\nFAILED AUDIT:\n"
+            + _format_production_audit(report)
+            + "\n\nPREVIOUS RESPONSE:\n"
+            + verified[:12000]
+            + "\n\nRewrite the complete answer. Implement every claimed "
+              "property and include executable tests. If full production "
+              "readiness is not achievable in this response, state the exact "
+              "scope honestly and do not use production-grade claims."
+        )
+        corrected = mistral_generate(
+            [{"role": "user", "content": correction_prompt}],
+            max_tokens=7000,
+        )
+        if corrected and len(corrected.strip()) > 200:
+            corrected_verified = (
+                _base_verification_pipeline_without_production_gate(
+                    corrected,
+                    msg,
+                    skill,
+                    complexity,
+                )
+            )
+            corrected_report = _audit_production_response(
+                msg,
+                corrected_verified,
+            )
+            if corrected_report.approved:
+                return corrected_verified
+            verified = corrected_verified
+            report = corrected_report
+    except Exception as exc:
+        print(f"[ProductionEvidenceGate] correction failed: {exc}")
+
+    issues = " · ".join(report.violations[:5])
+    return (
+        verified
+        + "\n\n> ❌ **Not production-ready:** The production evidence gate "
+          f"failed (score {report.score}/100). {issues}"
+    )
+# END PRODUCTION EVIDENCE PIPELINE V1

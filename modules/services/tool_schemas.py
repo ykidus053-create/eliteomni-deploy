@@ -130,3 +130,17 @@ def dispatch_tool_call(name: str, args: dict) -> str:
         return "\n\n".join(f"[{h.get('source','?')}] {h.get('text','')}" for h in hits)
 
     return f"[Unknown tool: {name}]"
+
+# BEGIN OFFLINE SEARCH RESULT V1
+_dispatch_tool_call_without_offline_result = dispatch_tool_call
+
+
+def dispatch_tool_call(name: str, args: dict) -> str:
+    result = _dispatch_tool_call_without_offline_result(name, args)
+    if (name or "").strip().lower() == "search" and not result:
+        return (
+            "[Search unavailable: no configured search provider responded. "
+            "No results were fabricated.]"
+        )
+    return result
+# END OFFLINE SEARCH RESULT V1
