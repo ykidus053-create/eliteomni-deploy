@@ -1317,3 +1317,319 @@ def cerebras_stream(
         model=model,
     )
 # END CEREBRAS CONTEXT GUARD V19
+
+# BEGIN CEREBRAS SAFE GATE V26
+import collections as _v26_collections
+import json as _v26_json
+import os as _v26_os
+import threading as _v26_threading
+import time as _v26_time
+import urllib.error as _v26_error
+import urllib.request as _v26_request
+
+# Use 4 RPM for safety beneath the account's 5-RPM ceiling.
+_V26_RPM = max(
+    1,
+    min(
+        int(_v26_os.getenv("CEREBRAS_SAFE_RPM", "4")),
+        4,
+    ),
+)
+
+_V26_GAP = max(
+    15.0,
+    float(
+        _v26_os.getenv(
+            "CEREBRAS_MIN_GAP_SECONDS",
+            "15.5",
+        )
+    ),
+)
+
+_V26_TIMES = _v26_collections.deque()
+_V26_LOCK = _v26_threading.Condition()
+_V26_INFLIGHT = _v26_threading.Semaphore(1)
+_V26_COOLDOWN_UNTIL = 0.0
+
+
+def _v26_reserve():
+    """Reserve one request start within a rolling 60-second window."""
+    with _V26_LOCK:
+        while True:
+            now = _v26_time.monotonic()
+
+            while (
+                _V26_TIMES
+                and now - _V26_TIMES[0] >= 60.0
+            ):
+                _V26_TIMES.popleft()
+
+            wait = max(
+                0.0,
+                _V26_COOLDOWN_UNTIL - now,
+            )
+
+            if _V26_TIMES:
+                wait = max(
+                    wait,
+                    _V26_GAP - (now - _V26_TIMES[-1]),
+                )
+
+            if len(_V26_TIMES) >= _V26_RPM:
+                wait = max(
+                    wait,
+                    60.75 - (now - _V26_TIMES[0]),
+                )
+
+            if wait <= 0:
+                _V26_TIMES.append(now)
+                return
+
+            print(
+                "[CerebrasSafeGate] queued "
+                f"{wait:.1f}s to remain below "
+                f"{_V26_RPM} RPM"
+            )
+
+            _V26_LOCK.wait(timeout=wait)
+
+
+def _v26_cooldown(seconds=30.0):
+    """Pause new Cerebras starts following provider congestion."""
+    global _V26_COOLDOWN_UNTIL
+
+    with _V26_LOCK:
+        _V26_COOLDOWN_UNTIL = max(
+            _V26_COOLDOWN_UNTIL,
+            _v26_time.monotonic()
+            + max(30.0, float(seconds)),
+        )
+
+        _V26_LOCK.notify_all()
+
+
+def _v26_fallback(msgs, max_tokens, reason):
+    """Hide provider congestion by routing the request to Groq."""
+    if globals().get("GROQ_API_KEY"):
+        print(
+            "[CerebrasSafeGate] "
+            f"{reason}; switching this call to Groq"
+        )
+
+        yield from groq_stream(
+            msgs,
+            max_tokens=min(int(max_tokens), 2048),
+            model=_v26_os.getenv(
+                "CEREBRAS_FALLBACK_GROQ_MODEL",
+                "llama-3.3-70b-versatile",
+            ),
+        )
+
+        return
+
+    yield (
+        "[Provider busy: the request was safely deferred. "
+        "Please retry shortly.]"
+    )
+    yield "\x00FINISH_REASON\x00error"
+
+
+def cerebras_stream(
+    msgs: list,
+    max_tokens: int = 16000,
+    model: str = None,
+):
+    """
+    Strict process-wide Cerebras transport.
+
+    Requests are serialized, limited to four starts in a rolling minute,
+    and provider congestion automatically falls back to Groq.
+    """
+    global CEREBRAS_API_KEY
+
+    CEREBRAS_API_KEY = (
+        CEREBRAS_API_KEY
+        or _v26_os.getenv("CEREBRAS_API_KEY", "")
+    )
+
+    if not CEREBRAS_API_KEY:
+        yield "[CEREBRAS_API_KEY not set]"
+        yield "\x00FINISH_REASON\x00error"
+        return
+
+    selected_model = model or CEREBRAS_MODEL
+    capped_tokens = min(int(max_tokens), 16000)
+    fitted_messages = list(msgs)
+
+    if "_cerebras_fit_context_v19" in globals():
+        fitted_messages, capped_tokens = (
+            _cerebras_fit_context_v19(
+                fitted_messages,
+                capped_tokens,
+            )
+        )
+
+    payload = _v26_json.dumps(
+        {
+            "model": selected_model,
+            "messages": fitted_messages,
+            "max_completion_tokens": capped_tokens,
+            "temperature": 0.2,
+            "stream": True,
+        }
+    ).encode("utf-8")
+
+    request = _v26_request.Request(
+        CEREBRAS_URL,
+        data=payload,
+        headers={
+            "Authorization": (
+                f"Bearer {CEREBRAS_API_KEY}"
+            ),
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "User-Agent": "EliteOmni/1.0",
+        },
+    )
+
+    # Only one Cerebras stream may run at a time.
+    with _V26_INFLIGHT:
+        _v26_reserve()
+
+        thinking_open = False
+        finish_seen = False
+
+        try:
+            with _v26_request.urlopen(
+                request,
+                timeout=120,
+            ) as response:
+                for raw in response:
+                    line = raw.decode(
+                        "utf-8",
+                        errors="replace",
+                    ).strip()
+
+                    if (
+                        not line
+                        or line == "data: [DONE]"
+                        or not line.startswith("data: ")
+                    ):
+                        continue
+
+                    try:
+                        event = _v26_json.loads(line[6:])
+                        choice = event.get(
+                            "choices",
+                            [{}],
+                        )[0]
+
+                        delta = choice.get("delta", {})
+
+                        reasoning = (
+                            delta.get("reasoning_content")
+                            or ""
+                        )
+
+                        content = (
+                            delta.get("content")
+                            or ""
+                        )
+
+                        if reasoning:
+                            if not thinking_open:
+                                yield "\x00THINKING\x00"
+                                thinking_open = True
+
+                            yield reasoning
+
+                        if content:
+                            if thinking_open:
+                                yield "\x00/THINKING\x00"
+                                thinking_open = False
+
+                            yield content
+
+                        finish = choice.get(
+                            "finish_reason"
+                        )
+
+                        if finish:
+                            if thinking_open:
+                                yield "\x00/THINKING\x00"
+                                thinking_open = False
+
+                            yield (
+                                "\x00FINISH_REASON\x00"
+                                + str(finish)
+                            )
+
+                            finish_seen = True
+
+                    except Exception:
+                        continue
+
+            if thinking_open:
+                yield "\x00/THINKING\x00"
+
+            if not finish_seen:
+                yield "\x00FINISH_REASON\x00stop"
+
+            return
+
+        except _v26_error.HTTPError as exc:
+            if exc.code == 429:
+                retry_after = 30.0
+
+                try:
+                    retry_after = float(
+                        exc.headers.get(
+                            "Retry-After",
+                            "30",
+                        )
+                    )
+                except Exception:
+                    pass
+
+                _v26_cooldown(retry_after)
+
+                yield from _v26_fallback(
+                    fitted_messages,
+                    capped_tokens,
+                    "Cerebras returned 429",
+                )
+
+                return
+
+            if exc.code in {
+                500,
+                502,
+                503,
+                504,
+            }:
+                _v26_cooldown(30.0)
+
+                yield from _v26_fallback(
+                    fitted_messages,
+                    capped_tokens,
+                    f"Cerebras HTTP {exc.code}",
+                )
+
+                return
+
+            yield (
+                f"[Cerebras error: HTTP {exc.code}]"
+            )
+            yield "\x00FINISH_REASON\x00error"
+            return
+
+        except Exception as exc:
+            yield from _v26_fallback(
+                fitted_messages,
+                capped_tokens,
+                f"Cerebras transport error: {exc}",
+            )
+
+            return
+
+# END CEREBRAS SAFE GATE V26
