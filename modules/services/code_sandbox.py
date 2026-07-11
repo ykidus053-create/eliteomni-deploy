@@ -411,3 +411,90 @@ def run_data_analysis(csv, q=""):
             "df=pd.read_csv(io.StringIO(" + repr(csv[:200000]) + "))\n"
             "print(df.describe(include='all').to_string())")
     return run_python(code)
+
+# BEGIN SAFE SANDBOX OVERRIDES V18
+import shlex as _quality_shlex_v18
+
+_QUALITY_SANDBOX_TIMEOUT_V18 = max(
+    1,
+    min(int(os.environ.get("ELITE_SANDBOX_TIMEOUT", "20")), 60),
+)
+_QUALITY_ALLOWED_SHELL_COMMANDS_V18 = {
+    "python",
+    "python3",
+    "pytest",
+    "git",
+    "ruff",
+    "mypy",
+    "node",
+    "npm",
+    "go",
+    "cargo",
+}
+
+
+def run_python(code: str, timeout: int = _QUALITY_SANDBOX_TIMEOUT_V18) -> dict:
+    """Execute Python without mutating the environment or installing packages."""
+    tmp = _tmpfile(code, ".py")
+    try:
+        return _run_proc(
+            [sys.executable, "-I", "-u", tmp],
+            timeout=max(1, min(int(timeout), 60)),
+        )
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def run_shell(command, timeout: int = _QUALITY_SANDBOX_TIMEOUT_V18) -> dict:
+    """Run a bounded allowlisted command with shell expansion disabled."""
+    if isinstance(command, str):
+        if re.search(r"[;&|><`$(){}\n\r]", command):
+            return {
+                "stdout": "",
+                "stderr": "[BLOCKED] shell metacharacters are not allowed",
+                "success": False,
+                "exit_code": -1,
+            }
+        try:
+            args = _quality_shlex_v18.split(command)
+        except ValueError as exc:
+            return {
+                "stdout": "",
+                "stderr": f"[INVALID COMMAND] {exc}",
+                "success": False,
+                "exit_code": -1,
+            }
+    else:
+        args = list(command)
+
+    if not args:
+        return {
+            "stdout": "",
+            "stderr": "[INVALID COMMAND] empty command",
+            "success": False,
+            "exit_code": -1,
+        }
+
+    executable = os.path.basename(str(args[0]))
+    if executable not in _QUALITY_ALLOWED_SHELL_COMMANDS_V18:
+        return {
+            "stdout": "",
+            "stderr": f"[BLOCKED] command not allowlisted: {executable}",
+            "success": False,
+            "exit_code": -1,
+        }
+
+    return _run_proc(
+        [str(part) for part in args],
+        timeout=max(1, min(int(timeout), 60)),
+        use_limits=True,
+    )
+
+
+if "_LANG_MAP" in globals():
+    _LANG_MAP["python"] = run_python
+    _LANG_MAP["py"] = run_python
+# END SAFE SANDBOX OVERRIDES V18

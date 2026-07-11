@@ -5546,3 +5546,8 @@ async def update_god_prompt_endpoint(request: Request):
         update_god_prompt(rule)
         return {"status": "success", "message": "Global rule permanently added."}
     return JSONResponse({"error": "Missing rule"}, status_code=400)
+
+# BEGIN ACTIVE QUALITY KERNEL V18
+from modules.quality_kernel import install_runtime_hooks
+install_runtime_hooks(globals())
+# END ACTIVE QUALITY KERNEL V18
