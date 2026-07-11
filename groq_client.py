@@ -1092,3 +1092,225 @@ def cerebras_stream(msgs: list, max_tokens: int = 16000, model: str = None):
                 yield f"[Cerebras error: {e}]"
             yield "\x00FINISH_REASON\x00error"
             break
+
+# BEGIN CEREBRAS CONTEXT GUARD V19
+_CEREBRAS_STREAM_UNGUARDED_V19 = cerebras_stream
+
+
+def _cerebras_content_text_v19(content) -> str:
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return str(content)
+
+
+def _cerebras_clip_text_v19(text: str, limit: int) -> str:
+    text = text or ""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    if limit < 160:
+        return text[:limit]
+    head = int(limit * 0.62)
+    tail = limit - head - 47
+    return (
+        text[:head]
+        + "\n...[context compacted at transport boundary]...\n"
+        + text[-max(0, tail):]
+    )
+
+
+def _cerebras_estimate_tokens_v19(msgs: list) -> int:
+    # Conservative approximation for mixed prose/code/JSON.
+    chars = 0
+    for message in msgs or []:
+        if isinstance(message, dict):
+            chars += len(_cerebras_content_text_v19(message.get("content", "")))
+            chars += 24
+        else:
+            chars += len(str(message)) + 24
+    return max(1, (chars + 2) // 3)
+
+
+def _cerebras_fit_context_v19(
+    msgs: list,
+    requested_output_tokens: int,
+) -> tuple[list, int]:
+    """Fit messages and completion inside the provider's real context window."""
+    try:
+        window = int(os.environ.get("CEREBRAS_CONTEXT_WINDOW", "8192"))
+    except ValueError:
+        window = 8192
+    window = max(4096, min(window, 131072))
+
+    try:
+        output_cap = int(
+            os.environ.get("CEREBRAS_MAX_OUTPUT_TOKENS", "3072")
+        )
+    except ValueError:
+        output_cap = 3072
+
+    requested = int(requested_output_tokens or output_cap)
+    max_output = min(
+        max(256, requested),
+        max(512, output_cap),
+        max(512, window - 2048),
+    )
+
+    safety_tokens = max(384, min(768, window // 10))
+    prompt_budget_tokens = max(
+        1024,
+        window - max_output - safety_tokens,
+    )
+    # Three chars/token is intentionally conservative for source code.
+    prompt_budget_chars = prompt_budget_tokens * 3
+
+    normalized = []
+    for raw in msgs or []:
+        if isinstance(raw, dict):
+            role = str(raw.get("role", "user") or "user")
+            content = _cerebras_content_text_v19(raw.get("content", ""))
+            normalized.append({**raw, "role": role, "content": content})
+        else:
+            normalized.append({"role": "user", "content": str(raw)})
+
+    if not normalized:
+        return [{"role": "user", "content": ""}], max_output
+
+    system_index = next(
+        (
+            index
+            for index, message in enumerate(normalized)
+            if message.get("role") == "system"
+        ),
+        None,
+    )
+    last_user_index = next(
+        (
+            index
+            for index in range(len(normalized) - 1, -1, -1)
+            if normalized[index].get("role") == "user"
+        ),
+        len(normalized) - 1,
+    )
+
+    protected_indices = {last_user_index}
+    if system_index is not None:
+        protected_indices.add(system_index)
+
+    system_budget = (
+        min(7000, int(prompt_budget_chars * 0.46))
+        if system_index is not None
+        else 0
+    )
+    user_budget = min(
+        7000,
+        prompt_budget_chars - system_budget,
+    )
+    user_budget = max(900, user_budget)
+
+    kept_by_index = {}
+    if system_index is not None:
+        original = normalized[system_index]
+        kept_by_index[system_index] = {
+            **original,
+            "content": _cerebras_clip_text_v19(
+                original.get("content", ""),
+                system_budget,
+            ),
+        }
+
+    original_user = normalized[last_user_index]
+    kept_by_index[last_user_index] = {
+        **original_user,
+        "content": _cerebras_clip_text_v19(
+            original_user.get("content", ""),
+            user_budget,
+        ),
+    }
+
+    used_chars = sum(
+        len(message.get("content", ""))
+        for message in kept_by_index.values()
+    )
+    remaining = max(0, prompt_budget_chars - used_chars)
+
+    # Keep recent conversation turns newest-first.
+    for index in range(len(normalized) - 1, -1, -1):
+        if index in protected_indices:
+            continue
+        if remaining < 240:
+            break
+        original = normalized[index]
+        content = original.get("content", "")
+        per_message_cap = min(2400, remaining)
+        clipped = _cerebras_clip_text_v19(content, per_message_cap)
+        if not clipped:
+            continue
+        kept_by_index[index] = {**original, "content": clipped}
+        remaining -= len(clipped)
+
+    kept = [
+        kept_by_index[index]
+        for index in sorted(kept_by_index)
+    ]
+
+    before = _cerebras_estimate_tokens_v19(normalized)
+    after = _cerebras_estimate_tokens_v19(kept)
+    if before > after:
+        print(
+            "[CerebrasContext] "
+            f"trimmed prompt {before}->{after} estimated tokens; "
+            f"completion cap={max_output}; window={window}"
+        )
+
+    # Last defensive reduction if approximation still exceeds the budget.
+    while (
+        _cerebras_estimate_tokens_v19(kept) > prompt_budget_tokens
+        and len(kept) > 2
+    ):
+        removable = next(
+            (
+                index
+                for index, message in enumerate(kept)
+                if message.get("role") not in {"system"}
+                and index != len(kept) - 1
+            ),
+            None,
+        )
+        if removable is None:
+            break
+        kept.pop(removable)
+
+    if _cerebras_estimate_tokens_v19(kept) > prompt_budget_tokens:
+        # Rebalance the two protected messages under the final hard budget.
+        total_chars = prompt_budget_chars
+        for index, message in enumerate(kept):
+            share = int(total_chars * (0.48 if index == 0 else 0.52))
+            message["content"] = _cerebras_clip_text_v19(
+                message.get("content", ""),
+                share,
+            )
+
+    return kept, max_output
+
+
+def cerebras_stream(
+    msgs: list,
+    max_tokens: int = 16000,
+    model: str = None,
+):
+    """Transport guard for every Cerebras caller, including background daemons."""
+    fitted, capped_output = _cerebras_fit_context_v19(
+        msgs,
+        max_tokens,
+    )
+    yield from _CEREBRAS_STREAM_UNGUARDED_V19(
+        fitted,
+        max_tokens=capped_output,
+        model=model,
+    )
+# END CEREBRAS CONTEXT GUARD V19
