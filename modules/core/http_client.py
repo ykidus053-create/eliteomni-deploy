@@ -804,3 +804,27 @@ CODESTRAL_MODEL = os.environ.get(
     CODESTRAL_MODEL,
 )
 # END MODEL CONFIG V18
+
+# BEGIN MULTIMODAL GATEWAY V22
+from modules.multimodal_gateway import (
+    mistral_ocr_v22,
+    multimodal_status,
+    ocr_document_v22,
+    vision_describe_v22,
+)
+
+def vision_describe(image_b64: str, prompt: str = "") -> str:
+    return vision_describe_v22(image_b64, prompt)
+
+def ocr_document(
+    file_b64: str,
+    filename: str = "document.pdf",
+) -> str:
+    return ocr_document_v22(file_b64, filename)
+
+def mistral_ocr(
+    file_b64: str,
+    filename: str = "document.pdf",
+) -> str:
+    return mistral_ocr_v22(file_b64, filename)
+# END MULTIMODAL GATEWAY V22

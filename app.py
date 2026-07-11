@@ -5552,3 +5552,20 @@ async def frontier_runtime_v21_status():
 
 install_frontier_runtime_v21(globals())
 # END FRONTIER RUNTIME V21
+
+# BEGIN DOCUMENT VIEWING V22
+from modules.multimodal_gateway import (
+    extract_uploaded_file_v22,
+    multimodal_status as _multimodal_status_v22,
+)
+
+def _extract_text_from_file(
+    filename: str,
+    data: bytes,
+) -> str:
+    return extract_uploaded_file_v22(filename, data)
+
+@app.get("/multimodal/status")
+async def multimodal_status_v22():
+    return _multimodal_status_v22()
+# END DOCUMENT VIEWING V22

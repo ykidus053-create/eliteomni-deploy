@@ -5,6 +5,7 @@ Runs automatically via .git/hooks/pre-commit — a failing test blocks the commi
 Manual run: python3 smoke_test.py
 Exit code 0 = all passed (or skipped). Non-zero = real failure, blocks commit.
 """
+import os
 import sys
 import traceback
 
@@ -88,6 +89,20 @@ def test_time_string():
     return s
 
 def test_vision_describe():
+    if (
+        os.environ.get(
+            "ELITE_RUN_LIVE_MULTIMODAL_TESTS",
+            "0",
+        )
+        .strip()
+        .lower()
+        not in {"1", "true", "yes", "on"}
+    ):
+        return (
+            "SKIPPED: set "
+            "ELITE_RUN_LIVE_MULTIMODAL_TESTS=1 "
+            "for the live API test"
+        )
     from modules.core.http_client import vision_describe
     tiny_png_b64 = (
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42"
