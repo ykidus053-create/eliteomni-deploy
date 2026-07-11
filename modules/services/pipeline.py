@@ -1581,3 +1581,39 @@ def verification_pipeline(
           f"failed (score {report.score}/100). {issues}"
     )
 # END PRODUCTION EVIDENCE PIPELINE V1
+
+# BEGIN FINAL PRODUCTION FAIL-CLOSED GATE V2
+_verification_pipeline_before_fail_closed_v2 = verification_pipeline
+
+
+def verification_pipeline(
+    text: str,
+    msg: str,
+    skill: str,
+    complexity: str = "medium",
+) -> str:
+    """Run the final production audit after all correction passes."""
+    verified = _verification_pipeline_before_fail_closed_v2(
+        text,
+        msg,
+        skill,
+        complexity,
+    )
+    report = _audit_production_response(msg, verified)
+
+    if not report.required or report.approved:
+        return verified
+
+    issue_text = "\n".join(
+        f"- {issue}" for issue in report.violations[:8]
+    )
+    return (
+        "I could not verify the generated implementation as production-ready, "
+        "so I withheld the unverified code instead of presenting it as usable."
+        "\n\nVerification failures:\n"
+        f"{issue_text}\n\n"
+        "A safer implementation should use a proven database engine such as "
+        "SQLite or PostgreSQL, or explicitly label a custom engine as an "
+        "educational prototype and list its unsupported guarantees."
+    )
+# END FINAL PRODUCTION FAIL-CLOSED GATE V2

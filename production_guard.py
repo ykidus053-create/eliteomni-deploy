@@ -327,3 +327,208 @@ def format_audit_for_model(report: ProductionAudit) -> str:
         "Rewrite the implementation or explicitly downgrade its claims. Do not "
         "hide limitations behind confident wording."
     )
+
+# BEGIN DATABASE SEMANTIC EVIDENCE GATE V2
+_BASE_PRODUCTION_CODE_CONTRACT_V1 = PRODUCTION_CODE_CONTRACT
+PRODUCTION_CODE_CONTRACT = (
+    _BASE_PRODUCTION_CODE_CONTRACT_V1
+    + r"""
+
+DATABASE IMPLEMENTATION RULES:
+- Prefer SQLite or PostgreSQL for production database requests unless the user
+  explicitly asks to implement a storage engine from first principles.
+- Transaction state must be scoped per connection/session or an explicit
+  transaction object. Never share one current transaction ID and buffer across
+  client threads.
+- Rollback must undo every visible mutation. Uncommitted rows must not be
+  inserted into the shared committed index.
+- Do not claim two-phase commit without a durable PREPARE phase and recovery
+  behavior for prepared transactions.
+- Autocommit writes must use the same atomic WAL/commit path as explicit
+  transactions.
+- TCP is a byte stream. Implement explicit framing and buffering for partial
+  and coalesced messages.
+- Re-run the production audit after every rewrite or enhancement. If the final
+  artifact still fails, withhold it rather than calling it production-ready.
+"""
+).strip()
+
+_base_audit_production_response_v1 = audit_production_response
+
+
+def _database_semantic_violations(
+    request: str,
+    response: str,
+) -> list[tuple[str, int]]:
+    combined = f"{request}\n{response}"
+    if not re.search(
+        r"\b(database|sql|transaction|write[- ]ahead|\bwal\b)\b",
+        combined,
+        re.IGNORECASE,
+    ):
+        return []
+
+    code = "\n\n".join(_python_blocks(response))
+    lowered = response.lower()
+    issues: list[tuple[str, int]] = []
+
+    if response.count("```") % 2:
+        issues.append((
+            "Generated Markdown has an unclosed code fence, so the delivered "
+            "program is not a valid copy-paste artifact.",
+            50,
+        ))
+
+    if re.search(
+        r"class\s+\w*RequestHandler\s*\(\s*socket\.socket\s*\)",
+        code,
+    ):
+        issues.append((
+            "The request handler incorrectly subclasses socket.socket; use "
+            "composition or socketserver.BaseRequestHandler.",
+            30,
+        ))
+
+    shared_tx_state = bool(
+        "self.current_tx_id" in code
+        and "self.tx_buffer" in code
+        and re.search(r"threading\.Thread\s*\(", code)
+        and not re.search(
+            r"threading\.local|contextvars|transactions\s*:\s*Dict|"
+            r"session[_ ]state|connection[_ ]state",
+            code,
+            re.IGNORECASE,
+        )
+    )
+    if shared_tx_state:
+        issues.append((
+            "Transaction ID and transaction buffer are shared on one Database "
+            "instance across client threads. Scope them per connection/session.",
+            45,
+        ))
+
+    insert_body = re.search(
+        r"def\s+insert\s*\(.*?(?=\n\s*def\s+|\Z)",
+        code,
+        re.DOTALL,
+    )
+    rollback_body = re.search(
+        r"def\s+rollback\s*\(.*?(?=\n\s*def\s+|\Z)",
+        code,
+        re.DOTALL,
+    )
+    if insert_body and rollback_body:
+        exposes_uncommitted = "pk_index.insert" in insert_body.group(0)
+        rollback_text = rollback_body.group(0).lower()
+        has_real_undo = any(
+            marker in rollback_text
+            for marker in (
+                ".delete(",
+                ".remove(",
+                "restore",
+                "before_image",
+                "undo_record",
+            )
+        )
+        if exposes_uncommitted and not has_real_undo:
+            issues.append((
+                "INSERT exposes rows in the committed/shared index before "
+                "commit, while ROLLBACK has no corresponding undo.",
+                50,
+            ))
+
+    if "two-phase commit" in lowered and not re.search(
+        r"\bprepare(?:d)?\b|PREPARE(?:_TRANSACTION)?",
+        code,
+        re.IGNORECASE,
+    ):
+        issues.append((
+            "The response claims two-phase commit but implements no durable "
+            "PREPARE phase or prepared-transaction recovery.",
+            40,
+        ))
+
+    autocommit = re.search(
+        r"(?:#\s*Auto-commit|else\s*:).*?"
+        r"storage\.persist_row\s*\(.*?"
+        r"(?:return|elif|def\s+)",
+        code,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if autocommit and not re.search(
+        r"wal\.(?:append|commit)\s*\(",
+        autocommit.group(0),
+        re.IGNORECASE,
+    ):
+        issues.append((
+            "The autocommit path writes directly to storage and bypasses the "
+            "WAL, contradicting the durability/atomicity claim.",
+            40,
+        ))
+
+    if re.search(r"\.recv\s*\(", code) and not re.search(
+        r"length[_ -]?prefix|frame|delimiter|readline|"
+        r"buffer.*(?:\\n|newline)|split\s*\(\s*b?[\"']\\n",
+        code,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        issues.append((
+            "The TCP protocol treats recv() as one complete statement. TCP "
+            "requires explicit framing and buffering.",
+            35,
+        ))
+
+    if (
+        "parts[6] != '='" in code
+        and not re.search(r"re\.findall\([^)]*=", code, re.DOTALL)
+    ):
+        issues.append((
+            "The SQL parser expects an '=' token that its tokenizer does not "
+            "capture.",
+            30,
+        ))
+
+    if (
+        re.search(r"json\.loads\s*\(\s*line\s*\)", code)
+        and not re.search(
+            r"checksum|crc|record[_ -]?length|length[_ -]?prefix",
+            code,
+            re.IGNORECASE,
+        )
+    ):
+        issues.append((
+            "Recovery reads newline-delimited JSON without framing/checksums, "
+            "so a torn final write can break startup.",
+            35,
+        ))
+
+    return issues
+
+
+def audit_production_response(
+    request: str,
+    response: str,
+) -> ProductionAudit:
+    base = _base_audit_production_response_v1(request, response)
+    extra = _database_semantic_violations(request, response)
+
+    if not extra:
+        return base
+
+    violations = list(base.violations)
+    penalty = 100 - base.score
+    for message, points in extra:
+        if message not in violations:
+            violations.append(message)
+            penalty += points
+
+    evidence = list(base.evidence)
+    evidence.append("Database semantic invariant audit V2 executed.")
+    return ProductionAudit(
+        required=True,
+        approved=False,
+        score=max(0, 100 - penalty),
+        violations=tuple(violations),
+        evidence=tuple(evidence),
+    )
+# END DATABASE SEMANTIC EVIDENCE GATE V2

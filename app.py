@@ -411,6 +411,17 @@ def _lint_feedback_loop(code_response: str, msg: str, system: str, max_t: int, s
     fixed = generate_sync(correction_prompt, max_t, skill, len(msg))
     return fixed if fixed and len(fixed) > 100 else code_response
 
+
+# BEGIN PRODUCTION REQUEST ROUTER V2
+def _is_production_code_request_v2(message: str, skill: str) -> bool:
+    return skill == "coder" and bool(re.search(
+        r"\b(production(?:-grade|-ready)?|enterprise-grade|acid|"
+        r"durable|write[- ]ahead|\bwal\b|database engine)\b",
+        message or "",
+        re.IGNORECASE,
+    ))
+# END PRODUCTION REQUEST ROUTER V2
+
 def pipeline_sync(msg: str, history: list) -> dict:
     from modules.core.http_client import mistral_stream
     """
@@ -1034,7 +1045,10 @@ def pipeline_sync(msg: str, history: list) -> dict:
         pass
 
     final  = cai_critique_revise(final, msg, skill, complexity)
-    final  = gpt55_enhance(msg, final)
+    final = gpt55_enhance(msg, final)
+    # BEGIN FINAL SYNC PRODUCTION VERIFY V2
+    final = verification_pipeline(final, msg, skill, complexity)
+    # END FINAL SYNC PRODUCTION VERIFY V2
     scratchpad_save(f"a_{int(time.time())}", final[:120])
     # Strip thinking tokens before saving to memory/context (Anthropic: billed once)
     import re as _re2
@@ -3441,6 +3455,22 @@ async def stream_chat(req: Request):
         loop = asyncio.get_event_loop()
 
 
+        # BEGIN STREAM PRODUCTION ROUTE V2
+        if _is_production_code_request_v2(msg, ctx.get("skill", "")):
+            verified_result = await _loop.run_in_executor(
+                None,
+                lambda: pipeline_sync(msg, hist),
+            )
+            yield json.dumps({
+                "skill": ctx.get("skill", "coder"),
+                "mode": "verified",
+            }) + "\n"
+            yield verified_result.get(
+                "response",
+                "Production verification failed without a response.",
+            )
+            return
+        # END STREAM PRODUCTION ROUTE V2
         if ctx["cached"]:
             yield json.dumps({"skill": ctx["skill"], "mode": "cached"}) + "\n"
             t = ctx["cached"]
