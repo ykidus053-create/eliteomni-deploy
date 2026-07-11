@@ -593,6 +593,9 @@ def groq_stream(msgs: list, max_tokens: int = 0, model: str = None):
                     continue
                 try:
                     chunk = _json.loads(line[6:])
+                    # BEGIN GROQ STREAM DELTA FIX V23
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    # END GROQ STREAM DELTA FIX V23
                     token = delta.get("content") or delta.get("reasoning_content") or ""
                     channel = delta.get("channel", "")
                     # skip reasoning/analysis channel, only yield actual content

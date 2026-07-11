@@ -5569,3 +5569,8 @@ def _extract_text_from_file(
 async def multimodal_status_v22():
     return _multimodal_status_v22()
 # END DOCUMENT VIEWING V22
+
+# BEGIN STREAMING RUNTIME V23
+from modules.streaming_runtime_v23 import install_streaming_runtime_v23
+_STREAMING_RUNTIME_V23 = install_streaming_runtime_v23(app)
+# END STREAMING RUNTIME V23
