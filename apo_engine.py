@@ -53,3 +53,32 @@ def start_apo_engine(generate_fn):
     t = threading.Thread(target=_apo_loop, args=(generate_fn,), daemon=True, name="apo_engine")
     t.start()
     print("[Startup] ✓ Autonomous Prompt Optimizer (APO) started.")
+
+# BEGIN SAFE APO STARTUP V19
+_APO_THREAD_V19 = None
+
+
+def start_apo_engine(generate_fn):
+    """APO is opt-in because it spends tokens and rewrites source files."""
+    global _APO_THREAD_V19
+    enabled = os.environ.get("ELITE_ENABLE_APO", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        print(
+            "[Startup] APO disabled "
+            "(set ELITE_ENABLE_APO=1 to enable explicitly)"
+        )
+        return None
+
+    if _APO_THREAD_V19 is not None and _APO_THREAD_V19.is_alive():
+        return _APO_THREAD_V19
+
+    _APO_THREAD_V19 = threading.Thread(
+        target=_apo_loop,
+        args=(generate_fn,),
+        daemon=True,
+        name="apo_engine",
+    )
+    _APO_THREAD_V19.start()
+    print("[Startup] ✓ Autonomous Prompt Optimizer (APO) started.")
+    return _APO_THREAD_V19
+# END SAFE APO STARTUP V19

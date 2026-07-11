@@ -539,11 +539,11 @@ def pipeline_sync(msg: str, history: list) -> dict:
     
     # Upgraded: Inject Subconscious Context (what daemons did) and compress history
     try:
-        from context_compressor import get_subconscious_context, compress_history
+        from context_compressor import get_subconscious_context, compress_history as _context_compress_history_v19
         _sub_ctx = get_subconscious_context()
         if _sub_ctx: memory.insert(0, _sub_ctx)
         # Compress history if it's getting too long
-        history = compress_history(history, lambda p, **kw: mistral_generate(p, max_tokens=kw.get("max_tokens", 300), model=kw.get("model", "mistral-small-latest")))
+        history = _context_compress_history_v19(history, lambda p, **kw: mistral_generate(p, max_tokens=kw.get("max_tokens", 300), model=kw.get("model", "mistral-small-latest")))
     except: pass
     
     # Upgraded: Cross-File Codebase RAG & Goal Tracker
