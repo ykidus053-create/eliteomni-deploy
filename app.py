@@ -3439,15 +3439,119 @@ async def stream_chat(req: Request):
             ])
             yield "\x00THINKING\x00" + _think_text + "\x00/THINKING\x00\n"
         _ctx_future = _loop.run_in_executor(None, lambda: _build_stream_context(msg, hist))
+
+        # BEGIN STREAM CONTEXT FAIL-OPEN V28.1
+        # wait_for(shield(...)) intentionally leaves the worker running after
+        # timeout. Consume any later worker exception so it is not reported as
+        # an unhandled future.
+        def _consume_ctx_future(_future):
+            try:
+                _future.exception()
+            except BaseException:
+                pass
+
+        _ctx_future.add_done_callback(_consume_ctx_future)
+        # END STREAM CONTEXT FAIL-OPEN V28.1
         try:
             ctx = await _asyncio.wait_for(_asyncio.shield(_ctx_future), timeout=10)
-        except _asyncio.TimeoutError:
-            print("[stream_chat] ctx timeout — fast first token with minimal ctx (history preserved)")
+        except Exception as _ctx_error:
+            print(
+                "[stream_chat] context unavailable; "
+                f"using minimal context "
+                f"({type(_ctx_error).__name__}: {_ctx_error})"
+            )
             from modules.core.constants import get_infra_tier
-            from modules.pipeline import classify_skill as _cs, route_complexity as _rc
+
+            # Prefer functions already loaded by app.py. Importing the secondary
+            # pipeline during an error path can recursively trigger prompt and
+            # context imports.
+            _cs = globals().get("classify_skill")
+            _rc = globals().get("route_complexity")
+
+            if not callable(_cs) or not callable(_rc):
+                try:
+                    from modules.pipeline import classify_skill as _cs
+                    from modules.pipeline import route_complexity as _rc
+                except Exception as _route_error:
+                    print(
+                        "[stream_chat] route fallback unavailable: "
+                        f"{type(_route_error).__name__}: {_route_error}"
+                    )
+
+                    def _cs(value):
+                        lowered = (value or "").lower()
+
+                        coder_signals = (
+                            "code",
+                            "python",
+                            "javascript",
+                            "typescript",
+                            "sql",
+                            "debug",
+                            "traceback",
+                            "exception",
+                            "function",
+                            "class",
+                            "implement",
+                        )
+
+                        researcher_signals = (
+                            "research",
+                            "analyze",
+                            "compare",
+                            "latest",
+                            "current",
+                            "news",
+                        )
+
+                        if any(
+                            signal in lowered
+                            for signal in coder_signals
+                        ):
+                            return "coder"
+
+                        if any(
+                            signal in lowered
+                            for signal in researcher_signals
+                        ):
+                            return "researcher"
+
+                        return "general"
+
+                    def _rc(value):
+                        cleaned = (value or "").strip()
+                        lowered = cleaned.lower()
+
+                        hard_signals = (
+                            "architecture",
+                            "production",
+                            "traceback",
+                            "implement",
+                            "refactor",
+                            "debug",
+                            "step by step",
+                        )
+
+                        if (
+                            len(cleaned) >= 200
+                            or any(
+                                signal in lowered
+                                for signal in hard_signals
+                            )
+                        ):
+                            return "hard"
+
+                        if len(cleaned) <= 80:
+                            return "easy"
+
+                        return "medium"
+
             _fb_skill = _cs(msg)
             _fb_complexity = _rc(msg)
-            _infra_t = get_infra_tier(_fb_complexity, _fb_skill)
+            _infra_t = get_infra_tier(
+                _fb_complexity,
+                _fb_skill,
+            )
             _fallback_msgs = [{"role": h.get("role","user"), "content": h.get("content","")} for h in (hist or [])[-10:] if h.get("content")]
             _fallback_msgs.append({"role": "user", "content": msg})
             ctx = {"skill": _fb_skill, "complexity": _fb_complexity, "effort": "medium", "msgs": _fallback_msgs, "max_t": 16000, "model": _infra_t["models"][0], "system": "", "mode": "fast", "vetoed": False, "cached": None, "mcp_tools": []}

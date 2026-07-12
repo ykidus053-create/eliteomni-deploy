@@ -66,12 +66,23 @@ def infer_project_context() -> str:
     global _CACHE
 
     root = _resolve_root()
-    signature = _signature(root)
-    ttl = max(5, int(os.getenv("ELITE_PROJECT_CONTEXT_TTL_SECONDS", "60")))
+    ttl = max(
+        5,
+        int(
+            os.getenv(
+                "ELITE_PROJECT_CONTEXT_TTL_SECONDS",
+                "300",
+            )
+        ),
+    )
     now = time.monotonic()
 
-    if _CACHE and now < _CACHE[0] and signature == _CACHE[1]:
+    # Production source is immutable during a deployment. Return the cached
+    # context before rescanning the entire repository and installed packages.
+    if _CACHE and now < _CACHE[0]:
         return _CACHE[2]
+
+    signature = _signature(root)
 
     app_path = root / "app.py"
     try:
@@ -121,3 +132,23 @@ def infer_project_context() -> str:
     result = "\n".join(facts)
     _CACHE = (now + ttl, signature, result)
     return result
+
+def get_project_context() -> str:
+    """
+    Backward-compatible project-context entry point.
+
+    Older prompt builders import this function. Project-context failures must
+    never prevent the chat or streaming endpoints from answering.
+    """
+    try:
+        return infer_project_context()
+    except Exception as exc:
+        root = _resolve_root()
+        print(
+            "[project_context] context unavailable: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return (
+            f"Repository root: {root}\n"
+            "Detailed project context is temporarily unavailable."
+        )
