@@ -34,10 +34,10 @@ def _env_int(name: str, default: int, low: int, high: int) -> int:
 @dataclass(frozen=True)
 class StreamingSettings:
     enabled: bool = True
-    target_bytes: int = 48
-    max_bytes: int = 192
-    max_delay_ms: int = 70
-    immediate_chunks: int = 3
+    target_bytes: int = 32
+    max_bytes: int = 128
+    max_delay_ms: int = 40
+    immediate_chunks: int = 4
     flush_on_newline: bool = True
     flush_on_punctuation: bool = True
     paths: tuple[str, ...] = ("/stream",)
@@ -52,10 +52,10 @@ class StreamingSettings:
         ) or ("/stream",)
         return cls(
             enabled=_env_bool("ELITE_STREAM_SMOOTHING", True),
-            target_bytes=_env_int("ELITE_STREAM_TARGET_BYTES", 48, 8, 1024),
-            max_bytes=_env_int("ELITE_STREAM_MAX_BYTES", 192, 32, 4096),
-            max_delay_ms=_env_int("ELITE_STREAM_MAX_DELAY_MS", 70, 5, 1000),
-            immediate_chunks=_env_int("ELITE_STREAM_IMMEDIATE_CHUNKS", 3, 0, 20),
+            target_bytes=_env_int("ELITE_STREAM_TARGET_BYTES", 32, 8, 1024),
+            max_bytes=_env_int("ELITE_STREAM_MAX_BYTES", 128, 32, 4096),
+            max_delay_ms=_env_int("ELITE_STREAM_MAX_DELAY_MS", 40, 5, 1000),
+            immediate_chunks=_env_int("ELITE_STREAM_IMMEDIATE_CHUNKS", 4, 0, 20),
             flush_on_newline=_env_bool("ELITE_STREAM_FLUSH_NEWLINE", True),
             flush_on_punctuation=_env_bool("ELITE_STREAM_FLUSH_PUNCTUATION", True),
             paths=paths,
@@ -169,7 +169,7 @@ def _ends_at_natural_boundary(body: bytearray, settings: StreamingSettings) -> b
         return True
     if settings.flush_on_punctuation:
         stripped = bytes(body).rstrip()
-        return stripped.endswith((b".", b"!", b"?", b":", b";", b","))
+        return stripped.endswith((b".", b"!", b"?", b":", b";"))
     return False
 
 

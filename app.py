@@ -3561,6 +3561,18 @@ async def stream_chat(req: Request):
         if False: yield
         import asyncio, queue as _q, threading as _t, re as _re_s
         loop = asyncio.get_event_loop()
+        # BEGIN CONTINUATION STREAMING V28.3
+        from modules.continuation_stream_v28_3 import (
+            AsyncTokenBridge,
+            ContinuationPolicy,
+            OverlapAwareContinuation,
+            build_continuation_messages,
+            merge_continuation,
+            segment_fingerprint,
+            should_continue,
+        )
+        _v283_policy = ContinuationPolicy.from_env()
+        # END CONTINUATION STREAMING V28.3
 
 
         # BEGIN STREAM PRODUCTION ROUTE V2
@@ -3593,18 +3605,23 @@ async def stream_chat(req: Request):
         yield json.dumps({"skill": ctx["skill"], "mode": ctx["mode"]}) + "\n"
 
         # asyncio.Queue — no run_in_executor overhead per token
-        tok_q  = asyncio.Queue()
+        tok_q = AsyncTokenBridge(
+            loop,
+            request=req,
+            policy=_v283_policy,
+        )
         chunks = []
         in_think = [False]
 
         def _worker():
             try:
                 for tok in cerebras_stream(ctx["msgs"], max_tokens=ctx["max_t"], model="zai-glm-4.7"):
-                    loop.call_soon_threadsafe(tok_q.put_nowait, tok)
+                    if not tok_q.put_from_thread(tok):
+                        break
             except Exception as e:
                 print(f"[stream worker] {e}")
             finally:
-                loop.call_soon_threadsafe(tok_q.put_nowait, None)
+                tok_q.end_round_from_thread()
 
         _t.Thread(target=_worker, daemon=True, name="groq_tok").start()
 
@@ -3636,11 +3653,12 @@ async def stream_chat(req: Request):
                 def _tool_cont_worker():
                     try:
                         for t2 in cerebras_stream(_cont_msgs3, max_tokens=16000, model="zai-glm-4.7"):
-                            loop.call_soon_threadsafe(tok_q.put_nowait, t2)
+                            if not tok_q.put_from_thread(t2):
+                                break
                     except Exception as e:
                         print(f"[tool cont] {e}")
                     finally:
-                        loop.call_soon_threadsafe(tok_q.put_nowait, None)
+                        tok_q.end_round_from_thread()
                 _t.Thread(target=_tool_cont_worker, daemon=True, name="tool_cont").start()
                 continue
             buf += tok
@@ -3707,11 +3725,12 @@ async def stream_chat(req: Request):
             def _mcp_cont_worker():
                 try:
                     for tok in mistral_stream(_cont_msgs2, max_tokens=16000, model=ctx.get("model")):
-                        loop.call_soon_threadsafe(tok_q.put_nowait, tok)
+                        if not tok_q.put_from_thread(tok):
+                            break
                 except Exception as e:
                     print(f"[mcp cont worker] {e}")
                 finally:
-                    loop.call_soon_threadsafe(tok_q.put_nowait, None)
+                    tok_q.end_round_from_thread()
             _t.Thread(target=_mcp_cont_worker, daemon=True, name="mcp_cont").start()
             while True:
                 tok = await tok_q.get()
@@ -3725,66 +3744,136 @@ async def stream_chat(req: Request):
             final = "".join(_cont_chunks2)
             chunks.append(final)
 
-        # ── Auto-continuation: resume if response was cut off ──────────────
+        # BEGIN INTELLIGENT AUTO-CONTINUATION V28.3
         _skill = ctx.get("skill", "general")
         _complexity = ctx.get("complexity", "medium")
-        if _skill == "coder":
-            _max_continuations = 12  # coder: 12 x 16k = 192k tokens ceiling
-        elif _complexity == "hard":
-            _max_continuations = 3
-        elif _complexity == "medium":
-            _max_continuations = 1
-        else:
-            _max_continuations = 0  # easy — never needs continuation
-        _continuation = 0
-        while _continuation < _max_continuations and final:
-            _trunc = False
-            _stripped = final.rstrip()
-            if _last_finish_reason == "length":
-                _trunc = True
-            elif not _last_finish_reason:
-                if final.count('```') % 2 != 0:
-                    _trunc = True
-                _tok_estimate = int(len(final.split()) * 1.3)
-                if _tok_estimate >= ctx.get('max_t', 9999) * 0.90:
-                    _trunc = True
-                if _skill == "coder" and _stripped and not _stripped.endswith((".", "!", "?", "}", ")", "]", "`", ";", ":")):
-                    _trunc = True
-            if not _trunc:
+        _continuation_round = 0
+        _continuation_segment = final
+        _seen_continuation_fingerprints = set()
+
+        while final:
+            _continue, _continue_reason = should_continue(
+                segment=_continuation_segment,
+                finish_reason=_last_finish_reason,
+                skill=_skill,
+                complexity=_complexity,
+                max_tokens=ctx.get("max_t", 0),
+                round_index=_continuation_round,
+                total_chars=len(final),
+                policy=_v283_policy,
+            )
+
+            if not _continue:
+                print(
+                    "[Continuation] stop: "
+                    f"{_continue_reason}; rounds={_continuation_round}"
+                )
                 break
-            _continuation += 1
-            print(f"[Continuation] Response truncated, resuming ({_continuation}/{_max_continuations})...")
-            _cont_msgs = ctx["msgs"] + [
-                {"role": "assistant", "content": final},
-                {"role": "user", "content": "Continue exactly where you left off. Do not repeat anything."}
-            ]
-            _cont_chunks = []
-            def _cont_worker():
+
+            if await req.is_disconnected():
+                tok_q.cancel()
+                print("[Continuation] client disconnected; provider stopped")
+                break
+
+            _continuation_round += 1
+            print(
+                "[Continuation] resuming "
+                f"{_continuation_round}/"
+                f"{_v283_policy.rounds_for(_skill, _complexity)} "
+                f"because {_continue_reason}"
+            )
+
+            _cont_msgs = build_continuation_messages(
+                ctx["msgs"],
+                final,
+                round_number=_continuation_round,
+                policy=_v283_policy,
+            )
+            _cont_raw_parts = []
+            _last_finish_reason = ""
+            _joiner = OverlapAwareContinuation(
+                final,
+                policy=_v283_policy,
+            )
+
+            def _cont_worker_v283():
                 try:
-                    from model_router import is_cerebras, cerebras_model_name
+                    from model_router import cerebras_model_name, is_cerebras
+
                     _cont_model = ctx.get("model") or "cerebras/zai-glm-4.7"
-                    if is_cerebras(_cont_model):
-                        for tok in cerebras_stream(_cont_msgs, max_tokens=16000, model=cerebras_model_name(_cont_model)):
-                            loop.call_soon_threadsafe(tok_q.put_nowait, tok)
-                    else:
-                        for tok in cerebras_stream(_cont_msgs, max_tokens=16000, model="zai-glm-4.7"):
-                            loop.call_soon_threadsafe(tok_q.put_nowait, tok)
-                except Exception as e:
-                    print(f"[cont worker] {e}")
+                    _provider_model = (
+                        cerebras_model_name(_cont_model)
+                        if is_cerebras(_cont_model)
+                        else "zai-glm-4.7"
+                    )
+
+                    for _cont_token in cerebras_stream(
+                        _cont_msgs,
+                        max_tokens=min(
+                            _v283_policy.continuation_tokens,
+                            ctx.get("max_t", 16000),
+                        ),
+                        model=_provider_model,
+                    ):
+                        if not tok_q.put_from_thread(_cont_token):
+                            break
+                except Exception as _cont_error:
+                    print(f"[continuation worker V28.3] {_cont_error}")
                 finally:
-                    loop.call_soon_threadsafe(tok_q.put_nowait, None)
-            _t.Thread(target=_cont_worker, daemon=True, name="cont_tok").start()
+                    tok_q.end_round_from_thread()
+
+            _t.Thread(
+                target=_cont_worker_v283,
+                daemon=True,
+                name=f"cont_v283_{_continuation_round}",
+            ).start()
+
             while True:
-                tok = await tok_q.get()
-                if tok is None:
+                _cont_token = await tok_q.get()
+                if _cont_token is None:
                     break
-                if tok.startswith("\x00FINISH_REASON\x00"):
-                    _last_finish_reason = tok[len("\x00FINISH_REASON\x00"):]
+
+                if _cont_token.startswith("\x00FINISH_REASON\x00"):
+                    _last_finish_reason = _cont_token[
+                        len("\x00FINISH_REASON\x00"):
+                    ]
                     continue
-                _cont_chunks.append(tok)
-                yield tok
-            final = final + "".join(_cont_chunks)
-        # ── End continuation ───────────────────────────────────────────────
+
+                _cont_raw_parts.append(_cont_token)
+                _visible = _joiner.feed(_cont_token)
+                if _visible:
+                    yield _visible
+
+            _remaining_visible = _joiner.finish()
+            if _remaining_visible:
+                yield _remaining_visible
+
+            _raw_segment = "".join(_cont_raw_parts)
+            _merged, _novel, _overlap = merge_continuation(
+                final,
+                _raw_segment,
+                policy=_v283_policy,
+            )
+
+            print(
+                "[Continuation] merged "
+                f"novel={len(_novel)} overlap={_overlap} "
+                f"finish={_last_finish_reason or 'missing'}"
+            )
+
+            if len(_novel.strip()) < _v283_policy.min_novel_chars:
+                print("[Continuation] stopped: insufficient novel content")
+                break
+
+            _fingerprint = segment_fingerprint(_novel)
+            if _fingerprint in _seen_continuation_fingerprints:
+                print("[Continuation] stopped: repeated segment")
+                break
+
+            _seen_continuation_fingerprints.add(_fingerprint)
+            final = _merged
+            _continuation_segment = _raw_segment
+        # END INTELLIGENT AUTO-CONTINUATION V28.3
 
         if final:
             _stream_post_process(msg, final, ctx["skill"],
