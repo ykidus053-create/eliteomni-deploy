@@ -562,3 +562,85 @@ def runtime_status() -> dict[str, Any]:
         ),
     }
 
+# BEGIN REPOSITORY INTELLIGENCE V28
+_V28_BASE_PREFETCH_PLAN = prefetch_plan
+_V28_BASE_ARCHITECT_PLAN = architect_plan
+_V28_BASE_RUNTIME_STATUS = runtime_status
+
+
+def prefetch_plan(message: str, skill: str = "general") -> dict[str, str]:
+    result = _V28_BASE_PREFETCH_PLAN(message, skill)
+    if (
+        os.getenv("ELITE_REPO_INTELLIGENCE", "1") == "1"
+        and (
+            skill == "coder"
+            or _file_references(message)
+            or _traceback_references(message)
+        )
+    ):
+        try:
+            from modules.repository_intelligence_v28 import (
+                format_repository_impact,
+            )
+            impact = format_repository_impact(
+                message,
+                root=repository_root(),
+            )
+            if impact:
+                result["impact"] = impact[:12000]
+        except Exception as exc:
+            result["impact_warning"] = (
+                f"Repository impact analysis was unavailable: {exc}"
+            )
+    return result
+
+
+def architect_plan(message: str) -> str:
+    base = _V28_BASE_ARCHITECT_PLAN(message)
+    if os.getenv("ELITE_REPO_INTELLIGENCE", "1") != "1":
+        return base
+    try:
+        from modules.repository_intelligence_v28 import analyze_repository
+        analysis = analyze_repository(
+            message,
+            root=repository_root(),
+            max_files=8,
+        )
+    except Exception:
+        return base
+
+    files = [
+        item["path"]
+        for item in analysis.get("files", [])
+        if not item.get("test_file")
+    ][:6]
+    tests = analysis.get("tests", [])[:6]
+    additions = []
+    if files:
+        additions.append("Impact files to inspect: " + ", ".join(files))
+    if tests:
+        additions.append("Likely regression tests: " + ", ".join(tests))
+    return (
+        base
+        if not additions
+        else base.rstrip() + "\n\nRepository impact:\n- "
+        + "\n- ".join(additions)
+    )
+
+
+def runtime_status() -> dict[str, Any]:
+    result = dict(_V28_BASE_RUNTIME_STATUS())
+    try:
+        from modules.repository_intelligence_v28 import (
+            runtime_status as _repository_status,
+        )
+        result["repository_intelligence"] = _repository_status(
+            root=repository_root()
+        )
+    except Exception as exc:
+        result["repository_intelligence"] = {
+            "version": "V28",
+            "error": str(exc),
+        }
+    return result
+# END REPOSITORY INTELLIGENCE V28
