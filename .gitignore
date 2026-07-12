@@ -38,3 +38,12 @@ GOD_PROMPT.md
 plan.md
 CLAUDE.md
 .venv/
+
+
+# Production Excellence V30
+*.db
+*.db-shm
+*.db-wal
+artifacts/
+benchmark_responses/
+uploads/

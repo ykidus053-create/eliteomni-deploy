@@ -86,7 +86,13 @@ except Exception as _e:
     print(f"[Self-Improvement] ✗ {_e}")
 
 app = FastAPI(title="EliteOmni v17")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# BEGIN PLATFORM EXCELLENCE V30
+from modules.platform_excellence_v30 import (
+    admin_token_valid,
+    configure_platform_excellence,
+)
+configure_platform_excellence(app)
+# END PLATFORM EXCELLENCE V30
 
 from modules.core.http_client import *
 from modules.core.constants import *
@@ -136,7 +142,7 @@ async def view_traces(request: Request, limit: int = 50):
     """Debug dashboard: recent LLM call traces (prompt, response, latency, errors)."""
     import os
     secret = request.query_params.get("secret", "")
-    if secret != os.environ.get("DEBUG_SECRET", "changeme"):
+    if not admin_token_valid(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=403)
     from modules.langchain_tracing import get_recent_traces
     traces = get_recent_traces(limit)
