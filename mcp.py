@@ -314,4 +314,4 @@ def start_mcp_health_checker():
     print("[MCP] Background health checker started.")
 
 # Start the health checker when this module is loaded
-start_mcp_health_checker()
+(start_mcp_health_checker() if os.environ.get("ELITE_ENABLE_MCP", "0") == "1" else None)

@@ -1,3 +1,74 @@
+# BEGIN RUNTIME HEALTH QUIET V33
+import os as _os_v33
+import logging as _logging_v33
+import builtins as _builtins_v33
+
+_os_v33.environ.setdefault("ELITE_ENABLE_MCP", "0")
+_os_v33.environ.setdefault("ELITE_LEGACY_STREAM_RATE_LIMIT", "0")
+_os_v33.environ.setdefault("ELITE_RUNTIME_HEALTH_LOGS", "0")
+
+_V33_NOISY_LOG_PARTS = (
+    "[MCP STATUS]",
+    "[STATS REPORT]",
+    "[SEARXNG HEALTH]",
+    "Groq requests      :",
+    "Errors             :",
+    "413s               :",
+    "429s               :",
+    "Input tokens       :",
+    "Output tokens      :",
+    "Session cost       :",
+    "Empty/Truncated    :",
+    "Slow calls         :",
+    "p50/p95/p99        :",
+    "Models             :",
+    "UP                 :",
+    "DOWN               :",
+)
+
+def _v33_should_quiet(value) -> bool:
+    if _os_v33.environ.get("ELITE_RUNTIME_HEALTH_LOGS", "0") == "1":
+        return False
+    text = str(value)
+    return any(part in text for part in _V33_NOISY_LOG_PARTS)
+
+if not getattr(_logging_v33.Logger, "_elite_v33_installed", False):
+    _v33_original_log = _logging_v33.Logger._log
+
+    def _v33_filtered_log(self, level, msg, args, *rest, **kwargs):
+        try:
+            rendered = (str(msg) % args) if args else str(msg)
+        except Exception:
+            rendered = str(msg)
+
+        if _v33_should_quiet(rendered):
+            return None
+
+        return _v33_original_log(
+            self,
+            level,
+            msg,
+            args,
+            *rest,
+            **kwargs,
+        )
+
+    _logging_v33.Logger._log = _v33_filtered_log
+    _logging_v33.Logger._elite_v33_installed = True
+
+if not getattr(_builtins_v33, "_elite_v33_print_installed", False):
+    _v33_original_print = _builtins_v33.print
+
+    def _v33_filtered_print(*values, **kwargs):
+        rendered = " ".join(str(value) for value in values)
+        if _v33_should_quiet(rendered):
+            return None
+        return _v33_original_print(*values, **kwargs)
+
+    _builtins_v33.print = _v33_filtered_print
+    _builtins_v33._elite_v33_print_installed = True
+# END RUNTIME HEALTH QUIET V33
+
 import os
 
 # BEGIN V27 SECOND LOOP COMPATIBILITY
@@ -105,6 +176,15 @@ from modules.services.semantic_mem import *
 from modules.services.finetune import *
 from modules.services.agents import *
 from modules.services.mcp import *
+# BEGIN OPTIONAL MCP RUNTIME V33
+if os.getenv("ELITE_ENABLE_MCP", "0") != "1":
+    try:
+        _MCP_SERVERS.clear()
+        _MCP_TOOLS.clear()
+    except Exception:
+        pass
+# END OPTIONAL MCP RUNTIME V33
+
 from modules.reliability import clean_history, build_memory_context, safe_tool_call, call_llm
 from modules.ttft import trim_system_prompt, cap_max_tokens, trim_history_for_ttft, TTFTTracker
 import uuid as _uuid_mod
@@ -3405,7 +3485,7 @@ async def stream_chat(req: Request):
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
     ip = req.client.host if req.client else "x"
-    if not check_rate(ip):
+    if os.getenv("ELITE_LEGACY_STREAM_RATE_LIMIT", "0") == "1" and not check_rate(ip):
         return JSONResponse({"error": "Rate limit reached. Please wait a minute."}, status_code=429)
 
     msg          = data.get("message", "").strip()

@@ -134,9 +134,7 @@ def dispatch_tool_call(name: str, args: dict) -> str:
 # BEGIN OFFLINE SEARCH RESULT V1
 _dispatch_tool_call_without_offline_result = dispatch_tool_call
 
-
 def dispatch_tool_call(name: str, args: dict) -> str:
-    # Return explicit, truthful offline statuses for network tools.
     normalized_name = (name or "").strip().lower()
     result = _dispatch_tool_call_without_offline_result(name, args)
 
