@@ -136,11 +136,21 @@ _dispatch_tool_call_without_offline_result = dispatch_tool_call
 
 
 def dispatch_tool_call(name: str, args: dict) -> str:
+    # Return explicit, truthful offline statuses for network tools.
+    normalized_name = (name or "").strip().lower()
     result = _dispatch_tool_call_without_offline_result(name, args)
-    if (name or "").strip().lower() == "search" and not result:
+
+    if normalized_name == "search" and not result:
         return (
             "[Search unavailable: no configured search provider responded. "
             "No results were fabricated.]"
         )
+
+    if normalized_name == "fetch" and not result:
+        return (
+            "[Fetch unavailable: the URL returned no readable content or "
+            "the network request failed. No page content was fabricated.]"
+        )
+
     return result
 # END OFFLINE SEARCH RESULT V1

@@ -52,3 +52,6 @@ jobs:
 
       - name: Architecture gate
         run: python scripts/architecture_gate_v30.py
+
+      - name: Generated code quality gate
+        run: python scripts/check_secure_code_gate_v31.py

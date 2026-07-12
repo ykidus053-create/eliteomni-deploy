@@ -65,6 +65,13 @@ def main() -> int:
             "architecture",
             [sys.executable, "scripts/architecture_gate_v30.py"],
         ),
+        run_step(
+            "generated_code_quality",
+            [
+                sys.executable,
+                "scripts/check_secure_code_gate_v31.py",
+            ],
+        ),
     ]
 
     if not args.skip_tests:

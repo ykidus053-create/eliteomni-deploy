@@ -968,7 +968,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         # ── Auto-execute code blocks and append results ──────────────────────
         try:
             from modules.code_executor import extract_code_blocks, run_code_safe
-            blocks = extract_code_blocks(final)
+            blocks = extract_code_blocks(final) if skill != "coder" else []
             exec_results = []
             for code in blocks[:3]:
                 passed, stdout, stderr = run_code_safe(code, timeout=15)
@@ -1034,7 +1034,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
             from swarm_orchestrator import run_swarm
             swarm_result = run_swarm(msg, lambda p, **kw: mistral_generate(p, **kw))
             if swarm_result:
-                return JSONResponse({"response": swarm_result})
+                final = swarm_result
         except: pass
         
     if skill == "coder" and complexity == "hard":
@@ -1059,6 +1059,51 @@ def pipeline_sync(msg: str, history: list) -> dict:
     # BEGIN FINAL SYNC PRODUCTION VERIFY V2
     final = verification_pipeline(final, msg, skill, complexity)
     # END FINAL SYNC PRODUCTION VERIFY V2
+    # BEGIN SECURE CODE QUALITY GATE V31
+    if skill == "coder":
+        try:
+            from modules.secure_code_gate_v31 import (
+                enforce_secure_code_output,
+            )
+
+            def _v31_regenerate(repair_request: str) -> str:
+                return generate_sync(
+                    build_chatml(
+                        system,
+                        hist_msgs,
+                        repair_request,
+                    ),
+                    max_t,
+                    skill,
+                    len(msg),
+                )
+
+            _v31_outcome = enforce_secure_code_output(
+                final,
+                clean_msg or msg,
+                _v31_regenerate,
+            )
+            final = _v31_outcome.text
+            print(
+                "[CodeGateV31] "
+                f"passed={_v31_outcome.report.passed} "
+                f"released={_v31_outcome.released} "
+                f"repairs={_v31_outcome.repair_rounds} "
+                f"errors={_v31_outcome.report.errors} "
+                f"warnings={_v31_outcome.report.warnings}"
+            )
+        except Exception as _v31_error:
+            print(f"[CodeGateV31] fail-closed error: {_v31_error}")
+            if os.getenv(
+                "ELITE_CODE_GATE_FAIL_CLOSED",
+                "1",
+            ) == "1":
+                final = (
+                    "I could not safely release the generated code "
+                    "because the mandatory validation gate failed. "
+                    "No unvalidated code was returned."
+                )
+    # END SECURE CODE QUALITY GATE V31
     scratchpad_save(f"a_{int(time.time())}", final[:120])
     # Strip thinking tokens before saving to memory/context (Anthropic: billed once)
     import re as _re2
@@ -3582,21 +3627,51 @@ async def stream_chat(req: Request):
 
 
         # BEGIN STREAM PRODUCTION ROUTE V2
-        if _is_production_code_request_v2(msg, ctx.get("skill", "")):
-            verified_result = await _loop.run_in_executor(
+# BEGIN STREAM CODER VERIFIED ROUTE V31
+        if ctx.get("skill", "") == "coder":
+            verified_result = await loop.run_in_executor(
                 None,
                 lambda: pipeline_sync(msg, hist),
             )
-            yield json.dumps({
-                "skill": ctx.get("skill", "coder"),
-                "mode": "verified",
-            }) + "\n"
-            yield verified_result.get(
-                "response",
-                "Production verification failed without a response.",
+            if isinstance(verified_result, JSONResponse):
+                try:
+                    verified_payload = json.loads(
+                        verified_result.body.decode(
+                            "utf-8"
+                        )
+                    )
+                except Exception:
+                    verified_payload = {
+                        "response": (
+                            "Verified pipeline returned an invalid response."
+                        )
+                    }
+            elif isinstance(verified_result, dict):
+                verified_payload = verified_result
+            else:
+                verified_payload = {
+                    "response": str(verified_result or "")
+                }
+            yield json.dumps(
+                {
+                    "skill": "coder",
+                    "mode": "verified-v31",
+                }
+            ) + "\n"
+            verified_text = str(
+                verified_payload.get(
+                    "response",
+                    "Code validation failed without a response.",
+                )
             )
+            for offset in range(0, len(verified_text), 64):
+                if await req.is_disconnected():
+                    return
+                yield verified_text[offset : offset + 64]
+                await asyncio.sleep(0)
             return
-        # END STREAM PRODUCTION ROUTE V2
+        # END STREAM CODER VERIFIED ROUTE V31
+# END STREAM PRODUCTION ROUTE V2
         if ctx["cached"]:
             yield json.dumps({"skill": ctx["skill"], "mode": "cached"}) + "\n"
             t = ctx["cached"]
