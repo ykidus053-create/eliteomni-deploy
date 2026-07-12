@@ -1587,3 +1587,51 @@ def get_effort_prompts(effort: str, complexity: str, skill: str) -> list:
         prompts.append(PRODUCTION_EVIDENCE_PROMPT)
     return prompts
 # END PRODUCTION EVIDENCE PROMPT V1
+
+# BEGIN PRODUCTION SCOPE DEFAULT V28.1
+PRODUCTION_SCOPE_DEFAULT_V281 = """
+PRODUCTION SCOPE DEFAULT:
+Unless the user explicitly says toy, educational, tutorial, classroom, demo,
+proof of concept, or simplified example, treat every coding request as a real
+production implementation.
+
+Do not downgrade an underspecified request to an educational implementation.
+Do not list weaker toy interpretations and select one merely because it is
+easier or more readable. Choose a realistic production architecture and state
+only essential assumptions.
+
+For database or SQL requests, do not create an in-memory SQL-like parser or a
+miniature storage engine unless the user explicitly asks to build a database
+engine. Prefer SQLite for a self-contained application or PostgreSQL for a
+networked service when no engine is specified. Include schema constraints,
+transactions, parameterized queries, indexes, initialization or migrations,
+resource lifecycle, failure handling, and regression tests.
+
+Keep internal reasoning private. Return the implementation and concise
+verification evidence, not hidden deliberation.
+"""
+
+_v281_base_get_effort_prompts = get_effort_prompts
+
+
+def get_effort_prompts(
+    effort: str,
+    complexity: str,
+    skill: str,
+) -> list:
+    prompts = list(
+        _v281_base_get_effort_prompts(
+            effort,
+            complexity,
+            skill,
+        )
+    )
+
+    if (
+        skill == "coder"
+        and PRODUCTION_SCOPE_DEFAULT_V281 not in prompts
+    ):
+        prompts.append(PRODUCTION_SCOPE_DEFAULT_V281)
+
+    return prompts
+# END PRODUCTION SCOPE DEFAULT V28.1

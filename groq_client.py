@@ -1635,3 +1635,41 @@ def cerebras_stream(
             return
 
 # END CEREBRAS SAFE GATE V26
+
+# BEGIN HIDDEN REASONING TRANSPORT V28.1
+_CEREBRAS_STREAM_WITH_REASONING_V281 = cerebras_stream
+
+
+def cerebras_stream(
+    msgs: list,
+    max_tokens: int = 16000,
+    model: str = None,
+):
+    """Hide raw provider reasoning unless explicitly enabled."""
+    expose_reasoning = (
+        os.getenv("ELITE_EXPOSE_MODEL_REASONING", "0") == "1"
+    )
+    inside_reasoning = False
+
+    for token in _CEREBRAS_STREAM_WITH_REASONING_V281(
+        msgs,
+        max_tokens=max_tokens,
+        model=model,
+    ):
+        if token == "\x00THINKING\x00":
+            inside_reasoning = True
+            if expose_reasoning:
+                yield token
+            continue
+
+        if token == "\x00/THINKING\x00":
+            if expose_reasoning:
+                yield token
+            inside_reasoning = False
+            continue
+
+        if inside_reasoning and not expose_reasoning:
+            continue
+
+        yield token
+# END HIDDEN REASONING TRANSPORT V28.1

@@ -644,3 +644,142 @@ def runtime_status() -> dict[str, Any]:
         }
     return result
 # END REPOSITORY INTELLIGENCE V28
+
+# BEGIN PRODUCTION SCOPE GUARD V28.1
+_EDUCATIONAL_REQUEST_V281 = re.compile(
+    r"\b("
+    r"toy|educational|tutorial|teaching example|classroom|"
+    r"learning exercise|demo(?:nstration)?|proof of concept|poc|"
+    r"minimal example|simplified example"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def explicit_educational_request(message: str) -> bool:
+    """Return True only when non-production scope was explicitly requested."""
+    return bool(_EDUCATIONAL_REQUEST_V281.search(message or ""))
+
+
+def production_scope_contract(message: str) -> str:
+    """Choose a realistic production scope unless education was explicit."""
+    if explicit_educational_request(message):
+        return (
+            "[EXPLICIT EDUCATIONAL MODE]\n"
+            "The user explicitly requested a tutorial, toy, demonstration, "
+            "or classroom implementation. Label limitations accurately and "
+            "do not claim production readiness."
+        )
+
+    if os.getenv("ELITE_PRODUCTION_SCOPE_DEFAULT", "1") != "1":
+        return ""
+
+    database_addendum = ""
+    lowered = (message or "").lower()
+    if any(
+        token in lowered
+        for token in (
+            "database",
+            "sql",
+            "storage engine",
+            "data store",
+            "persistence",
+            "repository",
+        )
+    ):
+        database_addendum = (
+            "\nDATABASE DEFAULTS:\n"
+            "- Do not invent an in-memory SQL parser, miniature database, "
+            "or storage engine unless the user explicitly asks to implement "
+            "a database engine.\n"
+            "- Prefer the requested mature engine. When none is named, use "
+            "SQLite for a self-contained application or PostgreSQL for a "
+            "networked service.\n"
+            "- Include real schema constraints, transactions, indexes, "
+            "migrations or initialization, parameterized queries, connection "
+            "lifecycle, concurrency behavior, error handling, and tests.\n"
+        )
+
+    return (
+        "[PRODUCTION SCOPE — DEFAULT]\n"
+        "Treat this as code intended to run in a real application. "
+        "Do not downgrade the request to a toy, educational exercise, demo, "
+        "simplified implementation, proof of concept, or in-memory substitute "
+        "unless the user explicitly requested that scope.\n"
+        "Do not spend the answer debating several weaker interpretations. "
+        "Choose the safest realistic production interpretation and implement "
+        "it completely.\n"
+        "Use mature standard-library or established dependencies for solved "
+        "infrastructure problems. Build the requested product behavior around "
+        "them instead of recreating foundational infrastructure without an "
+        "explicit requirement.\n"
+        "Include configuration, validation, durable state where required, "
+        "failure handling, resource cleanup, security boundaries, and focused "
+        "tests or exact validation commands."
+        + database_addendum
+    )
+
+
+_V281_BASE_PREFETCH_PLAN = prefetch_plan
+_V281_BASE_ARCHITECT_PLAN = architect_plan
+_V281_BASE_EDITOR_IMPLEMENT = editor_implement
+
+
+def prefetch_plan(message: str, skill: str = "general") -> dict[str, str]:
+    result = dict(_V281_BASE_PREFETCH_PLAN(message, skill))
+    if skill == "coder":
+        contract = production_scope_contract(message)
+        if contract:
+            result["production_scope"] = contract
+    return result
+
+
+def architect_plan(message: str) -> str:
+    base = _V281_BASE_ARCHITECT_PLAN(message)
+    contract = production_scope_contract(message)
+
+    if not contract or explicit_educational_request(message):
+        return base
+
+    return (
+        "0. Lock production scope before implementation: do not substitute "
+        "a toy, demo, educational parser, or in-memory imitation for the "
+        "requested system.\n"
+        + base
+    )
+
+
+def editor_implement(
+    plan: str,
+    message: str,
+    system: str,
+    history: list,
+    max_tokens: int,
+    *,
+    build_chatml,
+    generate_sync,
+) -> str:
+    contract = production_scope_contract(message)
+    hardened_system = system
+
+    if contract:
+        hardened_system = (
+            system.rstrip()
+            + "\n\n"
+            + contract
+            + "\n\n"
+            "Keep deliberation private. Output the implementation and concise "
+            "verification evidence, not scope brainstorming or internal "
+            "reasoning."
+        )
+
+    return _V281_BASE_EDITOR_IMPLEMENT(
+        plan,
+        message,
+        hardened_system,
+        history,
+        max_tokens,
+        build_chatml=build_chatml,
+        generate_sync=generate_sync,
+    )
+# END PRODUCTION SCOPE GUARD V28.1
