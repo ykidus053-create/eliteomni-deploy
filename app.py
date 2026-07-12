@@ -1,3 +1,12 @@
+import os
+
+# BEGIN V27 SECOND LOOP COMPATIBILITY
+# The duplicate second loop no longer exists on this branch.
+# Keep its configuration flag disabled for compatibility and diagnostics.
+_ELITE_ENABLE_SECOND_LOOP_ENGINE_V27 = (
+    os.getenv("ELITE_ENABLE_SECOND_LOOP_ENGINE", "0") == "1"
+)
+# END V27 SECOND LOOP COMPATIBILITY
 from groq_client import cerebras_stream
 from self_verify import self_verify
 from structured_output import inject_template
@@ -592,6 +601,12 @@ def pipeline_sync(msg: str, history: list) -> dict:
             _tom_ctx = _constraints = _narrative_ctx = _rel_ctx = _prior_ctx = _depth_warn = ""
 
 
+    # ELITE CODING PATH GUARDS V27
+
+
+    from modules.services.agents import prefetch_plan
+
+
     # PRE-FETCH PLANNING for hard queries
     _prefetch_ctx = {}
     if complexity == "hard":
@@ -726,6 +741,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
 
     # Agent Teams (research preview): hard coder tasks with explicit request
     use_agent_team = (
+        os.getenv("ELITE_ENABLE_AGENT_TEAM", "0") == "1" and
         skill == "coder" and complexity == "hard" and
         any(t in msg.lower() for t in ["implement","build","create","write a","develop"])
     )
@@ -929,7 +945,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         final = _lint_feedback_loop(final, msg, system, max_t, skill)
 
         # ── Loop Engine (Plan+Search+ReAct+CAI+Reflexion) ─────────────────────
-        if complexity in ("medium", "hard") or skill == "researcher":
+        if (os.getenv("ELITE_ENABLE_LOOP_ENGINE", "1") == "1" and skill != "coder" and (complexity in ("medium", "hard") or skill == "researcher")):
             try:
                 from modules.loop_engine import run_loops
                 def _gen_fn(messages):

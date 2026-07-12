@@ -326,3 +326,15 @@ def install_frontier_runtime_v21(namespace: dict[str, Any]) -> None:
         "mode": _mode(),
         "last_request": None,
     }
+
+# BEGIN FRONTIER CODER COST GUARD V27
+_FRONTIER_V27_ORIGINAL_SHOULD_DEEPEN = _should_deepen
+
+def _should_deepen(profile, first):
+    if (
+        getattr(profile, "skill", "") == "coder"
+        and os.getenv("ELITE_FRONTIER_CODER", "1") != "1"
+    ):
+        return False
+    return _FRONTIER_V27_ORIGINAL_SHOULD_DEEPEN(profile, first)
+# END FRONTIER CODER COST GUARD V27

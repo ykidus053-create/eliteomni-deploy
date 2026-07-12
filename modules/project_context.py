@@ -1,62 +1,123 @@
+"""Safe, deployment-aware project context for coding prompts."""
+
 from __future__ import annotations
-import os, re, subprocess
-from functools import lru_cache
 
-ROOT = os.path.expanduser("~/eliteomni_app")
+import importlib.metadata
+import os
+import platform
+import subprocess
+import sys
+import time
+from pathlib import Path
 
-def _read(path: str, maxbytes: int = 4000) -> str:
+
+def _resolve_root() -> Path:
+    configured = os.getenv("ELITE_PROJECT_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    candidate = Path(__file__).resolve().parents[1]
+    if (candidate / "app.py").exists():
+        return candidate
+
+    cwd = Path.cwd().resolve()
+    if (cwd / "app.py").exists():
+        return cwd
+
+    return candidate
+
+
+ROOT = str(_resolve_root())
+_CACHE: tuple[float, tuple[int, int], str] | None = None
+
+
+def _run(args: list[str], cwd: Path) -> str:
     try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return f.read(maxbytes)
+        return subprocess.check_output(
+            args,
+            cwd=str(cwd),
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).strip()
     except Exception:
         return ""
 
-def _run(cmd: str) -> str:
-    try:
-        return subprocess.check_output(cmd, shell=True, text=True, timeout=3).strip()
-    except Exception:
-        return ""
 
-@lru_cache(maxsize=1)
+def _signature(root: Path) -> tuple[int, int]:
+    count = 0
+    newest = 0
+    for path in root.rglob("*.py"):
+        if any(
+            part in {".git", ".venv", "venv", "__pycache__", "site-packages"}
+            for part in path.parts
+        ):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        count += 1
+        newest = max(newest, stat.st_mtime_ns)
+    return count, newest
+
+
 def infer_project_context() -> str:
-    facts = []
-    pyver = _run("python3 --version")
-    if pyver: facts.append(f"Runtime: {pyver}")
+    global _CACHE
 
-    pip_list = _run("pip list --format=columns 2>/dev/null | awk '{print $1}' | tr '\n' ' '")
-    if pip_list: facts.append(f"Installed packages: {pip_list[:400]}")
+    root = _resolve_root()
+    signature = _signature(root)
+    ttl = max(5, int(os.getenv("ELITE_PROJECT_CONTEXT_TTL_SECONDS", "60")))
+    now = time.monotonic()
 
-    app_src = _read(os.path.join(ROOT, "app.py"))
-    if "FastAPI" in app_src: facts.append("Framework: FastAPI (async)")
-    if "aiohttp" in app_src: facts.append("HTTP client: aiohttp (async)")
+    if _CACHE and now < _CACHE[0] and signature == _CACHE[1]:
+        return _CACHE[2]
 
-    async_count = app_src.count("async def")
-    sync_count  = app_src.count("\ndef ")
-    facts.append("Convention: async-first — all I/O must use await" if async_count > sync_count
-                 else "Convention: mixed sync/async — check before adding await")
+    app_path = root / "app.py"
+    try:
+        app_source = app_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        app_source = ""
 
-    if re.search(r'print\(f"\[', app_src):
-        facts.append("Logging: print() with [Module] prefix convention")
-    elif "loguru" in pip_list:
-        facts.append("Logging: loguru")
+    package_names: list[str] = []
+    try:
+        package_names = sorted(
+            {
+                dist.metadata.get("Name", "")
+                for dist in importlib.metadata.distributions()
+                if dist.metadata.get("Name")
+            }
+        )[:80]
+    except Exception:
+        pass
 
-    uname = _run("uname -a")
-    if "microsoft" in uname.lower() or "wsl" in uname.lower():
-        facts.append("OS: Ubuntu/WSL — bash only, no Windows paths")
+    facts = [
+        f"Repository root: {root}",
+        f"Runtime: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        f"Platform: {platform.system()} {platform.machine()}",
+        f"Python source files: {signature[0]}",
+    ]
 
-    if "chromadb" in pip_list: facts.append("Vector DB: ChromaDB")
-    if "sqlite" in app_src.lower(): facts.append("Relational DB: SQLite")
+    if "FastAPI" in app_source:
+        facts.append("Framework: FastAPI / ASGI")
+    if "async def" in app_source:
+        facts.append("Concurrency: mixed async and thread-pool execution")
+    if (root / "pytest.ini").exists() or (root / "tests").exists():
+        facts.append("Tests: pytest")
+    if (root / "Procfile").exists():
+        facts.append("Deployment: Procfile-based service")
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"):
+        facts.append("Hosting: Railway")
+    if package_names:
+        facts.append("Installed packages: " + ", ".join(package_names[:40]))
 
-    modules = _run(f"ls {ROOT}/modules/*.py 2>/dev/null | xargs -I{{}} basename {{}} .py | tr '\n' ', '")
-    if modules: facts.append(f"Modules: {modules.strip(', ')}")
+    branch = _run(["git", "branch", "--show-current"], root)
+    commit = _run(["git", "rev-parse", "--short", "HEAD"], root)
+    if branch:
+        facts.append(f"Git branch: {branch}")
+    if commit:
+        facts.append(f"Git commit: {commit}")
 
-    req = _read(os.path.join(ROOT, "requirements.txt"), 600)
-    if req: facts.append(f"Pinned deps:\n{req}")
-
-    block = "INFERRED PROJECT CONTEXT (live codebase scan):\n"
-    block += "\n".join(f"  - {f}" for f in facts)
-    block += "\nAll code must be consistent with the above. No exceptions."
-    return block
-
-def get_project_context() -> str:
-    return infer_project_context()
+    result = "\n".join(facts)
+    _CACHE = (now + ttl, signature, result)
+    return result

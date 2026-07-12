@@ -28,7 +28,7 @@ MISTRAL_SMALL = _env_model("ELITE_MODEL_FAST", "cerebras/zai-glm-4.7")
 MISTRAL_MEDIUM = _env_model("ELITE_MODEL_GENERAL", "cerebras/zai-glm-4.7")
 MISTRAL_LARGE = _env_model("ELITE_MODEL_HARD", "cerebras/zai-glm-4.7")
 MAGISTRAL = _env_model("ELITE_MODEL_REASONING", MISTRAL_LARGE)
-CODESTRAL = _env_model("ELITE_MODEL_CODER", "cerebras/qwen-3-235b")
+CODESTRAL = _env_model("ELITE_MODEL_CODER", "cerebras/zai-glm-4.7")
 REASONING_EFFORT = os.getenv("ELITE_REASONING_EFFORT", "high").strip().lower()
 
 COMPLEXITY_MAP: dict[str, str] = {

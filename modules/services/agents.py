@@ -647,3 +647,36 @@ def meta_maybe_rewrite_prompt(skill: str, score: int):
 def detect_emotion_context(msg: str) -> dict:
     """Stub — returns neutral emotion context."""
     return {"emotion": "neutral", "intensity": 0.0, "requires_empathy": False}
+
+# BEGIN CODING REASONING CORE V27
+from modules.coding_reasoning_v27 import (
+    architect_plan as _architect_plan_v27,
+    editor_implement as _editor_implement_v27,
+    knowledge_boundary_check as _knowledge_boundary_check_v27,
+    prefetch_plan as _prefetch_plan_v27,
+    trim_messages as _trim_messages_v27,
+)
+
+def _truncate_msgs(msgs, max_chars=None):
+    return _trim_messages_v27(msgs, max_chars=max_chars)
+
+def knowledge_boundary_check(message, skill="general"):
+    return _knowledge_boundary_check_v27(message, skill)
+
+def prefetch_plan(message, skill="general"):
+    return _prefetch_plan_v27(message, skill)
+
+def architect_plan(message):
+    return _architect_plan_v27(message)
+
+def editor_implement(plan, msg, system, hist_msgs, max_t):
+    return _editor_implement_v27(
+        plan,
+        msg,
+        system,
+        hist_msgs,
+        max_t,
+        build_chatml=build_chatml,
+        generate_sync=generate_sync,
+    )
+# END CODING REASONING CORE V27

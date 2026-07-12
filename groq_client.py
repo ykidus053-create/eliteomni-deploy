@@ -1475,6 +1475,7 @@ def cerebras_stream(
             "messages": fitted_messages,
             "max_completion_tokens": capped_tokens,
             "temperature": 0.2,
+            "reasoning_format": "parsed",
             "stream": True,
         }
     ).encode("utf-8")
@@ -1527,7 +1528,8 @@ def cerebras_stream(
                         delta = choice.get("delta", {})
 
                         reasoning = (
-                            delta.get("reasoning_content")
+                            delta.get("reasoning")
+                            or delta.get("reasoning_content")
                             or ""
                         )
 

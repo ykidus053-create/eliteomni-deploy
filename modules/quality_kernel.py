@@ -889,3 +889,16 @@ def install_runtime_hooks(namespace: dict[str, Any]) -> None:
     _install_stream_route(namespace)
     namespace["QUALITY_KERNEL_V18_INSTALLED"] = True
     _INSTALLED = True
+
+# BEGIN TRUE STREAMING DEFAULT V27
+import os as _quality_v27_os
+_QUALITY_V27_ORIGINAL_INSTALL_STREAM_ROUTE = _install_stream_route
+
+def _install_stream_route(namespace):
+    if _quality_v27_os.getenv(
+        "ELITE_BUFFERED_VERIFICATION_STREAM",
+        "1",
+    ) != "1":
+        return
+    return _QUALITY_V27_ORIGINAL_INSTALL_STREAM_ROUTE(namespace)
+# END TRUE STREAMING DEFAULT V27
