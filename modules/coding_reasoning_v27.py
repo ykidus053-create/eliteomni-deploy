@@ -783,3 +783,286 @@ def editor_implement(
         generate_sync=generate_sync,
     )
 # END PRODUCTION SCOPE GUARD V28.1
+
+# BEGIN SENIOR ENGINEER PRODUCTION GUARD V28.2
+import contextvars as _v282_contextvars
+import os as _v282_os
+import re as _v282_re
+
+_V282_ACTIVE_TASK = _v282_contextvars.ContextVar(
+    "eliteomni_v282_active_task",
+    default="",
+)
+
+_V282_REDUCED_SCOPE = _v282_re.compile(
+    r"\b("
+    r"toy|educational|tutorial|classroom|teaching example|"
+    r"learning exercise|demo(?:nstration)?|proof of concept|poc|"
+    r"minimal example|simplified example"
+    r")\b",
+    _v282_re.IGNORECASE,
+)
+
+_V282_DOWNGRADES = (
+    (
+        _v282_re.compile(
+            r"\btoy(?:\s+[A-Za-z-]+){0,2}\s+(?:implementation|database|parser|example|project)\b",
+            _v282_re.IGNORECASE,
+        ),
+        "scope.toy_implementation",
+    ),
+    (
+        _v282_re.compile(
+            r"\beducational (?:implementation|example|version)\b",
+            _v282_re.IGNORECASE,
+        ),
+        "scope.educational_implementation",
+    ),
+    (
+        _v282_re.compile(
+            r"\b(?:demo|proof of concept|poc) only\b",
+            _v282_re.IGNORECASE,
+        ),
+        "scope.demo_only",
+    ),
+    (
+        _v282_re.compile(
+            r"\bnot (?:production[- ]ready|production grade)\b",
+            _v282_re.IGNORECASE,
+        ),
+        "scope.not_production_ready",
+    ),
+    (
+        _v282_re.compile(
+            r"\b(?:left as an exercise|implementation omitted|rest of code)\b",
+            _v282_re.IGNORECASE,
+        ),
+        "scope.incomplete",
+    ),
+)
+
+_V282_PLACEHOLDERS = (
+    (_v282_re.compile(r"\bTODO\b", _v282_re.IGNORECASE), "quality.todo"),
+    (_v282_re.compile(r"\bFIXME\b", _v282_re.IGNORECASE), "quality.fixme"),
+    (_v282_re.compile(r"\bNotImplementedError\b"), "quality.not_implemented"),
+    (
+        _v282_re.compile(r"\bpass\s*(?:#.*)?$", _v282_re.MULTILINE),
+        "quality.pass_placeholder",
+    ),
+    (
+        _v282_re.compile(
+            r"\b(?:your[_ -]?api[_ -]?key|changeme)\b",
+            _v282_re.IGNORECASE,
+        ),
+        "quality.fake_secret",
+    ),
+)
+
+_V282_TEST_EVIDENCE = _v282_re.compile(
+    r"\b("
+    r"pytest|unittest|assert|test_[A-Za-z0-9_]+|"
+    r"npm (?:run )?test|pnpm (?:run )?test|yarn test|"
+    r"go test|cargo test|mvn test|gradle test|dotnet test|"
+    r"python(?:3)? -m py_compile|bash -n|git apply --check"
+    r")\b",
+    _v282_re.IGNORECASE,
+)
+
+_V282_BUILD_TASK = _v282_re.compile(
+    r"\b("
+    r"write|build|create|implement|develop|fix|repair|refactor|"
+    r"production|production-grade|production-ready|deploy|"
+    r"service|api|database|application|system|library|package"
+    r")\b",
+    _v282_re.IGNORECASE,
+)
+
+
+def explicit_nonproduction_request(message: str) -> bool:
+    # Reduced scope must be requested explicitly.
+    return bool(_V282_REDUCED_SCOPE.search(message or ""))
+
+
+def senior_engineer_contract(message: str) -> str:
+    # Mandatory implementation-quality contract for every coding task.
+    reduced = explicit_nonproduction_request(message)
+
+    scope = (
+        "The user explicitly requested a reduced teaching or demonstration "
+        "scope. Keep that scope, but still write clean, correct, tested, "
+        "maintainable code and label limitations precisely."
+        if reduced
+        else
+        "Treat the request as a real production deliverable. Do not downgrade "
+        "it to a toy, tutorial, demo, educational substitute, proof of concept, "
+        "or in-memory imitation."
+    )
+
+    lowered = (message or "").lower()
+    database = ""
+    if any(
+        term in lowered
+        for term in (
+            "database",
+            "sql",
+            "storage",
+            "persistence",
+            "repository",
+            "data layer",
+        )
+    ):
+        database = (
+            "\nDATABASE REQUIREMENTS:\n"
+            "- Use the requested mature engine. If none is specified, prefer "
+            "SQLite for a self-contained application and PostgreSQL for a "
+            "networked service.\n"
+            "- Do not invent a SQL parser, miniature database, or dictionary-"
+            "backed storage engine unless the user explicitly asks to build "
+            "the database engine itself.\n"
+            "- Include schema constraints, transactions, parameterized "
+            "queries, indexes, initialization or migrations, connection "
+            "lifecycle, rollback handling, concurrency behavior, and tests.\n"
+        )
+
+    return (
+        "[MANDATORY SENIOR ENGINEER IMPLEMENTATION STANDARD]\n"
+        + scope
+        + "\n"
+        "Write complete, cohesive, maintainable code with stable interfaces, "
+        "typing where supported, configuration, validation, structured error "
+        "handling, deterministic cleanup, safe concurrency, and secure defaults.\n"
+        "Address authentication, authorization, secrets, injection risks, path "
+        "traversal, unsafe deserialization, and least privilege when relevant.\n"
+        "Include appropriate observability: structured logs, actionable error "
+        "context, metrics or health checks where applicable.\n"
+        "Include focused unit tests and integration or contract tests for "
+        "important boundaries. Provide exact validation commands. Never claim "
+        "tests passed without execution evidence.\n"
+        "Never use TODO, FIXME, pass, NotImplementedError, pseudocode, omitted "
+        "sections, comments in place of logic, or fake credentials.\n"
+        "Keep private reasoning hidden. Return concise assumptions, the final "
+        "implementation, and verification evidence."
+        + database
+    )
+
+
+def _senior_quality_issues(response: str, task: str) -> list[str]:
+    issues: list[str] = []
+    text = response or ""
+
+    if not explicit_nonproduction_request(task):
+        for pattern, code in _V282_DOWNGRADES:
+            if pattern.search(text):
+                issues.append(code)
+
+    for pattern, code in _V282_PLACEHOLDERS:
+        if pattern.search(text):
+            issues.append(code)
+
+    if (
+        _V282_BUILD_TASK.search(task or "")
+        and "```" in text
+        and not _V282_TEST_EVIDENCE.search(text)
+    ):
+        issues.append("quality.missing_test_or_validation_evidence")
+
+    return list(dict.fromkeys(issues))
+
+
+_V282_BASE_PREFETCH_PLAN = prefetch_plan
+_V282_BASE_ARCHITECT_PLAN = architect_plan
+_V282_BASE_EDITOR_IMPLEMENT = editor_implement
+_V282_BASE_VERIFY_CODE_RESPONSE = verify_code_response
+_V282_BASE_RUNTIME_STATUS = runtime_status
+
+
+def prefetch_plan(message: str, skill: str = "general") -> dict[str, str]:
+    result = dict(_V282_BASE_PREFETCH_PLAN(message, skill))
+    if skill == "coder":
+        result["senior_engineer_standard"] = senior_engineer_contract(message)
+    return result
+
+
+def architect_plan(message: str) -> str:
+    base = _V282_BASE_ARCHITECT_PLAN(message)
+    return (
+        "0. Apply the mandatory senior-engineer standard before selecting "
+        "architecture, dependencies, or implementation scope.\n"
+        + base.rstrip()
+        + "\n\n"
+        + senior_engineer_contract(message)
+    )
+
+
+def verify_code_response(
+    response: str,
+    requested_language: str,
+) -> dict:
+    result = dict(
+        _V282_BASE_VERIFY_CODE_RESPONSE(
+            response,
+            requested_language,
+        )
+    )
+
+    task = _V282_ACTIVE_TASK.get()
+    senior_issues = _senior_quality_issues(response, task)
+    existing = list(result.get("issues") or [])
+    issues = list(dict.fromkeys(existing + senior_issues))
+
+    result["issues"] = issues
+    result["approved"] = bool(result.get("approved", True)) and not issues
+    result["senior_engineer_v28_2"] = {
+        "approved": not senior_issues,
+        "issues": senior_issues,
+        "explicit_reduced_scope": explicit_nonproduction_request(task),
+    }
+    return result
+
+
+def editor_implement(
+    plan: str,
+    message: str,
+    system: str,
+    history: list,
+    max_tokens: int,
+    *,
+    build_chatml,
+    generate_sync,
+) -> str:
+    token = _V282_ACTIVE_TASK.set(message)
+    try:
+        hardened_system = (
+            system.rstrip()
+            + "\n\n"
+            + senior_engineer_contract(message)
+            + "\n\n"
+            "Produce the final implementation directly. Do not narrate weaker "
+            "alternative scopes, select an educational substitute, or expose "
+            "internal deliberation."
+        )
+
+        return _V282_BASE_EDITOR_IMPLEMENT(
+            plan,
+            message,
+            hardened_system,
+            history,
+            max_tokens,
+            build_chatml=build_chatml,
+            generate_sync=generate_sync,
+        )
+    finally:
+        _V282_ACTIVE_TASK.reset(token)
+
+
+def runtime_status() -> dict:
+    result = dict(_V282_BASE_RUNTIME_STATUS())
+    result["senior_engineer_guard"] = {
+        "version": "V28.2",
+        "enabled": True,
+        "production_default": (
+            _v282_os.getenv("ELITE_PRODUCTION_SCOPE_DEFAULT", "1") == "1"
+        ),
+    }
+    return result
+# END SENIOR ENGINEER PRODUCTION GUARD V28.2

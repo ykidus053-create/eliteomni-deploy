@@ -1635,3 +1635,46 @@ def get_effort_prompts(
 
     return prompts
 # END PRODUCTION SCOPE DEFAULT V28.1
+
+# BEGIN SENIOR ENGINEER DEFAULT V28.2
+SENIOR_ENGINEER_DEFAULT_V282 = (
+    "MANDATORY SENIOR ENGINEER STANDARD:\n"
+    "Write every implementation with senior-engineer quality. Unless the user "
+    "explicitly requests a tutorial, toy, classroom exercise, demonstration, "
+    "or proof of concept, assume the code is intended for production.\n"
+    "Do not downgrade ambiguous requests to educational, simplified, "
+    "in-memory, or toy implementations. Choose a realistic architecture and "
+    "mature dependencies. Do not recreate solved infrastructure unless "
+    "explicitly requested.\n"
+    "Deliver complete code with stable interfaces, typing where supported, "
+    "configuration, validation, structured failures, deterministic cleanup, "
+    "security boundaries, concurrency safety, observability, and focused "
+    "tests. Include exact validation commands. Never use TODO, FIXME, pass, "
+    "NotImplementedError, pseudocode, omitted sections, or fake credentials. "
+    "Never claim tests passed without evidence. Keep private reasoning hidden."
+)
+
+if "get_effort_prompts" in globals():
+    _v282_base_get_effort_prompts = get_effort_prompts
+
+    def get_effort_prompts(
+        effort: str,
+        complexity: str,
+        skill: str,
+    ) -> list:
+        prompts = list(
+            _v282_base_get_effort_prompts(
+                effort,
+                complexity,
+                skill,
+            )
+        )
+
+        if (
+            skill == "coder"
+            and SENIOR_ENGINEER_DEFAULT_V282 not in prompts
+        ):
+            prompts.append(SENIOR_ENGINEER_DEFAULT_V282)
+
+        return prompts
+# END SENIOR ENGINEER DEFAULT V28.2
