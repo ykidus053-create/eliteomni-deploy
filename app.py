@@ -1103,7 +1103,7 @@ def pipeline_sync(msg: str, history: list) -> dict:
         from constitutional_rlaif import adversarial_redteam
         from modules.core.http_client import mistral_generate
         # AI tries to break its own safety layer and patches it
-        threading.Thread(target=adversarial_redteam, args=(lambda p, m="": mistral_generate(p, max_tokens=200),), daemon=True).start()
+        threading.Thread(target=adversarial_redteam, args=(lambda p, m="", **kw: mistral_generate(p, max_tokens=int(kw.get("max_tokens", 200))),), daemon=True).start()
     except Exception:
         pass
 
@@ -1130,12 +1130,24 @@ def pipeline_sync(msg: str, history: list) -> dict:
         from constitutional_rlaif import adversarial_redteam
         from modules.core.http_client import mistral_generate
         # AI tries to break its own safety layer and patches it
-        threading.Thread(target=adversarial_redteam, args=(lambda p, m="": mistral_generate(p, max_tokens=200),), daemon=True).start()
+        threading.Thread(target=adversarial_redteam, args=(lambda p, m="", **kw: mistral_generate(p, max_tokens=int(kw.get("max_tokens", 200))),), daemon=True).start()
     except Exception:
         pass
 
     final  = cai_critique_revise(final, msg, skill, complexity)
-    final = gpt55_enhance(msg, final)
+    # BEGIN OPTIONAL GPT55 ENHANCER V34B
+    _gpt55_enhancer = globals().get("gpt55_enhance")
+    if callable(_gpt55_enhancer):
+        try:
+            final = _gpt55_enhancer(msg, final)
+        except Exception as _gpt55_error:
+            print(
+                "[GPT55 Enhance] skipped: "
+                f"{type(_gpt55_error).__name__}: {_gpt55_error}"
+            )
+    else:
+        print("[GPT55 Enhance] unavailable; preserving response")
+    # END OPTIONAL GPT55 ENHANCER V34B
     # BEGIN FINAL SYNC PRODUCTION VERIFY V2
     final = verification_pipeline(final, msg, skill, complexity)
     # END FINAL SYNC PRODUCTION VERIFY V2
